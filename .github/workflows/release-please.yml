@@ -18,7 +18,6 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           release-type: python
-          package-name: shazamer
           
       # The logic below handles the case where a release is created
       - uses: actions/checkout@v4
