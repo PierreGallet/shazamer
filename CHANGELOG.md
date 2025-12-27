@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.0 (2025-12-27)
+
+
+### Features
+
+* add automatic parameter adjustment based on audio duration ([7ac6e85](https://github.com/PierreGallet/shazamer/commit/7ac6e8514d4ba4b6ac4964f82649c27a95f0a38d))
+* add release-please workflow and improve temp file handling ([283e8b4](https://github.com/PierreGallet/shazamer/commit/283e8b4853d4951414cecd1c5d1aef74d270a22c))
+
+
+### Bug Fixes
+
+* remove deprecated package-name parameter from release-please ([a5ab693](https://github.com/PierreGallet/shazamer/commit/a5ab693e7fea91a203bc956148977a45ce2bc4ce))
+* use personal access token for release-please workflow ([5aaf4db](https://github.com/PierreGallet/shazamer/commit/5aaf4dbc53edb3115bbf33c881b3ee0eedc0a9a7))
+
 ## [1.0.0] - 2024-12-27
 
 ### Features
