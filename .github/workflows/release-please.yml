@@ -16,7 +16,7 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GHP_TOKEN }}
           release-type: python
           
       # The logic below handles the case where a release is created
@@ -46,7 +46,7 @@ jobs:
       - name: Upload Release Artifacts
         if: ${{ steps.release.outputs.release_created }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GHP_TOKEN }}
         run: |
           gh release upload ${{ steps.release.outputs.tag_name }} \
             shazamer-${{ steps.release.outputs.major }}.${{ steps.release.outputs.minor }}.${{ steps.release.outputs.patch }}.tar.gz \
