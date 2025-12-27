@@ -83,10 +83,34 @@ Output files will be saved in the `outputs/` directory (created automatically).
 ### Options
 
 - `-o, --output`: Custom output file path (default: outputs/<input_filename>_tracklist.json)
-- `--min-song-duration`: Minimum song duration in seconds (default: 30)
-- `--threshold`: Peak detection threshold 0-1 (default: 0.3)
+- `--min-song-duration`: Minimum song duration in seconds (default: auto-adjusted based on audio length)
+- `--threshold`: Peak detection threshold 0-1 (default: auto-adjusted based on audio length)
   - Lower values (0.1-0.2) = More sensitive, detects more boundaries
   - Higher values (0.4-0.5) = Less sensitive, detects fewer boundaries
+- `--debug`: Enable debug mode to see full Shazam responses
+
+### Parameter Recommendations
+
+The tool automatically adjusts parameters based on the audio duration if you use defaults:
+
+| Audio Duration | Threshold | Min Song Duration | Typical Use Case |
+|----------------|-----------|-------------------|------------------|
+| < 1 hour       | 0.30      | 30 seconds        | Short DJ sets, radio shows |
+| 1-2 hours      | 0.25      | 45 seconds        | Standard DJ sets |
+| 2-3 hours      | 0.20      | 60 seconds        | Extended sets |
+| > 3 hours      | 0.15      | 90 seconds        | Long festival sets, marathons |
+
+**Manual Override Examples:**
+```bash
+# For a very smooth, minimal mix with long transitions
+python shazamer.py smooth_mix.mp3 --threshold 0.1 --min-song-duration 120
+
+# For a fast-paced mix with quick transitions
+python shazamer.py hardcore_mix.mp3 --threshold 0.4 --min-song-duration 20
+
+# For a radio show with talk segments
+python shazamer.py radio_show.mp3 --threshold 0.35 --min-song-duration 90
+```
 
 ## How it works
 

@@ -18,20 +18,54 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class DJSetAnalyzer:
-    def __init__(self, input_file: str, min_song_duration: int = 30, 
-                 peak_threshold: float = 0.3, throttle_rate: float = 0.5, 
+    def __init__(self, input_file: str, min_song_duration: int = None, 
+                 peak_threshold: float = None, throttle_rate: float = 0.5, 
                  debug: bool = False):
         self.input_file = Path(input_file)
-        self.min_song_duration = min_song_duration
-        self.peak_threshold = peak_threshold
         self.throttler = Throttler(rate_limit=throttle_rate)
         self.shazam = Shazam()
         self.debug = debug
         
+        # Store parameters for later auto-adjustment
+        self._min_song_duration_manual = min_song_duration
+        self._peak_threshold_manual = peak_threshold
+        
+    def _auto_adjust_min_duration(self, duration: float) -> int:
+        """Auto-adjust minimum song duration based on audio length"""
+        hours = duration / 3600
+        if hours < 1:
+            return 30
+        elif hours < 2:
+            return 45
+        elif hours < 3:
+            return 60
+        else:
+            return 90
+    
+    def _auto_adjust_threshold(self, duration: float) -> float:
+        """Auto-adjust peak detection threshold based on audio length"""
+        hours = duration / 3600
+        if hours < 1:
+            return 0.30
+        elif hours < 2:
+            return 0.25
+        elif hours < 3:
+            return 0.20
+        else:
+            return 0.15
+        
     def load_audio(self) -> Tuple[np.ndarray, int]:
         logger.info(f"Loading audio file: {self.input_file}")
         audio_data, sample_rate = librosa.load(str(self.input_file), sr=None, mono=True)
-        logger.info(f"Audio loaded. Duration: {len(audio_data)/sample_rate:.1f} seconds, Sample rate: {sample_rate}Hz")
+        duration = len(audio_data) / sample_rate
+        logger.info(f"Audio loaded. Duration: {duration:.1f} seconds, Sample rate: {sample_rate}Hz")
+        
+        # Auto-adjust parameters if not manually set
+        self.min_song_duration = self._min_song_duration_manual or self._auto_adjust_min_duration(duration)
+        self.peak_threshold = self._peak_threshold_manual or self._auto_adjust_threshold(duration)
+        
+        logger.info(f"Using parameters: threshold={self.peak_threshold}, min_song_duration={self.min_song_duration}s")
+        
         return audio_data, sample_rate
     
     def detect_song_boundaries(self, audio_data: np.ndarray, sample_rate: int) -> List[int]:
@@ -193,10 +227,10 @@ async def main():
     parser = argparse.ArgumentParser(description='Analyze DJ sets and identify tracks using Shazam')
     parser.add_argument('input_file', help='Path to the audio file (DJ set or playlist)')
     parser.add_argument('-o', '--output', help='Output file for the tracklist (default: outputs/<input_filename>_tracklist.json)')
-    parser.add_argument('--min-song-duration', type=int, default=30, 
-                       help='Minimum song duration in seconds (default: 30)')
-    parser.add_argument('--threshold', type=float, default=0.3,
-                       help='Peak detection threshold (0-1, default: 0.3)')
+    parser.add_argument('--min-song-duration', type=int, 
+                       help='Minimum song duration in seconds (default: auto-adjusted based on audio length)')
+    parser.add_argument('--threshold', type=float,
+                       help='Peak detection threshold (0-1, default: auto-adjusted based on audio length)')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug mode to see full Shazam responses')
     
