@@ -4,6 +4,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![Release](https://img.shields.io/github/release/pierregallet/shazamer.svg)](https://github.com/pierregallet/shazamer/releases/latest)
+[![Release Please](https://github.com/pierregallet/shazamer/actions/workflows/release-please.yml/badge.svg)](https://github.com/pierregallet/shazamer/actions/workflows/release-please.yml)
 
 Shazamer analyzes long audio files (DJ sets, playlists, radio shows) to automatically detect song boundaries and identify tracks using the Shazam API. Perfect for DJs, radio hosts, and music enthusiasts who want to generate tracklists from their mixes.
 

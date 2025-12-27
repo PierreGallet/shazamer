@@ -84,8 +84,11 @@ class DJSetAnalyzer:
     
     def save_audio_segment(self, audio_data: np.ndarray, sample_rate: int, 
                           start_sample: int, end_sample: int, index: int) -> str:
+        # Create tmp directory if it doesn't exist
+        Path("tmp").mkdir(exist_ok=True)
+        
         segment = audio_data[start_sample:end_sample]
-        output_path = f"temp_segment_{index}.wav"
+        output_path = f"tmp/temp_segment_{index}.wav"
         sf.write(output_path, segment, sample_rate)
         return output_path
     
@@ -156,31 +159,33 @@ class DJSetAnalyzer:
         results = []
         temp_files = []
         
-        logger.info(f"Processing {len(boundaries) - 1} segments...")
+        try:
+            logger.info(f"Processing {len(boundaries) - 1} segments...")
+            
+            for i in range(len(boundaries) - 1):
+                start_sample = boundaries[i]
+                end_sample = boundaries[i + 1]
+                start_time = start_sample / sample_rate
+                
+                # Save segment to temporary file
+                temp_file = self.save_audio_segment(audio_data, sample_rate, 
+                                                  start_sample, end_sample, i)
+                temp_files.append(temp_file)
+                
+                # Recognize the segment
+                track_info = await self.recognize_segment(temp_file, start_time)
+                if track_info:
+                    results.append(track_info)
+                
+                # Progress update
+                if (i + 1) % 10 == 0:
+                    logger.info(f"Progress: {i + 1}/{len(boundaries) - 1} segments processed")
         
-        for i in range(len(boundaries) - 1):
-            start_sample = boundaries[i]
-            end_sample = boundaries[i + 1]
-            start_time = start_sample / sample_rate
-            
-            # Save segment to temporary file
-            temp_file = self.save_audio_segment(audio_data, sample_rate, 
-                                              start_sample, end_sample, i)
-            temp_files.append(temp_file)
-            
-            # Recognize the segment
-            track_info = await self.recognize_segment(temp_file, start_time)
-            if track_info:
-                results.append(track_info)
-            
-            # Progress update
-            if (i + 1) % 10 == 0:
-                logger.info(f"Progress: {i + 1}/{len(boundaries) - 1} segments processed")
-        
-        # Clean up temporary files
-        logger.info("Cleaning up temporary files...")
-        for temp_file in temp_files:
-            Path(temp_file).unlink(missing_ok=True)
+        finally:
+            # Clean up temporary files even if an error occurs
+            logger.info("Cleaning up temporary files...")
+            for temp_file in temp_files:
+                Path(temp_file).unlink(missing_ok=True)
         
         return results
 

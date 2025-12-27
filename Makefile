@@ -29,7 +29,7 @@ clean:
 	@echo "Cleaning up..."
 	@rm -rf venv
 	@rm -rf outputs
-	@rm -f temp_segment_*.wav
+	@rm -rf tmp
 	@echo "Clean complete!"
 
 # Analyze with FILE variable

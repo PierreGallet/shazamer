@@ -22,7 +22,7 @@ Thumbs.db
 
 # Project specific
 outputs/
-temp_segment_*.wav
+tmp/
 *.mp3
 *.wav
 *.flac
