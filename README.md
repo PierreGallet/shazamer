@@ -22,6 +22,7 @@ Shazamer analyzes long audio files (DJ sets, playlists, radio shows) to automati
 ## Prerequisites
 
 - **Python 3.12**: Required (shazamio has compatibility issues with Python 3.13+)
+  - The Makefile will automatically install Python 3.12 if not present
 - **FFmpeg**: Required for audio processing. Install with:
   ```bash
   # macOS
@@ -41,14 +42,23 @@ Shazamer analyzes long audio files (DJ sets, playlists, radio shows) to automati
 make install
 ```
 
+This will automatically:
+- Install Homebrew (on macOS) if not present
+- Install Python 3.12 if not present
+- Install uv package manager for fast dependency management
+- Create a virtual environment
+- Install all dependencies
+
 ### Manual Installation
 ```bash
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Create virtual environment with Python 3.12
-python3.12 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+uv venv venv --python python3.12
 
 # Install dependencies
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 ## Usage
@@ -64,18 +74,15 @@ make analyze FILE="/path/to/my dj set.mp3"
 
 ### Manual Usage
 ```bash
-# Activate virtual environment
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Basic usage
-python shazamer.py your_dj_set.mp3
+# Basic usage with uv
+uv run python shazamer.py your_dj_set.mp3
 # Creates: outputs/your_dj_set_tracklist.json and outputs/your_dj_set_tracklist.txt
 
 # With custom output
-python shazamer.py mix.mp3 -o outputs/summer_mix_2024.json
+uv run python shazamer.py mix.mp3 -o outputs/summer_mix_2024.json
 
 # With options
-python shazamer.py your_dj_set.mp3 --min-song-duration 45 --threshold 0.4
+uv run python shazamer.py your_dj_set.mp3 --min-song-duration 45 --threshold 0.4
 ```
 
 Output files will be saved in the `outputs/` directory (created automatically).
@@ -103,13 +110,13 @@ The tool automatically adjusts parameters based on the audio duration if you use
 **Manual Override Examples:**
 ```bash
 # For a very smooth, minimal mix with long transitions
-python shazamer.py smooth_mix.mp3 --threshold 0.1 --min-song-duration 120
+uv run python shazamer.py smooth_mix.mp3 --threshold 0.1 --min-song-duration 120
 
 # For a fast-paced mix with quick transitions
-python shazamer.py hardcore_mix.mp3 --threshold 0.4 --min-song-duration 20
+uv run python shazamer.py hardcore_mix.mp3 --threshold 0.4 --min-song-duration 20
 
 # For a radio show with talk segments
-python shazamer.py radio_show.mp3 --threshold 0.35 --min-song-duration 90
+uv run python shazamer.py radio_show.mp3 --threshold 0.35 --min-song-duration 90
 ```
 
 ## How it works
