@@ -18,6 +18,7 @@ Shazamer analyzes long audio files (DJ sets, playlists, radio shows) to automati
 - 📁 **Multiple Output Formats**: JSON (detailed) and TXT (simple) outputs
 - ⚡ **Async Processing**: Fast, parallel recognition of multiple segments
 - 🎛️ **Customizable Parameters**: Adjust detection sensitivity and minimum song duration
+- 🌐 **Web Interface**: Easy-to-use web UI for drag-and-drop analysis
 
 ## Prerequisites
 
@@ -63,7 +64,22 @@ uv pip install -r requirements.txt
 
 ## Usage
 
-### Using Make (Easiest)
+### Web Interface (Easiest)
+```bash
+# Start the web interface
+make web
+
+# Then open http://localhost:5000 in your browser
+```
+
+The web interface provides:
+- Drag-and-drop file upload
+- Real-time progress tracking
+- Visual results display
+- Download results as JSON or TXT
+- Recent analyses history
+
+### Command Line
 ```bash
 # Analyze any audio file directly
 make ~/Music/your_dj_set.mp3
@@ -75,14 +91,14 @@ make analyze FILE="/path/to/my dj set.mp3"
 ### Manual Usage
 ```bash
 # Basic usage with uv
-uv run python shazamer.py your_dj_set.mp3
+uv run python src/shazamer.py your_dj_set.mp3
 # Creates: outputs/your_dj_set_tracklist.json and outputs/your_dj_set_tracklist.txt
 
 # With custom output
-uv run python shazamer.py mix.mp3 -o outputs/summer_mix_2024.json
+uv run python src/shazamer.py mix.mp3 -o outputs/summer_mix_2024.json
 
 # With options
-uv run python shazamer.py your_dj_set.mp3 --min-song-duration 45 --threshold 0.4
+uv run python src/shazamer.py your_dj_set.mp3 --min-song-duration 45 --threshold 0.4
 ```
 
 Output files will be saved in the `outputs/` directory (created automatically).
@@ -110,13 +126,13 @@ The tool automatically adjusts parameters based on the audio duration if you use
 **Manual Override Examples:**
 ```bash
 # For a very smooth, minimal mix with long transitions
-uv run python shazamer.py smooth_mix.mp3 --threshold 0.1 --min-song-duration 120
+uv run python src/shazamer.py smooth_mix.mp3 --threshold 0.1 --min-song-duration 120
 
 # For a fast-paced mix with quick transitions
-uv run python shazamer.py hardcore_mix.mp3 --threshold 0.4 --min-song-duration 20
+uv run python src/shazamer.py hardcore_mix.mp3 --threshold 0.4 --min-song-duration 20
 
 # For a radio show with talk segments
-uv run python shazamer.py radio_show.mp3 --threshold 0.35 --min-song-duration 90
+uv run python src/shazamer.py radio_show.mp3 --threshold 0.35 --min-song-duration 90
 ```
 
 ## How it works

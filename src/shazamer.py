@@ -268,7 +268,14 @@ async def main():
         else:
             # Use input filename as base for output
             input_basename = Path(args.input_file).stem
-            output_path = Path(f"outputs/{input_basename}_tracklist.json")
+            base_output_path = Path(f"outputs/{input_basename}_tracklist.json")
+            
+            # Check if file exists and add suffix if needed
+            output_path = base_output_path
+            counter = 1
+            while output_path.exists():
+                output_path = Path(f"outputs/{input_basename}_tracklist({counter}).json")
+                counter += 1
         
         # Create output directory if it doesn't exist
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -291,7 +298,7 @@ async def main():
             print(f"[{track['start_time']}] {track['artist']} - {track['title']}")
         print("-" * 80)
         print(f"\nFull tracklist saved to:")
-        print(f"  JSON: {args.output}")
+        print(f"  JSON: {output_path}")
         print(f"  TXT: {txt_output}")
         
     except Exception as e:

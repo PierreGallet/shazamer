@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shazamer - DJ Set Analyzer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f0f;
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        header {
+            background: #1a1a1a;
+            padding: 1.5rem;
+            border-bottom: 1px solid #333;
+        }
+        
+        h1 {
+            font-size: 2rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+        
+        .subtitle {
+            color: #888;
+            font-size: 1rem;
+        }
+        
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+        
+        .upload-container {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 3rem;
+            text-align: center;
+            max-width: 600px;
+            width: 100%;
+            border: 1px solid #333;
+        }
+        
+        .drop-zone {
+            border: 2px dashed #444;
+            border-radius: 8px;
+            padding: 3rem;
+            margin: 2rem 0;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .drop-zone:hover {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.1);
+        }
+        
+        .drop-zone.dragover {
+            border-color: #764ba2;
+            background: rgba(118, 75, 162, 0.1);
+        }
+        
+        .file-input {
+            display: none;
+        }
+        
+        .button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 0.75rem 2rem;
+            border-radius: 6px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .button:hover {
+            transform: translateY(-2px);
+        }
+        
+        .button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .progress-container {
+            margin-top: 2rem;
+            display: none;
+        }
+        
+        .progress-bar {
+            background: #2a2a2a;
+            height: 8px;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 1rem 0;
+        }
+        
+        .progress-fill {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100%;
+            width: 0;
+            transition: width 0.3s;
+        }
+        
+        .status-message {
+            color: #aaa;
+            margin-top: 1rem;
+        }
+        
+        .results {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-top: 2rem;
+            max-width: 800px;
+            width: 100%;
+            display: none;
+            border: 1px solid #333;
+        }
+        
+        .track-list {
+            margin-top: 1rem;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .track {
+            padding: 1rem;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .track:last-child {
+            border-bottom: none;
+        }
+        
+        .track-time {
+            color: #667eea;
+            font-family: monospace;
+            margin-right: 1rem;
+        }
+        
+        .track-info {
+            flex: 1;
+        }
+        
+        .track-title {
+            font-weight: 500;
+        }
+        
+        .track-artist {
+            color: #888;
+            font-size: 0.9rem;
+        }
+        
+        .track-confidence {
+            color: #666;
+            font-size: 0.8rem;
+        }
+        
+        .download-buttons {
+            margin-top: 1.5rem;
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+        }
+        
+        .error {
+            background: #ff4444;
+            color: white;
+            padding: 1rem;
+            border-radius: 6px;
+            margin-top: 1rem;
+        }
+        
+        .recent-analyses {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-top: 2rem;
+            max-width: 800px;
+            width: 100%;
+            border: 1px solid #333;
+        }
+        
+        .recent-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem;
+            border-bottom: 1px solid #333;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .recent-item:hover {
+            background: #222;
+        }
+        
+        .recent-item:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Shazamer</h1>
+        <p class="subtitle">Automatically identify tracks in DJ sets and long audio mixes</p>
+    </header>
+    
+    <main>
+        <div class="upload-container">
+            <h2>Upload Audio File</h2>
+            <p style="color: #888; margin-top: 0.5rem;">Supported formats: MP3, WAV, FLAC, M4A, OGG, WMA, AAC</p>
+            
+            <div class="drop-zone" id="dropZone">
+                <p>Drag & drop your audio file here</p>
+                <p style="margin: 1rem 0; color: #666;">or</p>
+                <button class="button" onclick="document.getElementById('fileInput').click()">
+                    Choose File
+                </button>
+            </div>
+            
+            <input type="file" id="fileInput" class="file-input" accept=".mp3,.wav,.flac,.m4a,.ogg,.wma,.aac">
+            
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <p class="status-message" id="statusMessage">Uploading...</p>
+            </div>
+            
+            <div id="errorContainer"></div>
+        </div>
+        
+        <div class="results" id="results">
+            <h2>Analysis Results</h2>
+            <p id="resultsSummary" style="color: #888; margin-top: 0.5rem;"></p>
+            
+            <div class="track-list" id="trackList"></div>
+            
+            <div class="download-buttons">
+                <button class="button" id="downloadJson">Download JSON</button>
+                <button class="button" id="downloadTxt">Download TXT</button>
+            </div>
+        </div>
+        
+        <div class="recent-analyses" id="recentAnalyses">
+            <h3>Recent Analyses</h3>
+            <div id="recentList"></div>
+        </div>
+    </main>
+    
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const statusMessage = document.getElementById('statusMessage');
+        const errorContainer = document.getElementById('errorContainer');
+        const results = document.getElementById('results');
+        const resultsSummary = document.getElementById('resultsSummary');
+        const trackList = document.getElementById('trackList');
+        const downloadJson = document.getElementById('downloadJson');
+        const downloadTxt = document.getElementById('downloadTxt');
+        const recentAnalyses = document.getElementById('recentAnalyses');
+        const recentList = document.getElementById('recentList');
+        
+        let currentTaskId = null;
+        
+        // Load recent analyses on page load
+        loadRecentAnalyses();
+        
+        // Drag and drop handlers
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+        
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+        
+        async function handleFile(file) {
+            // Reset UI
+            errorContainer.innerHTML = '';
+            results.style.display = 'none';
+            
+            // Validate file
+            const allowedTypes = ['audio/mpeg', 'audio/wav', 'audio/flac', 'audio/mp4', 'audio/ogg', 'audio/x-ms-wma', 'audio/aac'];
+            if (!allowedTypes.some(type => file.type.startsWith(type))) {
+                showError('Invalid file type. Please upload an audio file.');
+                return;
+            }
+            
+            // Upload file
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            progressContainer.style.display = 'block';
+            statusMessage.textContent = 'Uploading...';
+            progressFill.style.width = '5%';
+            
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Upload failed');
+                }
+                
+                const data = await response.json();
+                currentTaskId = data.task_id;
+                
+                // Start polling for progress
+                pollProgress();
+                
+            } catch (error) {
+                showError(error.message);
+                progressContainer.style.display = 'none';
+            }
+        }
+        
+        async function pollProgress() {
+            if (!currentTaskId) return;
+            
+            try {
+                const response = await fetch(`/api/status/${currentTaskId}`);
+                const data = await response.json();
+                
+                // Update progress
+                progressFill.style.width = `${data.progress}%`;
+                statusMessage.textContent = data.message;
+                
+                if (data.status === 'completed') {
+                    displayResults(data);
+                    loadRecentAnalyses();
+                } else if (data.status === 'error') {
+                    showError(data.error || 'Analysis failed');
+                    progressContainer.style.display = 'none';
+                } else {
+                    // Continue polling
+                    setTimeout(pollProgress, 1000);
+                }
+                
+            } catch (error) {
+                showError('Failed to get status');
+                progressContainer.style.display = 'none';
+            }
+        }
+        
+        function displayResults(data) {
+            progressContainer.style.display = 'none';
+            results.style.display = 'block';
+            
+            resultsSummary.textContent = `Found ${data.results.length} unique tracks in ${data.filename}`;
+            
+            // Display tracks
+            trackList.innerHTML = '';
+            data.results.forEach(track => {
+                const trackEl = document.createElement('div');
+                trackEl.className = 'track';
+                
+                const confidence = track.match_count <= 5 ? 'high' : 
+                                 track.match_count <= 15 ? 'medium' : 'low';
+                
+                trackEl.innerHTML = `
+                    <span class="track-time">${track.start_time}</span>
+                    <div class="track-info">
+                        <div class="track-title">
+                            ${track.shazam_url ? 
+                                `<a href="${track.shazam_url}" target="_blank" style="color: inherit; text-decoration: none; border-bottom: 1px dotted #667eea;">${track.title}</a>` : 
+                                track.title}
+                        </div>
+                        <div class="track-artist">${track.artist}</div>
+                        <div class="track-confidence">${track.match_count} matches (${confidence} confidence)</div>
+                    </div>
+                `;
+                
+                trackList.appendChild(trackEl);
+            });
+            
+            // Setup download buttons
+            downloadJson.onclick = () => download('json');
+            downloadTxt.onclick = () => download('txt');
+        }
+        
+        async function download(format) {
+            if (!currentTaskId) return;
+            
+            window.location.href = `/api/download/${currentTaskId}/${format}`;
+        }
+        
+        async function loadRecentAnalyses() {
+            try {
+                const response = await fetch('/api/recent');
+                const data = await response.json();
+                
+                if (data.length > 0) {
+                    recentAnalyses.style.display = 'block';
+                    recentList.innerHTML = '';
+                    
+                    data.forEach(item => {
+                        const itemEl = document.createElement('div');
+                        itemEl.className = 'recent-item';
+                        itemEl.innerHTML = `
+                            <div>
+                                <div style="font-weight: 500;">${item.filename}</div>
+                                <div style="color: #888; font-size: 0.9rem;">${item.track_count} tracks • ${item.created}</div>
+                            </div>
+                            <div>
+                                <a href="${item.json_path}" download style="color: #667eea; margin-right: 1rem;">JSON</a>
+                                <a href="${item.txt_path}" download style="color: #667eea; margin-right: 1rem;">TXT</a>
+                                <button class="button" style="font-size: 0.9rem; padding: 0.5rem 1rem;" onclick="viewFile('${item.txt_path.split('/').pop()}')">View</button>
+                            </div>
+                        `;
+                        recentList.appendChild(itemEl);
+                    });
+                } else {
+                    recentAnalyses.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Failed to load recent analyses:', error);
+            }
+        }
+        
+        function showError(message) {
+            errorContainer.innerHTML = `<div class="error">${message}</div>`;
+        }
+        
+        // Modal styles
+        const modalStyles = `
+            <style>
+                .modal {
+                    display: none;
+                    position: fixed;
+                    z-index: 1000;
+                    left: 0;
+                    top: 0;
+                    width: 100%;
+                    height: 100%;
+                    background-color: rgba(0, 0, 0, 0.8);
+                    overflow: auto;
+                }
+                
+                .modal-content {
+                    background-color: #1a1a1a;
+                    margin: 2rem auto;
+                    padding: 2rem;
+                    border: 1px solid #333;
+                    width: 90%;
+                    max-width: 800px;
+                    border-radius: 12px;
+                    position: relative;
+                }
+                
+                .modal-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 1rem;
+                }
+                
+                .modal-title {
+                    font-size: 1.5rem;
+                    color: #fff;
+                }
+                
+                .modal-close {
+                    background: none;
+                    border: none;
+                    color: #888;
+                    font-size: 2rem;
+                    cursor: pointer;
+                    line-height: 1;
+                    padding: 0;
+                }
+                
+                .modal-close:hover {
+                    color: #fff;
+                }
+                
+                .modal-body {
+                    background: #0f0f0f;
+                    border: 1px solid #333;
+                    border-radius: 8px;
+                    padding: 1.5rem;
+                    max-height: 60vh;
+                    overflow-y: auto;
+                    font-family: monospace;
+                    font-size: 0.9rem;
+                    line-height: 1.6;
+                    white-space: pre-wrap;
+                }
+            </style>
+        `;
+        
+        // Add modal styles to head
+        document.head.insertAdjacentHTML('beforeend', modalStyles);
+        
+        // Create modal HTML
+        const modalHTML = `
+            <div id="fileModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 class="modal-title">Tracklist</h2>
+                        <button class="modal-close" onclick="closeModal()">&times;</button>
+                    </div>
+                    <div class="modal-body" id="modalBody">
+                        Loading...
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Add modal to body
+        document.body.insertAdjacentHTML('beforeend', modalHTML);
+        
+        async function viewFile(filename) {
+            const modal = document.getElementById('fileModal');
+            const modalBody = document.getElementById('modalBody');
+            
+            modal.style.display = 'block';
+            modalBody.textContent = 'Loading...';
+            
+            try {
+                const response = await fetch(`/api/view/${encodeURIComponent(filename)}`);
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to load file');
+                }
+                
+                const data = await response.json();
+                if (data.is_html) {
+                    modalBody.innerHTML = data.content;
+                } else {
+                    modalBody.textContent = data.content;
+                }
+            } catch (error) {
+                modalBody.textContent = `Error: ${error.message}`;
+            }
+        }
+        
+        function closeModal() {
+            document.getElementById('fileModal').style.display = 'none';
+        }
+        
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('fileModal');
+            if (event.target == modal) {
+                modal.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>

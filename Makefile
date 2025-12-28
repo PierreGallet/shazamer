@@ -1,4 +1,4 @@
-.PHONY: help install clean analyze
+.PHONY: help install clean analyze web
 
 # Default target
 help:
@@ -8,12 +8,14 @@ help:
 	@echo "  make install              - Install dependencies in virtual environment"
 	@echo "  make <audio_file>         - Analyze an audio file (e.g., make song.mp3)"
 	@echo "  make analyze FILE=<path>  - Alternative way to analyze a file"
+	@echo "  make web                  - Start the web interface"
 	@echo "  make clean                - Remove virtual environment and output files"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make install"
 	@echo "  make ~/Music/dj_set.mp3"
 	@echo "  make analyze FILE=\"/path/to/my mix.mp3\""
+	@echo "  make web"
 
 # Install dependencies
 install:
@@ -62,14 +64,13 @@ install:
 	@echo "Creating virtual environment with Python 3.12..."
 	@uv venv venv --python python3.12
 	@echo "Installing dependencies with uv..."
-	@uv pip sync requirements.txt --python venv/bin/python
+	@uv pip install -r requirements.txt --python venv/bin/python
 	@echo "Installation complete!"
 
 # Clean up
 clean:
 	@echo "Cleaning up..."
 	@rm -rf venv
-	@rm -rf outputs
 	@rm -rf tmp
 	@echo "Clean complete!"
 
@@ -85,7 +86,7 @@ analyze:
 		$(MAKE) install; \
 	fi
 	@echo "Analyzing: $(FILE)"
-	@uv run python shazamer.py "$(FILE)"
+	@./venv/bin/python -m src.shazamer "$(FILE)"
 
 # Force rebuild for audio files
 .PHONY: %.mp3 %.wav %.flac %.m4a
@@ -101,4 +102,13 @@ analyze:
 		$(MAKE) install; \
 	fi
 	@echo "Analyzing: $@"
-	@uv run python shazamer.py "$@"
+	@./venv/bin/python -m src.shazamer "$@"
+
+# Start web interface
+web:
+	@if [ ! -f "venv/bin/python" ]; then \
+		echo "Virtual environment not found. Running 'make install' first..."; \
+		$(MAKE) install; \
+	fi
+	@echo "Starting web interface at http://localhost:8000"
+	@./venv/bin/python -m src.web

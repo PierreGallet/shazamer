@@ -5,3 +5,8 @@ numpy==2.1.2
 scipy==1.14.1
 soundfile==0.12.1
 asyncio-throttle==1.0.2
+fastapi>=0.100.0,<0.104.0
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+lazy-loader==0.3
+cffi>=1.0
