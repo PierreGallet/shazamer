@@ -27,13 +27,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="src/static"), name="static")
-
 # Configuration
-UPLOAD_FOLDER = Path("uploads")
-OUTPUT_FOLDER = Path("outputs")
-TMP_FOLDER = Path("tmp")
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Mount static files
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "src" / "static")), name="static")
+UPLOAD_FOLDER = BASE_DIR / "uploads"
+OUTPUT_FOLDER = BASE_DIR / "outputs"
+TMP_FOLDER = BASE_DIR / "tmp"
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
 ALLOWED_EXTENSIONS = {'mp3', 'wav', 'flac', 'm4a', 'ogg', 'wma', 'aac'}
 

@@ -208,7 +208,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 1rem;
+            padding: 1rem 1.5rem 1rem 1rem;
             border-bottom: 1px solid #333;
             cursor: pointer;
             transition: background 0.2s;
@@ -220,6 +220,40 @@
         
         .recent-item:last-child {
             border-bottom: none;
+        }
+        
+        .file-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4rem;
+            min-width: 60px;
+            padding: 0.5rem 1rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        
+        .file-button svg {
+            width: 16px;
+            height: 16px;
+            stroke-width: 2.5;
+        }
+        
+        .file-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .file-button:active {
+            transform: translateY(0);
         }
     </style>
 </head>
@@ -448,10 +482,29 @@
                                 <div style="font-weight: 500;">${item.filename}</div>
                                 <div style="color: #888; font-size: 0.9rem;">${item.track_count} tracks • ${item.created}</div>
                             </div>
-                            <div>
-                                <a href="${item.json_path}" download style="color: #667eea; margin-right: 1rem;">JSON</a>
-                                <a href="${item.txt_path}" download style="color: #667eea; margin-right: 1rem;">TXT</a>
-                                <button class="button" style="font-size: 0.9rem; padding: 0.5rem 1rem;" onclick="viewFile('${item.txt_path.split('/').pop()}')">View</button>
+                            <div style="display: flex; gap: 0.75rem; align-items: center;">
+                                <button class="file-button" onclick="viewFile('${item.txt_path.split('/').pop()}')" title="View">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                        <circle cx="12" cy="12" r="3"/>
+                                    </svg>
+                                </button>
+                                <a href="${item.json_path}" download class="file-button" title="Download JSON">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                                        <polyline points="7 10 12 15 17 10"/>
+                                        <line x1="12" y1="15" x2="12" y2="3"/>
+                                    </svg>
+                                    <span>JSON</span>
+                                </a>
+                                <a href="${item.txt_path}" download class="file-button" title="Download TXT">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                                        <polyline points="7 10 12 15 17 10"/>
+                                        <line x1="12" y1="15" x2="12" y2="3"/>
+                                    </svg>
+                                    <span>TXT</span>
+                                </a>
                             </div>
                         `;
                         recentList.appendChild(itemEl);
