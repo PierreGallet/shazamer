@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0](https://github.com/PierreGallet/shazamer/compare/v0.1.0...v0.2.0) (2025-12-29)
+
+
+### Features
+
+* add simple deployment script ([0061bf9](https://github.com/PierreGallet/shazamer/commit/0061bf9e6f2f5958fba8e0b2706c879648a38b57))
+* added a front end for easier usage ([6e8c18d](https://github.com/PierreGallet/shazamer/commit/6e8c18d019fa0299a84838d5aa0af7cb4620f910))
+* switch to uv ([1f4c2d1](https://github.com/PierreGallet/shazamer/commit/1f4c2d113c51a3837c147c1230946fd9e821e38b))
+
 ## 0.1.0 (2025-12-27)
 
 
