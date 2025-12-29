@@ -1,0 +1,108 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Tailscale
+      uses: tailscale/github-action@v2
+      with:
+        oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+        oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+        tags: tag:ci
+
+    - name: Deploy to server
+      env:
+        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        SSH_HOST: ${{ secrets.SSH_HOST || 'host' }}
+        SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
+        SSH_USER: ${{ secrets.SSH_USER || 'user' }}
+      run: |
+        # Setup SSH
+        mkdir -p ~/.ssh
+        echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -p $SSH_PORT $SSH_HOST >> ~/.ssh/known_hosts
+
+        # Create deployment script
+        cat > deploy.sh << 'EOF'
+        #!/bin/bash
+        set -e
+
+        echo "🚀 Starting deployment of Shazamer..."
+
+        # Navigate to deployment directory
+        cd /home/$SSH_USER/shazamer || {
+          echo "Creating deployment directory..."
+          mkdir -p /home/$SSH_USER/shazamer
+          cd /home/$SSH_USER/shazamer
+        }
+
+        # Clone or update repository
+        if [ -d ".git" ]; then
+          echo "📥 Updating existing repository..."
+          git pull origin main
+        else
+          echo "📥 Cloning repository..."
+          git clone https://github.com/PierreGallet/shazamer.git .
+        fi
+
+        # Stop existing containers (only shazamer project)
+        echo "🛑 Stopping existing containers..."
+        docker compose down || true
+
+        # Build and start new containers
+        echo "🏗️ Building Docker images..."
+        docker compose build --no-cache
+
+        echo "🚀 Starting containers..."
+        docker compose up -d
+
+        # Wait for health checks
+        echo "⏳ Waiting for services to be healthy..."
+        sleep 10
+
+        # Check if services are running
+        if docker compose ps | grep -q "Up"; then
+          echo "✅ Deployment successful!"
+          docker compose ps
+        else
+          echo "❌ Deployment failed! Services are not running."
+          docker compose logs
+          exit 1
+        fi
+
+        # Cleanup old images
+        echo "🧹 Cleaning up old Docker images..."
+        docker image prune -f
+
+
+        echo "✨ Deployment completed successfully!"
+        EOF
+
+        # Make deployment script use environment variables
+        export SSH_USER SSH_HOST SSH_PORT
+        
+        # Execute deployment script on remote server
+        ssh -p $SSH_PORT $SSH_USER@$SSH_HOST 'bash -s' < deploy.sh
+
+        # Cleanup
+        rm deploy.sh
+
+    - name: Notify deployment status
+      if: always()
+      run: |
+        if [ "${{ job.status }}" == "success" ]; then
+          echo "✅ Deployment to shazamer.pierregallet.com completed successfully!"
+        else
+          echo "❌ Deployment failed! Check the logs for more information."
+        fi
