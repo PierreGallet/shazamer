@@ -265,18 +265,37 @@
     
     <main>
         <div class="upload-container">
-            <h2>Upload Audio File</h2>
-            <p style="color: #888; margin-top: 0.5rem;">Supported formats: MP3, WAV, FLAC, M4A, OGG, WMA, AAC</p>
+            <h2>Upload Audio File or URL</h2>
+            <p style="color: #888; margin-top: 0.5rem;">Supported: Audio files (MP3, WAV, FLAC, etc.) or URLs from YouTube, SoundCloud, etc.</p>
             
-            <div class="drop-zone" id="dropZone">
-                <p>Drag & drop your audio file here</p>
-                <p style="margin: 1rem 0; color: #666;">or</p>
-                <button class="button" onclick="document.getElementById('fileInput').click()">
-                    Choose File
+            <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1.5rem;">
+                <button class="button" id="fileTab" onclick="switchTab('file')" style="background: #333;">
+                    Upload File
+                </button>
+                <button class="button" id="urlTab" onclick="switchTab('url')" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                    From URL
                 </button>
             </div>
             
-            <input type="file" id="fileInput" class="file-input" accept=".mp3,.wav,.flac,.m4a,.ogg,.wma,.aac">
+            <div id="fileSection" style="display: none;">
+                <div class="drop-zone" id="dropZone">
+                    <p>Drag & drop your audio file here</p>
+                    <p style="margin: 1rem 0; color: #666;">or</p>
+                    <button class="button" onclick="document.getElementById('fileInput').click()">
+                        Choose File
+                    </button>
+                </div>
+                <input type="file" id="fileInput" class="file-input" accept=".mp3,.wav,.flac,.m4a,.ogg,.wma,.aac">
+            </div>
+            
+            <div id="urlSection">
+                <input type="url" id="urlInput" placeholder="https://youtube.com/watch?v=... or soundcloud.com/..." 
+                       style="width: 100%; padding: 1rem; background: #2a2a2a; border: 1px solid #444; 
+                              border-radius: 6px; color: white; font-size: 1rem; margin-bottom: 1rem;">
+                <button class="button" onclick="handleURL()" style="width: 100%;">
+                    Analyze from URL
+                </button>
+            </div>
             
             <div class="progress-container" id="progressContainer">
                 <div class="progress-bar">
@@ -322,9 +341,30 @@
         const recentList = document.getElementById('recentList');
         
         let currentTaskId = null;
+        let currentTab = 'url';
         
         // Load recent analyses on page load
         loadRecentAnalyses();
+        
+        function switchTab(tab) {
+            currentTab = tab;
+            const fileSection = document.getElementById('fileSection');
+            const urlSection = document.getElementById('urlSection');
+            const fileTab = document.getElementById('fileTab');
+            const urlTab = document.getElementById('urlTab');
+            
+            if (tab === 'file') {
+                fileSection.style.display = 'block';
+                urlSection.style.display = 'none';
+                fileTab.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                urlTab.style.background = '#333';
+            } else {
+                fileSection.style.display = 'none';
+                urlSection.style.display = 'block';
+                fileTab.style.background = '#333';
+                urlTab.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+            }
+        }
         
         // Drag and drop handlers
         dropZone.addEventListener('dragover', (e) => {
@@ -519,6 +559,57 @@
         
         function showError(message) {
             errorContainer.innerHTML = `<div class="error">${message}</div>`;
+        }
+        
+        async function handleURL() {
+            const urlInput = document.getElementById('urlInput');
+            const url = urlInput.value.trim();
+            
+            // Reset UI
+            errorContainer.innerHTML = '';
+            results.style.display = 'none';
+            
+            if (!url) {
+                showError('Please enter a URL');
+                return;
+            }
+            
+            // Validate URL format
+            try {
+                new URL(url);
+            } catch (e) {
+                showError('Please enter a valid URL');
+                return;
+            }
+            
+            progressContainer.style.display = 'block';
+            statusMessage.textContent = 'Downloading from URL...';
+            progressFill.style.width = '5%';
+            
+            try {
+                const response = await fetch('/api/download-url', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: url })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Download failed');
+                }
+                
+                const data = await response.json();
+                currentTaskId = data.task_id;
+                
+                // Start polling for progress
+                pollProgress();
+                
+            } catch (error) {
+                showError(error.message);
+                progressContainer.style.display = 'none';
+            }
         }
         
         // Modal styles
