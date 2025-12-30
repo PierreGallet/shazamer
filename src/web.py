@@ -185,22 +185,15 @@ async def download_and_analyze(task_id: str, url: str):
                 }
             ],
             "outtmpl": str(output_path),
-            "quiet": True,
-            "no_warnings": True,
+            "quiet": False,  # Show errors for debugging
+            "no_warnings": False,
             "extract_flat": False,
-            # Options to bypass restrictions
-            "nocheckcertificate": True,
-            "geo_bypass": True,
-            "age_limit": None,
-            # User agent to appear as a browser
-            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            # Additional headers
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-us,en;q=0.5",
-                "Sec-Fetch-Mode": "navigate",
-            }
+            # Don't download playlists
+            "noplaylist": True,
+            # Force IPv4
+            "force_ipv4": True,
+            # Update check
+            "update": True,
         }
 
         # Download the audio
