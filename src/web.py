@@ -175,32 +175,33 @@ async def download_and_analyze(task_id: str, url: str):
         output_filename = f"{timestamp}_%(title)s.%(ext)s"
         output_path = UPLOAD_FOLDER / output_filename
 
-        ydl_opts = {
-            "format": "bestaudio/best",
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }
-            ],
-            "outtmpl": str(output_path),
-            "quiet": False,  # Show errors for debugging
-            "no_warnings": False,
-            "extract_flat": False,
-            # Don't download playlists
-            "noplaylist": True,
-            # Force IPv4
-            "force_ipv4": True,
-            # Update check
-            "update": True,
-        }
-
-        # Download the audio
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            title = info.get("title", "Unknown")
-
+        # Use subprocess to call yt-dlp with remote components enabled
+        cmd = [
+            "python", "-m", "yt_dlp",
+            "--remote-components", "ejs:github",
+            "-f", "bestaudio/best",
+            "-x",  # Extract audio
+            "--audio-format", "mp3",
+            "--audio-quality", "192",
+            "-o", str(output_path),
+            "--no-playlist",
+            "--force-ipv4",
+            url
+        ]
+        
+        # Run yt-dlp command
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode != 0:
+            error_msg = stderr.decode() if stderr else "Unknown error"
+            raise Exception(f"yt-dlp failed: {error_msg}")
+        
         # Find the downloaded file
         # yt-dlp adds .mp3 extension after conversion
         possible_files = list(UPLOAD_FOLDER.glob(f"{timestamp}_*.mp3"))
