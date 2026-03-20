@@ -126,6 +126,7 @@ jobs:
     if: >-
       !failure() && !cancelled()
       && github.event_name != 'pull_request'
+      && !startsWith(github.event.head_commit.message, 'chore(main): release')
     timeout-minutes: 30
 
     concurrency:
