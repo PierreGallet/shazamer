@@ -75,7 +75,7 @@ jobs:
           ACTIVE_ENV=$(ssh -p $PORT $SSH_USER@$HOST "cat $DEPLOY_PATH/.deploy-env | grep ACTIVE_ENV | cut -d= -f2")
           echo "Active environment: $ACTIVE_ENV"
 
-          if ssh -p $PORT $SSH_USER@$HOST "docker exec shazamer_$ACTIVE_ENV curl -sf http://localhost:8000/"; then
+          if ssh -p $PORT $SSH_USER@$HOST "docker exec shazamer_$ACTIVE_ENV python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/').read()\""; then
             echo "Health check passed!"
           else
             echo "Health check failed!"
