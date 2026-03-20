@@ -3,739 +3,1128 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shazamer - DJ Set Analyzer</title>
+    <title>Shazamer</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
+
+        :root {
+            --bg-primary: #0a0a0a;
+            --bg-secondary: #111113;
+            --bg-tertiary: #1a1a1e;
+            --bg-hover: #222226;
+            --border: #2a2a2e;
+            --border-light: #333338;
+            --text-primary: #e8e8ec;
+            --text-secondary: #8e8e96;
+            --text-muted: #5c5c64;
+            --accent: #f50;
+            --accent-hover: #ff6a1a;
+            --accent-glow: rgba(255, 85, 0, 0.15);
+            --accent-glow-strong: rgba(255, 85, 0, 0.3);
+            --success: #1db954;
+            --error: #e53935;
+            --error-bg: rgba(229, 57, 53, 0.1);
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f0f0f;
-            color: #fff;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
             min-height: 100vh;
-            display: flex;
-            flex-direction: column;
+            -webkit-font-smoothing: antialiased;
         }
-        
+
+        /* Header */
         header {
-            background: #1a1a1a;
-            padding: 1.5rem;
-            border-bottom: 1px solid #333;
-        }
-        
-        h1 {
-            font-size: 2rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 0.5rem;
-        }
-        
-        .subtitle {
-            color: #888;
-            font-size: 1rem;
-        }
-        
-        main {
-            flex: 1;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: rgba(10, 10, 10, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            padding: 0 2rem;
+            height: 56px;
             display: flex;
-            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+
+        .logo-icon {
+            width: 28px;
+            height: 28px;
+            background: var(--accent);
+            border-radius: 6px;
+            display: flex;
             align-items: center;
             justify-content: center;
-            padding: 2rem;
         }
-        
-        .upload-container {
-            background: #1a1a1a;
-            border-radius: 12px;
-            padding: 3rem;
-            text-align: center;
-            max-width: 600px;
-            width: 100%;
-            border: 1px solid #333;
+
+        .logo-icon svg {
+            width: 16px;
+            height: 16px;
+            fill: white;
         }
-        
-        .drop-zone {
-            border: 2px dashed #444;
+
+        .logo-text {
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--text-primary);
+        }
+
+        .header-subtitle {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        /* Main layout */
+        main {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 2.5rem 1.5rem 4rem;
+        }
+
+        /* Upload section */
+        .upload-section {
+            margin-bottom: 3rem;
+        }
+
+        .section-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+        }
+
+        /* Tab bar */
+        .tab-bar {
+            display: flex;
+            gap: 0;
+            margin-bottom: 1.5rem;
+            background: var(--bg-secondary);
             border-radius: 8px;
-            padding: 3rem;
-            margin: 2rem 0;
+            padding: 3px;
+            border: 1px solid var(--border);
+        }
+
+        .tab {
+            flex: 1;
+            padding: 0.6rem 1rem;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            background: transparent;
+            border: none;
+            border-radius: 6px;
             cursor: pointer;
-            transition: all 0.3s;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
         }
-        
+
+        .tab:hover {
+            color: var(--text-primary);
+        }
+
+        .tab.active {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+
+        .tab svg {
+            width: 15px;
+            height: 15px;
+            opacity: 0.7;
+        }
+
+        .tab.active svg {
+            opacity: 1;
+        }
+
+        /* URL input */
+        .url-form {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .url-input {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            font-family: inherit;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            outline: none;
+        }
+
+        .url-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .url-input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        /* Primary button */
+        .btn-primary {
+            padding: 0.75rem 1.5rem;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.15s;
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            box-shadow: 0 0 20px var(--accent-glow);
+        }
+
+        .btn-primary:active {
+            transform: scale(0.97);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-primary svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        /* Drop zone */
+        .drop-zone {
+            border: 1.5px dashed var(--border-light);
+            border-radius: 10px;
+            padding: 2.5rem 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.25s;
+            background: var(--bg-secondary);
+        }
+
         .drop-zone:hover {
-            border-color: #667eea;
-            background: rgba(102, 126, 234, 0.1);
+            border-color: var(--accent);
+            background: var(--accent-glow);
         }
-        
+
         .drop-zone.dragover {
-            border-color: #764ba2;
-            background: rgba(118, 75, 162, 0.1);
+            border-color: var(--accent);
+            background: var(--accent-glow-strong);
+            transform: scale(1.01);
         }
-        
+
+        .drop-icon {
+            width: 40px;
+            height: 40px;
+            margin: 0 auto 1rem;
+            opacity: 0.4;
+        }
+
+        .drop-zone:hover .drop-icon {
+            opacity: 0.7;
+        }
+
+        .drop-text {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .drop-hint {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
         .file-input {
             display: none;
         }
-        
-        .button {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 0.75rem 2rem;
-            border-radius: 6px;
-            font-size: 1rem;
-            cursor: pointer;
-            transition: transform 0.2s;
-        }
-        
-        .button:hover {
-            transform: translateY(-2px);
-        }
-        
-        .button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        
-        .progress-container {
-            margin-top: 2rem;
+
+        /* Progress */
+        .progress-section {
             display: none;
+            margin-top: 1.5rem;
         }
-        
-        .progress-bar {
-            background: #2a2a2a;
-            height: 8px;
-            border-radius: 4px;
-            overflow: hidden;
-            margin: 1rem 0;
+
+        .progress-section.visible {
+            display: block;
         }
-        
-        .progress-fill {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            height: 100%;
-            width: 0;
-            transition: width 0.3s;
-        }
-        
-        .status-message {
-            color: #aaa;
-            margin-top: 1rem;
-        }
-        
-        .results {
-            background: #1a1a1a;
-            border-radius: 12px;
-            padding: 2rem;
-            margin-top: 2rem;
-            max-width: 800px;
-            width: 100%;
-            display: none;
-            border: 1px solid #333;
-        }
-        
-        .track-list {
-            margin-top: 1rem;
-            max-height: 400px;
-            overflow-y: auto;
-        }
-        
-        .track {
-            padding: 1rem;
-            border-bottom: 1px solid #333;
+
+        .progress-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            margin-bottom: 0.5rem;
         }
-        
+
+        .progress-label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .progress-pct {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--accent);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .progress-track {
+            height: 4px;
+            background: var(--bg-tertiary);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            width: 0;
+            background: var(--accent);
+            border-radius: 2px;
+            transition: width 0.4s ease;
+        }
+
+        .progress-detail {
+            margin-top: 0.5rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        /* Error */
+        .error-msg {
+            margin-top: 1rem;
+            padding: 0.75rem 1rem;
+            background: var(--error-bg);
+            border: 1px solid rgba(229, 57, 53, 0.2);
+            border-radius: 8px;
+            color: var(--error);
+            font-size: 0.85rem;
+            display: none;
+        }
+
+        .error-msg.visible {
+            display: block;
+        }
+
+        /* Waveform decoration */
+        .waveform-divider {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            justify-content: center;
+            padding: 2rem 0;
+            opacity: 0.15;
+        }
+
+        .waveform-bar {
+            width: 2px;
+            background: var(--accent);
+            border-radius: 1px;
+        }
+
+        /* Results */
+        .results-section {
+            display: none;
+            margin-bottom: 3rem;
+        }
+
+        .results-section.visible {
+            display: block;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .results-count {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .results-count span {
+            color: var(--accent);
+        }
+
+        .results-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn-secondary {
+            padding: 0.5rem 0.9rem;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+            border-color: var(--border-light);
+        }
+
+        .btn-secondary svg {
+            width: 14px;
+            height: 14px;
+        }
+
+        /* Track list */
+        .track-list {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            background: var(--bg-secondary);
+        }
+
+        .track {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.85rem 1rem;
+            border-bottom: 1px solid var(--border);
+            transition: background 0.15s;
+        }
+
         .track:last-child {
             border-bottom: none;
         }
-        
-        .track-time {
-            color: #667eea;
-            font-family: monospace;
-            margin-right: 1rem;
+
+        .track:hover {
+            background: var(--bg-hover);
         }
-        
+
+        .track-num {
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            width: 1.5rem;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            flex-shrink: 0;
+        }
+
+        .track-time {
+            font-size: 0.8rem;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            color: var(--accent);
+            opacity: 0.8;
+            flex-shrink: 0;
+            width: 5.5rem;
+        }
+
         .track-info {
             flex: 1;
+            min-width: 0;
         }
-        
+
         .track-title {
-            font-weight: 500;
-        }
-        
-        .track-artist {
-            color: #888;
             font-size: 0.9rem;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
-        
-        .track-confidence {
-            color: #666;
+
+        .track-title a {
+            color: inherit;
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+
+        .track-title a:hover {
+            color: var(--accent);
+        }
+
+        .track-artist {
             font-size: 0.8rem;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
-        
-        .download-buttons {
-            margin-top: 1.5rem;
-            display: flex;
-            gap: 1rem;
-            justify-content: center;
+
+        .track-confidence {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.5rem;
+            border-radius: 10px;
+            font-weight: 500;
+            flex-shrink: 0;
         }
-        
-        .error {
-            background: #ff4444;
-            color: white;
-            padding: 1rem;
-            border-radius: 6px;
-            margin-top: 1rem;
+
+        .confidence-high {
+            background: rgba(29, 185, 84, 0.12);
+            color: var(--success);
         }
-        
-        .recent-analyses {
-            background: #1a1a1a;
-            border-radius: 12px;
-            padding: 2rem;
-            margin-top: 2rem;
-            max-width: 800px;
-            width: 100%;
-            border: 1px solid #333;
+
+        .confidence-medium {
+            background: rgba(255, 170, 0, 0.12);
+            color: #fa0;
         }
-        
+
+        .confidence-low {
+            background: rgba(255, 85, 0, 0.12);
+            color: var(--accent);
+        }
+
+        /* Recent analyses */
+        .recent-section {
+            display: none;
+        }
+
+        .recent-section.visible {
+            display: block;
+        }
+
+        .recent-list {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            background: var(--bg-secondary);
+        }
+
         .recent-item {
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            padding: 1rem 1.5rem 1rem 1rem;
-            border-bottom: 1px solid #333;
-            cursor: pointer;
-            transition: background 0.2s;
+            justify-content: space-between;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            transition: background 0.15s;
         }
-        
-        .recent-item:hover {
-            background: #222;
-        }
-        
+
         .recent-item:last-child {
             border-bottom: none;
         }
-        
-        .file-button {
-            display: inline-flex;
+
+        .recent-item:hover {
+            background: var(--bg-hover);
+        }
+
+        .recent-info {
+            min-width: 0;
+            flex: 1;
+        }
+
+        .recent-name {
+            font-size: 0.85rem;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .recent-meta {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.15rem;
+        }
+
+        .recent-actions {
+            display: flex;
+            gap: 0.4rem;
+            flex-shrink: 0;
+            margin-left: 1rem;
+        }
+
+        .btn-icon {
+            width: 32px;
+            height: 32px;
+            display: flex;
             align-items: center;
             justify-content: center;
-            gap: 0.4rem;
-            min-width: 60px;
-            padding: 0.5rem 1rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            text-decoration: none;
-            border: none;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
             border-radius: 6px;
-            font-size: 0.875rem;
-            font-weight: 500;
+            color: var(--text-secondary);
             cursor: pointer;
-            transition: all 0.2s;
-            white-space: nowrap;
+            transition: all 0.15s;
+            text-decoration: none;
         }
-        
-        .file-button svg {
-            width: 16px;
-            height: 16px;
-            stroke-width: 2.5;
+
+        .btn-icon:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+            border-color: var(--border-light);
         }
-        
-        .file-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+
+        .btn-icon svg {
+            width: 14px;
+            height: 14px;
         }
-        
-        .file-button:active {
-            transform: translateY(0);
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            z-index: 200;
+            overflow: auto;
+            padding: 3rem 1rem;
+        }
+
+        .modal-overlay.visible {
+            display: block;
+        }
+
+        .modal {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            max-width: 700px;
+            margin: 0 auto;
+            overflow: hidden;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.15s;
+        }
+
+        .modal-close:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            padding: 1.25rem;
+            font-size: 0.85rem;
+            line-height: 1.8;
+            color: var(--text-secondary);
+            max-height: 60vh;
+            overflow-y: auto;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            white-space: pre-wrap;
+        }
+
+        .modal-body a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .modal-body a:hover {
+            text-decoration: underline;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-light);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+
+        /* Animations */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .loading {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            header { padding: 0 1rem; }
+            main { padding: 1.5rem 1rem 3rem; }
+            .url-form { flex-direction: column; }
+            .btn-primary { justify-content: center; }
+            .results-header { flex-direction: column; gap: 0.75rem; align-items: flex-start; }
+            .track { padding: 0.75rem; gap: 0.6rem; }
+            .track-num { display: none; }
         }
     </style>
 </head>
 <body>
-    <header>
-        <h1>Shazamer</h1>
-        <p class="subtitle">Automatically identify tracks in DJ sets and long audio mixes</p>
-    </header>
-    
-    <main>
-        <div class="upload-container">
-            <h2>Upload Audio File or URL</h2>
-            <p style="color: #888; margin-top: 0.5rem;">Supported: Audio files (MP3, WAV, FLAC, etc.) or URLs from YouTube, SoundCloud, etc.</p>
-            
-            <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1.5rem;">
-                <button class="button" id="fileTab" onclick="switchTab('file')" style="background: #333;">
-                    Upload File
-                </button>
-                <button class="button" id="urlTab" onclick="switchTab('url')" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
-                    From URL
-                </button>
-            </div>
-            
-            <div id="fileSection" style="display: none;">
-                <div class="drop-zone" id="dropZone">
-                    <p>Drag & drop your audio file here</p>
-                    <p style="margin: 1rem 0; color: #666;">or</p>
-                    <button class="button" onclick="document.getElementById('fileInput').click()">
-                        Choose File
-                    </button>
-                </div>
-                <input type="file" id="fileInput" class="file-input" accept=".mp3,.wav,.flac,.m4a,.ogg,.wma,.aac">
-            </div>
-            
-            <div id="urlSection">
-                <input type="url" id="urlInput" placeholder="https://youtube.com/watch?v=... or soundcloud.com/..." 
-                       style="width: 100%; padding: 1rem; background: #2a2a2a; border: 1px solid #444; 
-                              border-radius: 6px; color: white; font-size: 1rem; margin-bottom: 1rem;">
-                <button class="button" onclick="handleURL()" style="width: 100%;">
-                    Analyze from URL
-                </button>
-            </div>
-            
-            <div class="progress-container" id="progressContainer">
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progressFill"></div>
-                </div>
-                <p class="status-message" id="statusMessage">Uploading...</p>
-            </div>
-            
-            <div id="errorContainer"></div>
+
+<header>
+    <div class="logo">
+        <div class="logo-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
         </div>
-        
-        <div class="results" id="results">
-            <h2>Analysis Results</h2>
-            <p id="resultsSummary" style="color: #888; margin-top: 0.5rem;"></p>
-            
-            <div class="track-list" id="trackList"></div>
-            
-            <div class="download-buttons">
-                <button class="button" id="downloadJson">Download JSON</button>
-                <button class="button" id="downloadTxt">Download TXT</button>
+        <span class="logo-text">Shazamer</span>
+    </div>
+    <span class="header-subtitle">DJ Set Analyzer</span>
+</header>
+
+<main>
+    <section class="upload-section">
+        <div class="section-title">Identify tracks</div>
+
+        <div class="tab-bar">
+            <button class="tab active" id="urlTab" onclick="switchTab('url')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
+                    <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+                </svg>
+                From URL
+            </button>
+            <button class="tab" id="fileTab" onclick="switchTab('file')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                Upload File
+            </button>
+        </div>
+
+        <!-- URL section -->
+        <div id="urlSection">
+            <div class="url-form">
+                <input type="url" id="urlInput" class="url-input"
+                    placeholder="Paste a YouTube or SoundCloud URL..."
+                    onkeydown="if(event.key==='Enter')handleURL()">
+                <button class="btn-primary" onclick="handleURL()" id="analyzeBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                    Analyze
+                </button>
             </div>
         </div>
-        
-        <div class="recent-analyses" id="recentAnalyses">
-            <h3>Recent Analyses</h3>
-            <div id="recentList"></div>
+
+        <!-- File section -->
+        <div id="fileSection" style="display: none;">
+            <div class="drop-zone" id="dropZone">
+                <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <div class="drop-text">Drop your audio file here</div>
+                <div class="drop-hint">MP3, WAV, FLAC, M4A, OGG, WMA, AAC</div>
+            </div>
+            <input type="file" id="fileInput" class="file-input" accept=".mp3,.wav,.flac,.m4a,.ogg,.wma,.aac">
         </div>
-    </main>
-    
-    <script>
-        const dropZone = document.getElementById('dropZone');
-        const fileInput = document.getElementById('fileInput');
-        const progressContainer = document.getElementById('progressContainer');
-        const progressFill = document.getElementById('progressFill');
-        const statusMessage = document.getElementById('statusMessage');
-        const errorContainer = document.getElementById('errorContainer');
-        const results = document.getElementById('results');
-        const resultsSummary = document.getElementById('resultsSummary');
-        const trackList = document.getElementById('trackList');
-        const downloadJson = document.getElementById('downloadJson');
-        const downloadTxt = document.getElementById('downloadTxt');
-        const recentAnalyses = document.getElementById('recentAnalyses');
-        const recentList = document.getElementById('recentList');
-        
-        let currentTaskId = null;
-        let currentTab = 'url';
-        
-        // Load recent analyses on page load
-        loadRecentAnalyses();
-        
-        function switchTab(tab) {
-            currentTab = tab;
-            const fileSection = document.getElementById('fileSection');
-            const urlSection = document.getElementById('urlSection');
-            const fileTab = document.getElementById('fileTab');
-            const urlTab = document.getElementById('urlTab');
-            
-            if (tab === 'file') {
-                fileSection.style.display = 'block';
-                urlSection.style.display = 'none';
-                fileTab.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-                urlTab.style.background = '#333';
+
+        <!-- Progress -->
+        <div class="progress-section" id="progressSection">
+            <div class="progress-header">
+                <span class="progress-label" id="progressLabel">Downloading...</span>
+                <span class="progress-pct" id="progressPct">0%</span>
+            </div>
+            <div class="progress-track">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-detail" id="progressDetail"></div>
+        </div>
+
+        <!-- Error -->
+        <div class="error-msg" id="errorMsg"></div>
+    </section>
+
+    <!-- Waveform divider (generated by JS) -->
+    <div class="waveform-divider" id="waveformDivider"></div>
+
+    <!-- Results -->
+    <section class="results-section" id="resultsSection">
+        <div class="results-header">
+            <div class="results-count" id="resultsCount"></div>
+            <div class="results-actions">
+                <button class="btn-secondary" id="downloadJson">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    JSON
+                </button>
+                <button class="btn-secondary" id="downloadTxt">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    TXT
+                </button>
+            </div>
+        </div>
+        <div class="track-list" id="trackList"></div>
+    </section>
+
+    <!-- Recent -->
+    <section class="recent-section" id="recentSection">
+        <div class="section-title">Recent analyses</div>
+        <div class="recent-list" id="recentList"></div>
+    </section>
+</main>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+        <div class="modal-header">
+            <span class="modal-title" id="modalTitle">Tracklist</span>
+            <button class="modal-close" onclick="closeModal()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+        <div class="modal-body" id="modalBody">Loading...</div>
+    </div>
+</div>
+
+<script>
+    // Elements
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const progressSection = document.getElementById('progressSection');
+    const progressFill = document.getElementById('progressFill');
+    const progressLabel = document.getElementById('progressLabel');
+    const progressPct = document.getElementById('progressPct');
+    const progressDetail = document.getElementById('progressDetail');
+    const errorMsg = document.getElementById('errorMsg');
+    const resultsSection = document.getElementById('resultsSection');
+    const resultsCount = document.getElementById('resultsCount');
+    const trackList = document.getElementById('trackList');
+    const recentSection = document.getElementById('recentSection');
+    const recentList = document.getElementById('recentList');
+
+    let currentTaskId = null;
+    let currentTab = 'url';
+
+    // Generate waveform decoration
+    (function generateWaveform() {
+        const container = document.getElementById('waveformDivider');
+        const bars = 80;
+        for (let i = 0; i < bars; i++) {
+            const bar = document.createElement('div');
+            bar.className = 'waveform-bar';
+            const h = Math.sin(i * 0.15) * 12 + Math.random() * 8 + 4;
+            bar.style.height = h + 'px';
+            container.appendChild(bar);
+        }
+    })();
+
+    // Init
+    loadRecentAnalyses();
+
+    // Tab switching
+    function switchTab(tab) {
+        currentTab = tab;
+        document.getElementById('fileSection').style.display = tab === 'file' ? 'block' : 'none';
+        document.getElementById('urlSection').style.display = tab === 'url' ? 'block' : 'none';
+        document.getElementById('fileTab').classList.toggle('active', tab === 'file');
+        document.getElementById('urlTab').classList.toggle('active', tab === 'url');
+    }
+
+    // Drag and drop
+    dropZone.addEventListener('dragover', e => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+    });
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', e => {
+        if (e.target.files.length > 0) handleFile(e.target.files[0]);
+    });
+
+    // File upload
+    async function handleFile(file) {
+        resetUI();
+        const formData = new FormData();
+        formData.append('file', file);
+        showProgress('Uploading...', 5);
+
+        try {
+            const res = await fetch('/api/upload', { method: 'POST', body: formData });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Upload failed');
+            }
+            const data = await res.json();
+            currentTaskId = data.task_id;
+            pollProgress();
+        } catch (e) {
+            showError(e.message);
+        }
+    }
+
+    // URL handler
+    async function handleURL() {
+        const url = document.getElementById('urlInput').value.trim();
+        resetUI();
+
+        if (!url) { showError('Please enter a URL'); return; }
+        try { new URL(url); } catch { showError('Please enter a valid URL'); return; }
+
+        showProgress('Downloading...', 3);
+
+        try {
+            const res = await fetch('/api/download-url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url }),
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Download failed');
+            }
+            const data = await res.json();
+            currentTaskId = data.task_id;
+            pollProgress();
+        } catch (e) {
+            showError(e.message);
+        }
+    }
+
+    // Polling
+    async function pollProgress() {
+        if (!currentTaskId) return;
+        try {
+            const res = await fetch(`/api/status/${currentTaskId}`);
+            const data = await res.json();
+
+            updateProgress(data.progress, data.message);
+
+            if (data.current_segment && data.total_segments) {
+                progressDetail.textContent = `Track ${data.current_segment} / ${data.total_segments}`;
+            }
+
+            if (data.status === 'completed') {
+                displayResults(data);
+                loadRecentAnalyses();
+            } else if (data.status === 'error') {
+                showError(data.error || 'Analysis failed');
             } else {
-                fileSection.style.display = 'none';
-                urlSection.style.display = 'block';
-                fileTab.style.background = '#333';
-                urlTab.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                setTimeout(pollProgress, 1000);
             }
+        } catch {
+            showError('Connection lost');
         }
-        
-        // Drag and drop handlers
-        dropZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            dropZone.classList.add('dragover');
+    }
+
+    // Progress helpers
+    function showProgress(label, pct) {
+        progressSection.classList.add('visible');
+        progressLabel.textContent = label;
+        progressPct.textContent = pct + '%';
+        progressFill.style.width = pct + '%';
+        progressDetail.textContent = '';
+    }
+
+    function updateProgress(pct, label) {
+        progressLabel.textContent = label;
+        progressPct.textContent = pct + '%';
+        progressFill.style.width = pct + '%';
+    }
+
+    function resetUI() {
+        errorMsg.classList.remove('visible');
+        resultsSection.classList.remove('visible');
+        progressSection.classList.remove('visible');
+        progressDetail.textContent = '';
+    }
+
+    function showError(msg) {
+        progressSection.classList.remove('visible');
+        errorMsg.textContent = msg;
+        errorMsg.classList.add('visible');
+    }
+
+    // Display results
+    function displayResults(data) {
+        progressSection.classList.remove('visible');
+        resultsSection.classList.add('visible');
+
+        resultsCount.innerHTML = `<span>${data.results.length}</span> tracks found in <em>${data.filename}</em>`;
+
+        trackList.innerHTML = '';
+        data.results.forEach((track, idx) => {
+            const conf = track.match_count <= 5 ? 'high' : track.match_count <= 15 ? 'medium' : 'low';
+            const confLabel = track.match_count <= 5 ? 'High' : track.match_count <= 15 ? 'Med' : 'Low';
+
+            const el = document.createElement('div');
+            el.className = 'track';
+            el.innerHTML = `
+                <span class="track-num">${idx + 1}</span>
+                <span class="track-time">${track.start_time}</span>
+                <div class="track-info">
+                    <div class="track-title">${track.shazam_url
+                        ? `<a href="${track.shazam_url}" target="_blank" rel="noopener">${esc(track.title)}</a>`
+                        : esc(track.title)}</div>
+                    <div class="track-artist">${esc(track.artist)}</div>
+                </div>
+                <span class="track-confidence confidence-${conf}">${confLabel}</span>
+            `;
+            trackList.appendChild(el);
         });
-        
-        dropZone.addEventListener('dragleave', () => {
-            dropZone.classList.remove('dragover');
-        });
-        
-        dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('dragover');
-            
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                handleFile(files[0]);
-            }
-        });
-        
-        fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                handleFile(e.target.files[0]);
-            }
-        });
-        
-        async function handleFile(file) {
-            // Reset UI
-            errorContainer.innerHTML = '';
-            results.style.display = 'none';
-            
-            // Validate file
-            const allowedTypes = ['audio/mpeg', 'audio/wav', 'audio/flac', 'audio/mp4', 'audio/ogg', 'audio/x-ms-wma', 'audio/aac'];
-            if (!allowedTypes.some(type => file.type.startsWith(type))) {
-                showError('Invalid file type. Please upload an audio file.');
-                return;
-            }
-            
-            // Upload file
-            const formData = new FormData();
-            formData.append('file', file);
-            
-            progressContainer.style.display = 'block';
-            statusMessage.textContent = 'Uploading...';
-            progressFill.style.width = '5%';
-            
-            try {
-                const response = await fetch('/api/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.detail || 'Upload failed');
-                }
-                
-                const data = await response.json();
-                currentTaskId = data.task_id;
-                
-                // Start polling for progress
-                pollProgress();
-                
-            } catch (error) {
-                showError(error.message);
-                progressContainer.style.display = 'none';
-            }
-        }
-        
-        async function pollProgress() {
-            if (!currentTaskId) return;
-            
-            try {
-                const response = await fetch(`/api/status/${currentTaskId}`);
-                const data = await response.json();
-                
-                // Update progress
-                progressFill.style.width = `${data.progress}%`;
-                statusMessage.textContent = data.message;
-                
-                if (data.status === 'completed') {
-                    displayResults(data);
-                    loadRecentAnalyses();
-                } else if (data.status === 'error') {
-                    showError(data.error || 'Analysis failed');
-                    progressContainer.style.display = 'none';
-                } else {
-                    // Continue polling
-                    setTimeout(pollProgress, 1000);
-                }
-                
-            } catch (error) {
-                showError('Failed to get status');
-                progressContainer.style.display = 'none';
-            }
-        }
-        
-        function displayResults(data) {
-            progressContainer.style.display = 'none';
-            results.style.display = 'block';
-            
-            resultsSummary.textContent = `Found ${data.results.length} unique tracks in ${data.filename}`;
-            
-            // Display tracks
-            trackList.innerHTML = '';
-            data.results.forEach(track => {
-                const trackEl = document.createElement('div');
-                trackEl.className = 'track';
-                
-                const confidence = track.match_count <= 5 ? 'high' : 
-                                 track.match_count <= 15 ? 'medium' : 'low';
-                
-                trackEl.innerHTML = `
-                    <span class="track-time">${track.start_time}</span>
-                    <div class="track-info">
-                        <div class="track-title">
-                            ${track.shazam_url ? 
-                                `<a href="${track.shazam_url}" target="_blank" style="color: inherit; text-decoration: none; border-bottom: 1px dotted #667eea;">${track.title}</a>` : 
-                                track.title}
-                        </div>
-                        <div class="track-artist">${track.artist}</div>
-                        <div class="track-confidence">${track.match_count} matches (${confidence} confidence)</div>
+
+        document.getElementById('downloadJson').onclick = () => download('json');
+        document.getElementById('downloadTxt').onclick = () => download('txt');
+    }
+
+    function download(fmt) {
+        if (currentTaskId) window.location.href = `/api/download/${currentTaskId}/${fmt}`;
+    }
+
+    // Recent analyses
+    async function loadRecentAnalyses() {
+        try {
+            const res = await fetch('/api/recent');
+            const data = await res.json();
+            if (!data.length) { recentSection.classList.remove('visible'); return; }
+
+            recentSection.classList.add('visible');
+            recentList.innerHTML = '';
+
+            data.forEach(item => {
+                const txtFile = item.txt_path.split('/').pop();
+                const jsonFile = item.json_path.split('/').pop();
+                const el = document.createElement('div');
+                el.className = 'recent-item';
+                el.innerHTML = `
+                    <div class="recent-info">
+                        <div class="recent-name">${esc(item.filename)}</div>
+                        <div class="recent-meta">${item.track_count} tracks &middot; ${item.created}</div>
+                    </div>
+                    <div class="recent-actions">
+                        <button class="btn-icon" onclick="viewFile('${esc(txtFile)}')" title="View tracklist">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                            </svg>
+                        </button>
+                        <a href="/outputs/${esc(jsonFile)}" download class="btn-icon" title="Download JSON">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                                <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                        </a>
+                        <a href="/outputs/${esc(txtFile)}" download class="btn-icon" title="Download TXT">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/>
+                                <line x1="16" y1="17" x2="8" y2="17"/>
+                            </svg>
+                        </a>
                     </div>
                 `;
-                
-                trackList.appendChild(trackEl);
+                recentList.appendChild(el);
             });
-            
-            // Setup download buttons
-            downloadJson.onclick = () => download('json');
-            downloadTxt.onclick = () => download('txt');
+        } catch (e) {
+            console.error('Failed to load recent analyses:', e);
         }
-        
-        async function download(format) {
-            if (!currentTaskId) return;
-            
-            window.location.href = `/api/download/${currentTaskId}/${format}`;
+    }
+
+    // Modal
+    async function viewFile(filename) {
+        const overlay = document.getElementById('modalOverlay');
+        const body = document.getElementById('modalBody');
+        overlay.classList.add('visible');
+        body.textContent = 'Loading...';
+
+        try {
+            const res = await fetch(`/api/view/${encodeURIComponent(filename)}`);
+            if (!res.ok) throw new Error((await res.json()).detail || 'Failed to load');
+            const data = await res.json();
+            if (data.is_html) body.innerHTML = data.content;
+            else body.textContent = data.content;
+        } catch (e) {
+            body.textContent = `Error: ${e.message}`;
         }
-        
-        async function loadRecentAnalyses() {
-            try {
-                const response = await fetch('/api/recent');
-                const data = await response.json();
-                
-                if (data.length > 0) {
-                    recentAnalyses.style.display = 'block';
-                    recentList.innerHTML = '';
-                    
-                    data.forEach(item => {
-                        const itemEl = document.createElement('div');
-                        itemEl.className = 'recent-item';
-                        itemEl.innerHTML = `
-                            <div>
-                                <div style="font-weight: 500;">${item.filename}</div>
-                                <div style="color: #888; font-size: 0.9rem;">${item.track_count} tracks • ${item.created}</div>
-                            </div>
-                            <div style="display: flex; gap: 0.75rem; align-items: center;">
-                                <button class="file-button" onclick="viewFile('${item.txt_path.split('/').pop()}')" title="View">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                                        <circle cx="12" cy="12" r="3"/>
-                                    </svg>
-                                </button>
-                                <a href="${item.json_path}" download class="file-button" title="Download JSON">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                                        <polyline points="7 10 12 15 17 10"/>
-                                        <line x1="12" y1="15" x2="12" y2="3"/>
-                                    </svg>
-                                    <span>JSON</span>
-                                </a>
-                                <a href="${item.txt_path}" download class="file-button" title="Download TXT">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                                        <polyline points="7 10 12 15 17 10"/>
-                                        <line x1="12" y1="15" x2="12" y2="3"/>
-                                    </svg>
-                                    <span>TXT</span>
-                                </a>
-                            </div>
-                        `;
-                        recentList.appendChild(itemEl);
-                    });
-                } else {
-                    recentAnalyses.style.display = 'none';
-                }
-            } catch (error) {
-                console.error('Failed to load recent analyses:', error);
-            }
-        }
-        
-        function showError(message) {
-            errorContainer.innerHTML = `<div class="error">${message}</div>`;
-        }
-        
-        async function handleURL() {
-            const urlInput = document.getElementById('urlInput');
-            const url = urlInput.value.trim();
-            
-            // Reset UI
-            errorContainer.innerHTML = '';
-            results.style.display = 'none';
-            
-            if (!url) {
-                showError('Please enter a URL');
-                return;
-            }
-            
-            // Validate URL format
-            try {
-                new URL(url);
-            } catch (e) {
-                showError('Please enter a valid URL');
-                return;
-            }
-            
-            progressContainer.style.display = 'block';
-            statusMessage.textContent = 'Downloading from URL...';
-            progressFill.style.width = '5%';
-            
-            try {
-                const response = await fetch('/api/download-url', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ url: url })
-                });
-                
-                if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.detail || 'Download failed');
-                }
-                
-                const data = await response.json();
-                currentTaskId = data.task_id;
-                
-                // Start polling for progress
-                pollProgress();
-                
-            } catch (error) {
-                showError(error.message);
-                progressContainer.style.display = 'none';
-            }
-        }
-        
-        // Modal styles
-        const modalStyles = `
-            <style>
-                .modal {
-                    display: none;
-                    position: fixed;
-                    z-index: 1000;
-                    left: 0;
-                    top: 0;
-                    width: 100%;
-                    height: 100%;
-                    background-color: rgba(0, 0, 0, 0.8);
-                    overflow: auto;
-                }
-                
-                .modal-content {
-                    background-color: #1a1a1a;
-                    margin: 2rem auto;
-                    padding: 2rem;
-                    border: 1px solid #333;
-                    width: 90%;
-                    max-width: 800px;
-                    border-radius: 12px;
-                    position: relative;
-                }
-                
-                .modal-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 1rem;
-                }
-                
-                .modal-title {
-                    font-size: 1.5rem;
-                    color: #fff;
-                }
-                
-                .modal-close {
-                    background: none;
-                    border: none;
-                    color: #888;
-                    font-size: 2rem;
-                    cursor: pointer;
-                    line-height: 1;
-                    padding: 0;
-                }
-                
-                .modal-close:hover {
-                    color: #fff;
-                }
-                
-                .modal-body {
-                    background: #0f0f0f;
-                    border: 1px solid #333;
-                    border-radius: 8px;
-                    padding: 1.5rem;
-                    max-height: 60vh;
-                    overflow-y: auto;
-                    font-family: monospace;
-                    font-size: 0.9rem;
-                    line-height: 1.6;
-                    white-space: pre-wrap;
-                }
-            </style>
-        `;
-        
-        // Add modal styles to head
-        document.head.insertAdjacentHTML('beforeend', modalStyles);
-        
-        // Create modal HTML
-        const modalHTML = `
-            <div id="fileModal" class="modal">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h2 class="modal-title">Tracklist</h2>
-                        <button class="modal-close" onclick="closeModal()">&times;</button>
-                    </div>
-                    <div class="modal-body" id="modalBody">
-                        Loading...
-                    </div>
-                </div>
-            </div>
-        `;
-        
-        // Add modal to body
-        document.body.insertAdjacentHTML('beforeend', modalHTML);
-        
-        async function viewFile(filename) {
-            const modal = document.getElementById('fileModal');
-            const modalBody = document.getElementById('modalBody');
-            
-            modal.style.display = 'block';
-            modalBody.textContent = 'Loading...';
-            
-            try {
-                const response = await fetch(`/api/view/${encodeURIComponent(filename)}`);
-                if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.detail || 'Failed to load file');
-                }
-                
-                const data = await response.json();
-                if (data.is_html) {
-                    modalBody.innerHTML = data.content;
-                } else {
-                    modalBody.textContent = data.content;
-                }
-            } catch (error) {
-                modalBody.textContent = `Error: ${error.message}`;
-            }
-        }
-        
-        function closeModal() {
-            document.getElementById('fileModal').style.display = 'none';
-        }
-        
-        // Close modal when clicking outside
-        window.onclick = function(event) {
-            const modal = document.getElementById('fileModal');
-            if (event.target == modal) {
-                modal.style.display = 'none';
-            }
-        }
-    </script>
+    }
+
+    function closeModal() {
+        document.getElementById('modalOverlay').classList.remove('visible');
+    }
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') closeModal();
+    });
+
+    // Utility
+    function esc(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+</script>
 </body>
 </html>

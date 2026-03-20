@@ -64,7 +64,7 @@ check_app_health() {
     local max_attempts=6
 
     while [ $attempts -lt $max_attempts ]; do
-        if docker exec "$container_name" curl -sf http://localhost:8000/ >/dev/null 2>&1; then
+        if docker exec "$container_name" python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/').read()" >/dev/null 2>&1; then
             echo "OK $env environment HTTP health check passed"
             return 0
         fi

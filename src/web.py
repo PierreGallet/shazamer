@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import sys
 import json
 import asyncio
 import uuid
@@ -177,7 +178,7 @@ async def download_and_analyze(task_id: str, url: str):
 
         # Use subprocess to call yt-dlp with remote components enabled
         cmd = [
-            "python", "-m", "yt_dlp",
+            sys.executable, "-m", "yt_dlp",
             "--remote-components", "ejs:github",
             "-f", "bestaudio/best",
             "-x",  # Extract audio
