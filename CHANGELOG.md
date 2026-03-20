@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/PierreGallet/shazamer/compare/v0.2.0...v0.3.0) (2026-03-20)
+
+
+### Features
+
+* download from url soundcloud or youtube directly ([cd209e3](https://github.com/PierreGallet/shazamer/commit/cd209e39815f0bfea5d48927d044d276b00e3c3b))
+* migrate to blue-green deployment via genius infra nginx ([2e91b8d](https://github.com/PierreGallet/shazamer/commit/2e91b8d983eb04db2e4a947441ba058cc7c9f46c))
+* small visual adjustments on front end and fix view mode ([0095837](https://github.com/PierreGallet/shazamer/commit/0095837ebc89486beb6d524a196aa63154d6a2bb))
+
+
+### Bug Fixes
+
+* fix for youtube urls ([49dce54](https://github.com/PierreGallet/shazamer/commit/49dce54c7bbf5fe5472fb5726edbbad53e1d7d9e))
+* still youtube url fix ([f471d5d](https://github.com/PierreGallet/shazamer/commit/f471d5d73a684d86fc318c89a3fd998d692a93c2))
+* update yt-dlp download to use remote components for JS challenge solving ([ecdc276](https://github.com/PierreGallet/shazamer/commit/ecdc27606259b032cf79f9439cc9bb91d89f4f85))
+* upgrade version ([e23ebcc](https://github.com/PierreGallet/shazamer/commit/e23ebcc2cf34061736d8404ef833b5a3b1e9fa62))
+* use python for health checks (curl not in image) ([7edf2d3](https://github.com/PierreGallet/shazamer/commit/7edf2d3e860f4ed34bbbeafc5098ed943d5b7e56))
+* use python health check in workflow, no curl in image ([747cd46](https://github.com/PierreGallet/shazamer/commit/747cd464065076e529921244b8df44ce0077938b))
+
 ## [0.2.0](https://github.com/PierreGallet/shazamer/compare/v0.1.0...v0.2.0) (2025-12-29)
 
 
