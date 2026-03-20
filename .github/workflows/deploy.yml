@@ -8,6 +8,10 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: write
@@ -33,7 +37,6 @@ jobs:
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
         run: |
-          # Extract host and port
           HOST=$(echo "$SSH_HOST" | cut -d':' -f1)
           PORT=$(echo "$SSH_HOST" | grep -o ':[0-9]*' | cut -d':' -f2 || echo "22")
           ssh-keyscan -H -p $PORT $HOST >> ~/.ssh/known_hosts
@@ -44,77 +47,20 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
-
-          # Create deployment script
-          cat > deploy.sh << 'EOF'
-          #!/bin/bash
-          set -e
-
-          echo "🚀 Starting deployment of Shazamer..."
-
-          # Navigate to deployment directory
-          cd "$DEPLOY_PATH" || {
-            echo "Creating deployment directory..."
-            mkdir -p "$DEPLOY_PATH"
-            cd "$DEPLOY_PATH"
-          }
-
-          # Clone or update repository
-          if [ -d ".git" ]; then
-            echo "📥 Updating existing repository..."
-            git fetch origin
-            git reset --hard origin/main
-          else
-            echo "📥 Cloning repository..."
-            git clone https://github.com/PierreGallet/shazamer.git .
-          fi
-
-          # Stop existing containers (only shazamer project)
-          echo "🛑 Stopping existing containers..."
-          docker compose down || true
-
-          # Build and start new containers
-          echo "🏗️ Building Docker images..."
-          docker compose build --no-cache
-
-          echo "🚀 Starting containers..."
-          docker compose up -d
-
-          # Wait for health checks
-          echo "⏳ Waiting for services to be healthy..."
-          sleep 10
-
-          # Check if services are running
-          if docker compose ps | grep -q "Up"; then
-            echo "✅ Deployment successful!"
-            docker compose ps
-          else
-            echo "❌ Deployment failed! Services are not running."
-            docker compose logs
-            exit 1
-          fi
-
-          # Cleanup old images
-          echo "🧹 Cleaning up old Docker images..."
-          docker image prune -f
-
-
-          echo "✨ Deployment completed successfully!"
-          EOF
-
-          # Copy and execute deployment script
           HOST=$(echo $SSH_HOST | cut -d':' -f1)
           PORT=$(echo $SSH_HOST | grep -o ':[0-9]*' | cut -d':' -f2 || echo "22")
 
-          # Set environment variables for the script
-          export DEPLOY_PATH
+          ssh -p $PORT $SSH_USER@$HOST "
+            set -e
+            cd $DEPLOY_PATH
 
-          # Execute deployment script on remote server
-          scp -P $PORT deploy.sh $SSH_USER@$HOST:/tmp/deploy.sh
-          ssh -p $PORT $SSH_USER@$HOST "DEPLOY_PATH='$DEPLOY_PATH' bash /tmp/deploy.sh && rm /tmp/deploy.sh"
+            # Update code
+            git fetch origin
+            git reset --hard origin/main
 
-          # Cleanup
-          rm deploy.sh
+            # Run blue-green deployment
+            bash scripts/blue-green-deploy.sh
+          "
 
       - name: Health check
         env:
@@ -125,20 +71,15 @@ jobs:
           HOST=$(echo $SSH_HOST | cut -d':' -f1)
           PORT=$(echo $SSH_HOST | grep -o ':[0-9]*' | cut -d':' -f2 || echo "22")
 
-          echo "🏥 Running health checks..."
+          echo "Running health checks..."
+          ACTIVE_ENV=$(ssh -p $PORT $SSH_USER@$HOST "cat $DEPLOY_PATH/.deploy-env | grep ACTIVE_ENV | cut -d= -f2")
+          echo "Active environment: $ACTIVE_ENV"
 
-          # Check if containers are running
-          ssh -p $PORT $SSH_USER@$HOST "cd $DEPLOY_PATH && docker compose ps"
-
-          # Wait for services to be healthy
-          sleep 10
-
-          # Check HTTP endpoint
-          if ssh -p $PORT $SSH_USER@$HOST "curl -f -s -o /dev/null http://localhost:8082/"; then
-            echo "✅ Health check passed!"
+          if ssh -p $PORT $SSH_USER@$HOST "docker exec shazamer_$ACTIVE_ENV curl -sf http://localhost:8000/"; then
+            echo "Health check passed!"
           else
-            echo "❌ Health check failed!"
-            ssh -p $PORT $SSH_USER@$HOST "cd $DEPLOY_PATH && docker compose logs --tail 50"
+            echo "Health check failed!"
+            ssh -p $PORT $SSH_USER@$HOST "docker logs shazamer_$ACTIVE_ENV --tail 50"
             exit 1
           fi
 
@@ -146,7 +87,7 @@ jobs:
         if: always()
         run: |
           if [ "${{ job.status }}" == "success" ]; then
-            echo "✅ Deployment to shazamer.pierregallet.com completed successfully!"
+            echo "Deployment to shazamer.pierregallet.com completed successfully!"
           else
-            echo "❌ Deployment failed! Check the logs for more information."
+            echo "Deployment failed! Check the logs for more information."
           fi
