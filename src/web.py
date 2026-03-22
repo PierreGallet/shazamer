@@ -187,20 +187,48 @@ async def download_and_analyze(task_id: str, url: str):
             "-o", str(output_path),
             "--no-playlist",
             "--force-ipv4",
+            "--newline",  # Force progress on new lines for parsing
             url
         ]
-        
-        # Run yt-dlp command
+
+        # Run yt-dlp and parse progress from stderr in real-time
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        
-        stdout, stderr = await process.communicate()
-        
+
+        # Read stderr line by line for progress updates
+        stderr_lines = []
+        while True:
+            line = await process.stderr.readline()
+            if not line:
+                break
+            line_str = line.decode(errors="replace").strip()
+            stderr_lines.append(line_str)
+
+            # Parse yt-dlp progress: [download]  45.2% of 5.23MiB ...
+            if "[download]" in line_str and "%" in line_str:
+                try:
+                    pct_str = line_str.split("%")[0].split()[-1]
+                    dl_pct = float(pct_str)
+                    # Map download 0-100% to progress 2-7%
+                    progress = 2 + int(dl_pct * 0.05)
+                    analysis_tasks[task_id]["progress"] = progress
+                    analysis_tasks[task_id]["message"] = f"Downloading audio... {dl_pct:.0f}%"
+                except (ValueError, IndexError):
+                    pass
+            elif "[ExtractAudio]" in line_str or "Post-process" in line_str:
+                analysis_tasks[task_id]["progress"] = 8
+                analysis_tasks[task_id]["message"] = "Converting to MP3..."
+            elif "[download] Destination:" in line_str:
+                analysis_tasks[task_id]["progress"] = 3
+                analysis_tasks[task_id]["message"] = "Downloading audio..."
+
+        await process.wait()
+
         if process.returncode != 0:
-            error_msg = stderr.decode() if stderr else "Unknown error"
+            error_msg = "\n".join(stderr_lines[-5:]) if stderr_lines else "Unknown error"
             raise Exception(f"yt-dlp failed: {error_msg}")
         
         # Find the downloaded file
@@ -256,19 +284,29 @@ async def analyze_file(task_id: str, filepath: str, original_filename: str):
                 self.total_segments = 0
                 self.current_segment = 0
 
+            def load_audio(self):
+                analysis_tasks[self.task_id]["message"] = "Decoding audio file..."
+                analysis_tasks[self.task_id]["progress"] = 10
+                result = super().load_audio()
+                duration = len(result[0]) / result[1]
+                mins = int(duration // 60)
+                analysis_tasks[self.task_id]["message"] = f"Audio loaded ({mins} min). Preparing spectral analysis..."
+                analysis_tasks[self.task_id]["progress"] = 12
+                return result
+
             async def recognize_segment(
                 self, audio_path: str, start_time: float
             ) -> Optional[Dict]:
                 # Update progress for each segment
                 self.current_segment += 1
-                progress = 20 + int(
-                    (self.current_segment / self.total_segments) * 70
-                )  # 20-90% for recognition
+                progress = 25 + int(
+                    (self.current_segment / self.total_segments) * 65
+                )  # 25-90% for recognition
 
                 analysis_tasks[self.task_id]["progress"] = progress
                 analysis_tasks[self.task_id][
                     "message"
-                ] = f"Analyzing track {self.current_segment}/{self.total_segments}..."
+                ] = f"Identifying track {self.current_segment}/{self.total_segments}..."
                 analysis_tasks[self.task_id]["current_segment"] = self.current_segment
                 analysis_tasks[self.task_id]["total_segments"] = self.total_segments
 
@@ -277,13 +315,58 @@ async def analyze_file(task_id: str, filepath: str, original_filename: str):
             def detect_song_boundaries(
                 self, audio_data: np.ndarray, sample_rate: int
             ) -> List[int]:
-                analysis_tasks[self.task_id]["message"] = "Detecting song boundaries..."
-                analysis_tasks[self.task_id]["progress"] = 15
+                import librosa as _librosa
+                from scipy.ndimage import gaussian_filter1d
+                from scipy.signal import find_peaks as _find_peaks
 
-                boundaries = super().detect_song_boundaries(audio_data, sample_rate)
-                self.total_segments = len(boundaries) - 1
+                # Step 1: Spectral centroid
+                analysis_tasks[self.task_id]["message"] = "Computing spectral centroid..."
+                analysis_tasks[self.task_id]["progress"] = 14
+                spectral_centroid = _librosa.feature.spectral_centroid(y=audio_data, sr=sample_rate)[0]
+
+                # Step 2: RMS energy
+                analysis_tasks[self.task_id]["message"] = "Computing RMS energy..."
+                analysis_tasks[self.task_id]["progress"] = 16
+                rms_energy = _librosa.feature.rms(y=audio_data)[0]
+
+                # Step 3: Normalization & gradient
+                analysis_tasks[self.task_id]["message"] = "Analyzing frequency transitions..."
+                analysis_tasks[self.task_id]["progress"] = 18
+                spectral_centroid_norm = (spectral_centroid - np.mean(spectral_centroid)) / np.std(spectral_centroid)
+                rms_energy_norm = (rms_energy - np.mean(rms_energy)) / np.std(rms_energy)
+                combined_feature = np.abs(np.gradient(spectral_centroid_norm)) + np.abs(np.gradient(rms_energy_norm))
+
+                # Step 4: Smoothing & peak detection
+                analysis_tasks[self.task_id]["message"] = "Detecting song boundaries..."
+                analysis_tasks[self.task_id]["progress"] = 20
+                combined_feature_smooth = gaussian_filter1d(combined_feature, sigma=10)
+                percentile_threshold = (1 - self.peak_threshold) * 100
+                peaks, _ = _find_peaks(
+                    combined_feature_smooth,
+                    height=np.percentile(combined_feature_smooth, percentile_threshold),
+                    distance=int(self.min_song_duration * sample_rate / 512),
+                )
+
+                # Build boundaries
+                hop_length = 512
+                boundaries = [0]
+                for peak in peaks:
+                    boundaries.append(peak * hop_length)
+                boundaries.append(len(audio_data))
+
+                filtered_boundaries = [boundaries[0]]
+                for i in range(1, len(boundaries)):
+                    if (boundaries[i] - filtered_boundaries[-1]) / sample_rate >= self.min_song_duration:
+                        filtered_boundaries.append(boundaries[i])
+                if filtered_boundaries[-1] != boundaries[-1]:
+                    filtered_boundaries[-1] = boundaries[-1]
+
+                self.total_segments = len(filtered_boundaries) - 1
                 analysis_tasks[self.task_id]["total_segments"] = self.total_segments
-                return boundaries
+                analysis_tasks[self.task_id]["message"] = f"Found {self.total_segments} segments. Starting identification..."
+                analysis_tasks[self.task_id]["progress"] = 23
+
+                return filtered_boundaries
 
         # Create analyzer
         analyzer = ProgressAnalyzer(filepath, debug=False)
