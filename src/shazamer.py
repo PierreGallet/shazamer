@@ -18,14 +18,15 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class DJSetAnalyzer:
-    def __init__(self, input_file: str, min_song_duration: int = None, 
-                 peak_threshold: float = None, throttle_rate: float = 0.5, 
-                 debug: bool = False):
+    def __init__(self, input_file: str, min_song_duration: int = None,
+                 peak_threshold: float = None, throttle_rate: float = 0.5,
+                 debug: bool = False, target_sr: int = 22050):
         self.input_file = Path(input_file)
         self.throttler = Throttler(rate_limit=throttle_rate)
         self.shazam = Shazam()
         self.debug = debug
-        
+        self.target_sr = target_sr
+
         # Store parameters for later auto-adjustment
         self._min_song_duration_manual = min_song_duration
         self._peak_threshold_manual = peak_threshold
@@ -55,8 +56,10 @@ class DJSetAnalyzer:
             return 0.15
         
     def load_audio(self) -> Tuple[np.ndarray, int]:
-        logger.info(f"Loading audio file: {self.input_file}")
-        audio_data, sample_rate = librosa.load(str(self.input_file), sr=None, mono=True)
+        logger.info(f"Loading audio file: {self.input_file} (target sr={self.target_sr}Hz)")
+        audio_data, sample_rate = librosa.load(
+            str(self.input_file), sr=self.target_sr, mono=True, res_type="kaiser_fast"
+        )
         duration = len(audio_data) / sample_rate
         logger.info(f"Audio loaded. Duration: {duration:.1f} seconds, Sample rate: {sample_rate}Hz")
         
@@ -183,44 +186,50 @@ class DJSetAnalyzer:
             return None
     
     async def analyze(self) -> List[Dict]:
-        # Load audio
-        audio_data, sample_rate = self.load_audio()
-        
-        # Detect song boundaries
-        boundaries = self.detect_song_boundaries(audio_data, sample_rate)
-        
+        loop = asyncio.get_running_loop()
+
+        # Load audio (CPU-bound, offload to thread so we don't block FastAPI)
+        audio_data, sample_rate = await loop.run_in_executor(None, self.load_audio)
+
+        # Detect song boundaries (CPU-bound: STFT + peak detection)
+        boundaries = await loop.run_in_executor(
+            None, self.detect_song_boundaries, audio_data, sample_rate
+        )
+
         # Process each segment
         results = []
         temp_files = []
-        
+
         try:
             logger.info(f"Processing {len(boundaries) - 1} segments...")
-            
+
             for i in range(len(boundaries) - 1):
                 start_sample = boundaries[i]
                 end_sample = boundaries[i + 1]
                 start_time = start_sample / sample_rate
-                
-                # Save segment to temporary file
-                temp_file = self.save_audio_segment(audio_data, sample_rate, 
-                                                  start_sample, end_sample, i)
+
+                # Save segment to temporary file (disk I/O, offload)
+                temp_file = await loop.run_in_executor(
+                    None, self.save_audio_segment,
+                    audio_data, sample_rate, start_sample, end_sample, i,
+                )
                 temp_files.append(temp_file)
-                
+
                 # Recognize the segment
                 track_info = await self.recognize_segment(temp_file, start_time)
                 if track_info:
                     results.append(track_info)
-                
+
                 # Progress update
                 if (i + 1) % 10 == 0:
                     logger.info(f"Progress: {i + 1}/{len(boundaries) - 1} segments processed")
-        
+
         finally:
             # Clean up temporary files even if an error occurs
             logger.info("Cleaning up temporary files...")
             for temp_file in temp_files:
                 Path(temp_file).unlink(missing_ok=True)
-        
+
         return results
 
 async def main():

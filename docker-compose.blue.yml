@@ -3,8 +3,11 @@ services:
     image: shazamer_app:latest
     container_name: shazamer_blue
     restart: unless-stopped
+    mem_limit: 4g
+    memswap_limit: 4g
     environment:
       - PYTHONUNBUFFERED=1
+      - MAX_AUDIO_DURATION_SECONDS=7200
     volumes:
       - ./outputs:/app/outputs
       - ./uploads:/app/uploads

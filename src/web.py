@@ -21,6 +21,11 @@ import yt_dlp
 import numpy as np
 
 from src.shazamer import DJSetAnalyzer
+from src.task_store import TaskStore
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Shazamer Web")
 
@@ -45,14 +50,45 @@ OUTPUT_FOLDER = BASE_DIR / "outputs"
 TMP_FOLDER = BASE_DIR / "tmp"
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
 ALLOWED_EXTENSIONS = {"mp3", "wav", "flac", "m4a", "ogg", "wma", "aac"}
+# Cap audio duration to keep us under the container memory limit. STFT memory
+# grows linearly with audio length; 7200s (2h) at 22050Hz fits in ~2GB peak.
+MAX_AUDIO_DURATION_SECONDS = int(os.environ.get("MAX_AUDIO_DURATION_SECONDS", "7200"))
 
 # Create necessary directories
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 OUTPUT_FOLDER.mkdir(exist_ok=True)
 TMP_FOLDER.mkdir(exist_ok=True)
+TASK_STORE_DIR = BASE_DIR / "tmp" / "tasks"
 
-# Store analysis tasks
+# Store analysis tasks (in-memory hot cache; disk-backed via task_store)
 analysis_tasks: Dict[str, dict] = {}
+task_store = TaskStore(TASK_STORE_DIR)
+_interrupted = task_store.mark_interrupted()
+if _interrupted:
+    logger.info("Marked %d in-flight task(s) as interrupted after restart", _interrupted)
+
+
+def persist(task_id: str) -> None:
+    """Write the current in-memory state of a task to disk.
+
+    Call at phase transitions (status change, completion, error). Progress
+    updates between phases do not need to be persisted — their absence only
+    means a slightly stale bar after restart, not data loss.
+    """
+    task = analysis_tasks.get(task_id)
+    if task is not None:
+        task_store.save(task_id, task)
+
+
+def probe_duration(filepath: str) -> float:
+    """Return audio duration in seconds without loading the file into RAM."""
+    try:
+        from pydub.utils import mediainfo
+        info = mediainfo(filepath)
+        return float(info.get("duration", 0) or 0)
+    except Exception as exc:
+        logger.warning("Could not probe duration for %s: %s", filepath, exc)
+        return 0.0
 
 
 class TaskStatus(BaseModel):
@@ -131,6 +167,7 @@ async def upload_file(file: UploadFile = File(...)):
         "filepath": str(filepath),
         "start_time": datetime.now().isoformat(),
     }
+    persist(task_id)
 
     # Start analysis in background
     asyncio.create_task(analyze_file(task_id, str(filepath), file.filename))
@@ -156,6 +193,7 @@ async def download_url(request: URLDownloadRequest):
         "url": request.url,
         "start_time": datetime.now().isoformat(),
     }
+    persist(task_id)
 
     # Start download and analysis in background
     asyncio.create_task(download_and_analyze(task_id, request.url))
@@ -248,6 +286,7 @@ async def download_and_analyze(task_id: str, url: str):
         analysis_tasks[task_id]["status"] = "processing"
         analysis_tasks[task_id]["message"] = "Download complete. Starting analysis..."
         analysis_tasks[task_id]["progress"] = 10
+        persist(task_id)
 
         await analyze_file(task_id, filepath, filename)
 
@@ -259,6 +298,7 @@ async def download_and_analyze(task_id: str, url: str):
             "error": str(e),
             "filename": "Download failed",
         }
+        persist(task_id)
         # Clean up if download failed
         if filepath and os.path.exists(filepath):
             try:
@@ -269,12 +309,24 @@ async def download_and_analyze(task_id: str, url: str):
 
 async def analyze_file(task_id: str, filepath: str, original_filename: str):
     try:
+        # Guard: reject files that would blow the container's memory budget.
+        # STFT memory scales with audio length; past this cap we'd crash uvicorn.
+        duration = probe_duration(filepath)
+        if duration and duration > MAX_AUDIO_DURATION_SECONDS:
+            max_min = MAX_AUDIO_DURATION_SECONDS // 60
+            actual_min = int(duration // 60)
+            raise ValueError(
+                f"Audio too long for analysis: {actual_min} min (max "
+                f"{max_min} min). Please trim the file and retry."
+            )
+
         # Update status
         analysis_tasks[task_id]["status"] = "processing"
         analysis_tasks[task_id]["message"] = "Loading audio file..."
         analysis_tasks[task_id]["progress"] = 10
         analysis_tasks[task_id]["current_segment"] = 0
         analysis_tasks[task_id]["total_segments"] = 0
+        persist(task_id)
 
         # Create custom analyzer with progress callback
         class ProgressAnalyzer(DJSetAnalyzer):
@@ -432,6 +484,7 @@ async def analyze_file(task_id: str, filepath: str, original_filename: str):
             "unique_tracks": len(deduplicated_results),
             "total_tracks_found": len(results),
         }
+        persist(task_id)
 
     except Exception as e:
         analysis_tasks[task_id] = {
@@ -441,6 +494,7 @@ async def analyze_file(task_id: str, filepath: str, original_filename: str):
             "error": str(e),
             "filename": original_filename,
         }
+        persist(task_id)
     finally:
         # Clean up uploaded file
         try:
@@ -451,10 +505,16 @@ async def analyze_file(task_id: str, filepath: str, original_filename: str):
 
 @app.get("/api/status/{task_id}", response_model=TaskStatus)
 async def get_task_status(task_id: str):
-    if task_id not in analysis_tasks:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = analysis_tasks.get(task_id)
+    if task is None:
+        # Fallback to disk: the process may have restarted while analysis was in
+        # flight (OOM, redeploy). The disk copy was marked 'interrupted' at
+        # startup, so the frontend sees a clean error instead of a 404.
+        task = task_store.load(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        analysis_tasks[task_id] = task
 
-    task = analysis_tasks[task_id]
     return TaskStatus(
         task_id=task_id,
         status=task.get("status", "unknown"),
@@ -474,10 +534,10 @@ async def get_task_status(task_id: str):
 
 @app.get("/api/download/{task_id}/{format}")
 async def download_result(task_id: str, format: str):
-    if task_id not in analysis_tasks:
+    task = analysis_tasks.get(task_id) or task_store.load(task_id)
+    if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    task = analysis_tasks[task_id]
     if task["status"] != "completed":
         raise HTTPException(status_code=400, detail="Analysis not completed")
 
