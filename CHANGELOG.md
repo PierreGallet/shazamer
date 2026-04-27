@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1](https://github.com/PierreGallet/shazamer/compare/v0.5.0...v0.5.1) (2026-04-27)
+
+
+### Bug Fixes
+
+* use soxr_hq resampler instead of kaiser_fast ([1276579](https://github.com/PierreGallet/shazamer/commit/1276579316b908de69755041c4c4c30729bacddd))
+
 ## [0.5.0](https://github.com/PierreGallet/shazamer/compare/v0.4.1...v0.5.0) (2026-04-27)
 
 
