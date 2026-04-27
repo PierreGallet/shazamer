@@ -58,7 +58,7 @@ class DJSetAnalyzer:
     def load_audio(self) -> Tuple[np.ndarray, int]:
         logger.info(f"Loading audio file: {self.input_file} (target sr={self.target_sr}Hz)")
         audio_data, sample_rate = librosa.load(
-            str(self.input_file), sr=self.target_sr, mono=True, res_type="kaiser_fast"
+            str(self.input_file), sr=self.target_sr, mono=True, res_type="soxr_hq"
         )
         duration = len(audio_data) / sample_rate
         logger.info(f"Audio loaded. Duration: {duration:.1f} seconds, Sample rate: {sample_rate}Hz")
