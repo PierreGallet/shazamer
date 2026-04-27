@@ -162,19 +162,27 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
           HOST=$(echo $SSH_HOST | cut -d':' -f1)
           PORT=$(echo $SSH_HOST | grep -o ':[0-9]*' | cut -d':' -f2 || echo "22")
 
+          # 1. Update code
           ssh -p $PORT $SSH_USER@$HOST "
             set -e
             cd $DEPLOY_PATH
-
-            # Update code
             git fetch origin
             git reset --hard origin/main
+          "
 
-            # Run blue-green deployment
+          # 2. Write runtime env (.env is git-ignored, so git reset above is safe)
+          printf 'PYTHON_ENV=Production\nSENTRY_DSN=%s\n' "$SENTRY_DSN" \
+            | ssh -p $PORT $SSH_USER@$HOST "cat > $DEPLOY_PATH/.env && chmod 600 $DEPLOY_PATH/.env"
+
+          # 3. Run blue-green deployment
+          ssh -p $PORT $SSH_USER@$HOST "
+            set -e
+            cd $DEPLOY_PATH
             bash scripts/blue-green-deploy.sh
           "
 

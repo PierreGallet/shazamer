@@ -5,8 +5,12 @@ services:
     restart: unless-stopped
     mem_limit: 4g
     memswap_limit: 4g
+    env_file:
+      - path: .env
+        required: false
     environment:
       - PYTHONUNBUFFERED=1
+      - PYTHON_ENV=Production
       - MAX_AUDIO_DURATION_SECONDS=7200
     volumes:
       - ./outputs:/app/outputs

@@ -21,11 +21,15 @@ import yt_dlp
 import numpy as np
 
 from src.shazamer import DJSetAnalyzer
+from src.sentry_setup import init_sentry
 from src.task_store import TaskStore
 
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Init Sentry before FastAPI so the integration can hook the middleware stack.
+init_sentry()
 
 app = FastAPI(title="Shazamer Web")
 
@@ -66,6 +70,27 @@ task_store = TaskStore(TASK_STORE_DIR)
 _interrupted = task_store.mark_interrupted()
 if _interrupted:
     logger.info("Marked %d in-flight task(s) as interrupted after restart", _interrupted)
+
+
+def _report_exception(exc: Exception, **tags) -> None:
+    """Send an exception to Sentry if configured. No-op otherwise.
+
+    Background tasks (asyncio.create_task) don't propagate through the FastAPI
+    middleware, so the SDK's FastApiIntegration can't see them. We capture
+    manually here instead.
+    """
+    # User-facing guard errors (e.g. "audio too long") aren't bugs, don't alert.
+    if isinstance(exc, ValueError):
+        return
+    try:
+        import sentry_sdk
+        with sentry_sdk.push_scope() as scope:
+            for key, value in tags.items():
+                scope.set_tag(key, value)
+            sentry_sdk.capture_exception(exc)
+    except Exception:
+        # Never let Sentry reporting itself break the request.
+        pass
 
 
 def persist(task_id: str) -> None:
@@ -291,6 +316,7 @@ async def download_and_analyze(task_id: str, url: str):
         await analyze_file(task_id, filepath, filename)
 
     except Exception as e:
+        _report_exception(e, task_id=task_id, stage="download_and_analyze")
         analysis_tasks[task_id] = {
             "status": "error",
             "progress": 0,
@@ -487,6 +513,7 @@ async def analyze_file(task_id: str, filepath: str, original_filename: str):
         persist(task_id)
 
     except Exception as e:
+        _report_exception(e, task_id=task_id, stage="analyze_file")
         analysis_tasks[task_id] = {
             "status": "error",
             "progress": 0,

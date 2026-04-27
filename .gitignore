@@ -20,6 +20,11 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# Secrets
+.env
+.env.*
+!.env.example
+
 # Project specific
 outputs/
 tmp/
