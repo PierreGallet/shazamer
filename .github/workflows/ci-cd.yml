@@ -38,10 +38,10 @@ jobs:
         run: |
           uv venv
           uv pip install -r requirements.txt
-          uv pip install pytest pytest-asyncio pytest-cov
+          uv pip install pytest pytest-asyncio pytest-cov anyio httpx
 
       - name: Run tests
-        run: uv run pytest -x -q --ignore=tests/test_integration.py 2>/dev/null || echo "Tests passed or skipped"
+        run: uv run pytest -x -q -m "not integration" --ignore=tests/test_integration.py
 
   release-please:
     name: "\U0001F4E6 Release Please"
