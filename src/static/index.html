@@ -865,6 +865,8 @@
 
     let currentTaskId = null;
     let currentTab = 'url';
+    let pollFailures = 0;
+    const MAX_POLL_FAILURES = 6;
 
     // Generate waveform decoration
     (function generateWaveform() {
@@ -922,6 +924,7 @@
             }
             const data = await res.json();
             currentTaskId = data.task_id;
+            pollFailures = 0;
             pollProgress();
         } catch (e) {
             showError(e.message);
@@ -950,18 +953,26 @@
             }
             const data = await res.json();
             currentTaskId = data.task_id;
+            pollFailures = 0;
             pollProgress();
         } catch (e) {
             showError(e.message);
         }
     }
 
-    // Polling
+    // Polling — resilient to brief server restarts (deploys, OOM recovery).
+    // Retries with exponential backoff before giving up. The persistent task
+    // store on the server marks interrupted tasks as 'error', so once the
+    // server is back up we'll receive the real outcome on the next poll.
     async function pollProgress() {
         if (!currentTaskId) return;
         try {
             const res = await fetch(`/api/status/${currentTaskId}`);
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
             const data = await res.json();
+            pollFailures = 0;
 
             updateProgress(data.progress, data.message);
 
@@ -977,8 +988,16 @@
             } else {
                 setTimeout(pollProgress, 1000);
             }
-        } catch {
-            showError('Connection lost');
+        } catch (e) {
+            pollFailures++;
+            if (pollFailures >= MAX_POLL_FAILURES) {
+                showError('Connection lost — server unreachable. Try refreshing the page.');
+                return;
+            }
+            // Exponential backoff: 1s, 2s, 4s, 8s, 16s, then give up.
+            const delay = Math.min(1000 * Math.pow(2, pollFailures - 1), 16000);
+            progressDetail.textContent = `Reconnecting… (attempt ${pollFailures}/${MAX_POLL_FAILURES})`;
+            setTimeout(pollProgress, delay);
         }
     }
 

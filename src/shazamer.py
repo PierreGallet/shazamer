@@ -73,12 +73,16 @@ class DJSetAnalyzer:
     
     def detect_song_boundaries(self, audio_data: np.ndarray, sample_rate: int) -> List[int]:
         logger.info("Detecting song boundaries using spectral analysis...")
-        
-        # Calculate spectral centroid (good for detecting transitions)
-        spectral_centroid = librosa.feature.spectral_centroid(y=audio_data, sr=sample_rate)[0]
-        
+
+        # n_fft=1024 (default 2048) halves the STFT memory footprint. With sr=22050
+        # the upper freq bin is still ~10 kHz which is plenty for centroid-based
+        # transition detection. Saves ~750 MB peak on a 1h+ audio.
+        spectral_centroid = librosa.feature.spectral_centroid(
+            y=audio_data, sr=sample_rate, n_fft=1024, hop_length=512
+        )[0]
+
         # Calculate RMS energy
-        rms_energy = librosa.feature.rms(y=audio_data)[0]
+        rms_energy = librosa.feature.rms(y=audio_data, hop_length=512)[0]
         
         # Combine features with normalization
         spectral_centroid_norm = (spectral_centroid - np.mean(spectral_centroid)) / np.std(spectral_centroid)
