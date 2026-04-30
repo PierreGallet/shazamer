@@ -72,6 +72,33 @@ if _interrupted:
     logger.info("Marked %d in-flight task(s) as interrupted after restart", _interrupted)
 
 
+# Sweep stale uploads on boot. The runtime cleanup in analyze_file's `finally`
+# block handles the happy path, but a SIGKILL (OOM, redeploy) skips it and
+# leaves orphans behind. Anything older than the cutoff is safe to delete:
+# tasks newer than this are still tracked in-memory by the persistent task
+# store, and a 24h-old upload that never finished isn't getting analyzed.
+def sweep_stale_uploads(folder: Path, max_age_seconds: int = 24 * 3600) -> int:
+    if not folder.exists():
+        return 0
+    cutoff = datetime.now().timestamp() - max_age_seconds
+    removed = 0
+    for path in folder.iterdir():
+        if not path.is_file():
+            continue
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError as exc:
+            logger.warning("Could not remove stale upload %s: %s", path, exc)
+    return removed
+
+
+_swept = sweep_stale_uploads(UPLOAD_FOLDER)
+if _swept:
+    logger.info("Swept %d stale upload(s) older than 24h", _swept)
+
+
 def _report_exception(exc: Exception, **tags) -> None:
     """Send an exception to Sentry if configured. No-op otherwise.
 
