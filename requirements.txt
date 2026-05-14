@@ -12,3 +12,4 @@ lazy-loader==0.3
 cffi>=1.0
 yt-dlp>=2025.12.8
 sentry-sdk[fastapi]>=2.20.0,<3.0.0
+resampy>=0.4.0
