@@ -1,0 +1,54 @@
+# Shazamer as a Docker Swarm service (replaces the blue-green standalone).
+# Deploy:  set -a; . .env; set +a; docker stack deploy -c docker-stack.yml shazamer
+#
+# Routed by Traefik via deploy.labels (swarm provider on the `traefik`
+# overlay). Host comes from $SHAZAMER_HOST (kept out of the repo, set in
+# the gitignored .env). `docker stack deploy` ignores env_file/mem_limit/
+# container_name, so SENTRY_DSN is interpolated and the limit is in
+# deploy.resources.
+services:
+  app:
+    image: shazamer_app:latest
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHON_ENV=Production
+      - MAX_AUDIO_DURATION_SECONDS=7200
+      - SENTRY_DSN=${SENTRY_DSN:-}
+    volumes:
+      - type: bind
+        source: /home/sharon/shazamer/outputs
+        target: /app/outputs
+      - type: bind
+        source: /home/sharon/shazamer/uploads
+        target: /app/uploads
+      - type: bind
+        source: /home/sharon/shazamer/tmp
+        target: /app/tmp
+    networks:
+      - traefik
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      replicas: 1
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.shazamer.rule=Host(`${SHAZAMER_HOST}`)"
+        - "traefik.http.routers.shazamer.entrypoints=web"
+        - "traefik.http.services.shazamer.loadbalancer.server.port=8000"
+      resources:
+        limits:
+          memory: 6G
+      update_config:
+        order: start-first
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+
+networks:
+  traefik:
+    external: true

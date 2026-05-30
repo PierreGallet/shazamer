@@ -188,7 +188,7 @@ jobs:
           ssh -p $PORT $SSH_USER@$HOST "
             set -e
             cd $DEPLOY_PATH
-            bash scripts/blue-green-deploy.sh
+            bash scripts/deploy.sh
           "
 
       - name: Post-deploy verification
