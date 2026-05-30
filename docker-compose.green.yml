@@ -2,6 +2,10 @@ services:
   app:
     image: shazamer_app:latest
     container_name: shazamer_green
+    # Restarted automatically by genius autoheal daemon if this
+    # container HEALTHCHECK (below) ever reports unhealthy.
+    labels:
+      - "autoheal=true"
     restart: unless-stopped
     mem_limit: 6g
     memswap_limit: 6g
