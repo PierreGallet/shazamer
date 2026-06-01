@@ -36,7 +36,7 @@ services:
       replicas: 1
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.shazamer.rule=Host(`${SHAZAMER_HOST}`)"
+        - "traefik.http.routers.shazamer.rule=Host(`${SHAZAMER_HOST:-shazamer.pierregallet.com}`)"
         - "traefik.http.routers.shazamer.entrypoints=web"
         - "traefik.http.services.shazamer.loadbalancer.server.port=8000"
       resources:
