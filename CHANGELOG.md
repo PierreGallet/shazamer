@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2](https://github.com/PierreGallet/shazamer/compare/v0.6.1...v0.6.2) (2026-06-02)
+
+
+### Bug Fixes
+
+* **deploy:** force task recreate after stack deploy ([560a6ff](https://github.com/PierreGallet/shazamer/commit/560a6ffafb3e39dc732b117c411247747d3d2727))
+
 ## [0.6.1](https://github.com/PierreGallet/shazamer/compare/v0.6.0...v0.6.1) (2026-06-01)
 
 
