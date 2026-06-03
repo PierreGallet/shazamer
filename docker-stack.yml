@@ -42,6 +42,8 @@ services:
       resources:
         limits:
           memory: 6G
+          # CPU cap: very light (peak ~0.1 core); 2.0 is ample headroom.
+          cpus: "2.0"
       update_config:
         order: start-first
         failure_action: rollback
