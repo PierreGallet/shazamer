@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -14,7 +13,14 @@ permissions:
 
 concurrency:
   group: ci-cd-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Economy: cancel a superseded run only on protected-branch pushes (rapid
+  # commits → only the latest tests+deploys). NEVER cancel a PR run, so
+  # feature-branch tests always complete and verify mergeability. A
+  # release-please release commit never cancels the in-flight real run.
+  cancel-in-progress: >-
+    ${{ github.event_name != 'pull_request'
+        && !contains(github.event.head_commit.message, '): release ')
+        && !contains(github.event.head_commit.message, 'release-please--branches--') }}
 
 jobs:
   tests:
