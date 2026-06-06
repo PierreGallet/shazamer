@@ -26,6 +26,9 @@ jobs:
   tests:
     name: "\U0001F9EA Tests"
     runs-on: ubuntu-latest
+    # Safety net: a hung test fails in 15 min instead of running to the 6h
+    # job default (a missing-mock test once burned 6h × many runs of credit).
+    timeout-minutes: 15
     if: >-
       (github.event_name != 'pull_request' || github.head_ref != 'release-please--branches--main')
       && (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(main): release'))
