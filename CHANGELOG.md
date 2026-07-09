@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3](https://github.com/PierreGallet/shazamer/compare/v0.6.2...v0.6.3) (2026-07-09)
+
+
+### Bug Fixes
+
+* **api:** answer HEAD on / (uptime monitors read 405 as down) ([f071a1b](https://github.com/PierreGallet/shazamer/commit/f071a1b864aa03a7b0cd9538e363d5f4ab0895df))
+
 ## [0.6.2](https://github.com/PierreGallet/shazamer/compare/v0.6.1...v0.6.2) (2026-06-02)
 
 
