@@ -171,7 +171,9 @@ class URLDownloadRequest(BaseModel):
     url: str
 
 
-@app.get("/")
+# GET + HEAD so uptime monitors (UptimeRobot pings with HEAD by default) get a
+# 200 instead of a 405 that reads as "site down". Starlette strips the body for HEAD.
+@app.api_route("/", methods=["GET", "HEAD"])
 async def index():
     return FileResponse("src/static/index.html")
 
