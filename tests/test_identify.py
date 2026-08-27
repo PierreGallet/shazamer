@@ -1,0 +1,93 @@
+"""Response parsing and the fuzzy identity used for voting and merging."""
+import pytest
+
+from src.identify.base import normalize_artist, normalize_key, normalize_title
+from src.identify.shazam import parse_shazam_track
+
+SHAZAM_RESPONSE = {
+    "matches": [{"id": "1"}, {"id": "1"}, {"id": "2"}],
+    "track": {
+        "title": "Loose Lips",
+        "subtitle": "Chris Stussy",
+        "url": "https://www.shazam.com/track/123",
+        "isrc": "GBXYZ1234567",
+        "images": {"coverart": "https://img/low.jpg",
+                   "coverarthq": "https://img/hq.jpg"},
+        "genres": {"primary": "Dance"},
+        "sections": [{
+            "type": "SONG",
+            "metadata": [
+                {"title": "Album", "text": "Up The Stuss"},
+                {"title": "Label", "text": "Stuss Records"},
+                {"title": "Released", "text": "2023"},
+            ],
+        }],
+    },
+}
+
+
+def test_parses_a_full_response():
+    match = parse_shazam_track(SHAZAM_RESPONSE)
+    assert match is not None
+    assert (match.title, match.artist) == ("Loose Lips", "Chris Stussy")
+    assert match.album == "Up The Stuss"
+    assert match.label == "Stuss Records"
+    assert match.year == "2023"
+    assert match.genre == "Dance"
+    assert match.isrc == "GBXYZ1234567"
+    assert match.cover_url == "https://img/hq.jpg", "should prefer the HQ artwork"
+    assert match.raw_matches == 2, "duplicate match ids must be counted once"
+
+
+@pytest.mark.parametrize("payload", [
+    {}, {"matches": []}, {"track": None}, {"track": {}},
+    {"track": {"title": ""}}, {"track": {"subtitle": "Artist"}},
+])
+def test_returns_none_when_there_is_no_usable_track(payload):
+    assert parse_shazam_track(payload) is None
+
+
+def test_missing_artist_falls_back_rather_than_crashing():
+    match = parse_shazam_track({"track": {"title": "Untitled"}})
+    assert match is not None
+    assert match.artist == "Unknown"
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("Track (Original Mix)", "track"),
+    ("Track - Extended Mix", "track"),
+    ("Track [Remastered 2019]", "track"),
+    ("Track (Official Music Video)", "track"),
+    ("Track feat. Someone", "track"),
+    ("Track (feat. Someone Else)", "track"),
+    ("Tráck Ëxtra", "track extra"),
+    ("Track (Original Mix) [Remastered]", "track"),
+])
+def test_title_normalisation_collapses_mix_decorations(raw, expected):
+    assert normalize_title(raw) == expected
+
+
+def test_a_remix_is_not_the_same_track():
+    """Stripping decorations must not go so far it merges distinct records."""
+    assert normalize_title("Track (Skee Mask Remix)") != normalize_title("Track")
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("Artist A & Artist B", "artist a"),
+    ("Artist A, Artist B", "artist a"),
+    ("Artist A x Artist B", "artist a"),
+    ("Artist A vs. Artist B", "artist a"),
+    ("Artist A feat. Artist B", "artist a"),
+])
+def test_artist_normalisation_keys_on_the_primary_credit(raw, expected):
+    assert normalize_artist(raw) == expected
+
+
+def test_the_same_record_credited_differently_shares_one_key():
+    a = normalize_key("Chris Stussy & Rossi.", "Loose Lips (Original Mix)")
+    b = normalize_key("Chris Stussy", "Loose Lips")
+    assert a == b
+
+
+def test_different_records_do_not_collide():
+    assert normalize_key("A", "Track One") != normalize_key("A", "Track Two")
