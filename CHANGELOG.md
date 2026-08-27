@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.3](https://github.com/PierreGallet/shazamer/compare/v1.5.2...v1.5.3) (2026-08-27)
+
+
+### Bug Fixes
+
+* **deploy:** write slskd's key after loading the env, and restart it ([7b479b9](https://github.com/PierreGallet/shazamer/commit/7b479b99fdfc199739e1451a8faf50d68a9d64e7))
+
 ## [1.5.2](https://github.com/PierreGallet/shazamer/compare/v1.5.1...v1.5.2) (2026-08-27)
 
 
