@@ -67,8 +67,17 @@ services:
         order: start-first
         failure_action: rollback
       restart_policy:
-        condition: on-failure
-        max_attempts: 3
+        # `any`, not `on-failure`. A web service has no successful exit: if the
+        # process is gone, the site is down, whatever the exit code says.
+        # Under `on-failure` a clean shutdown — a SIGTERM from anywhere, a
+        # graceful uvicorn stop during an update — left the task marked
+        # "Complete" and Swarm declined to replace it, so the service sat at
+        # 0/1 and every request 404'd until someone forced it back.
+        condition: any
+        delay: 5s
+        max_attempts: 0        # keep trying; a permanently broken image is
+                               # caught by failure_action: rollback above
+        window: 120s
 
 networks:
   traefik:

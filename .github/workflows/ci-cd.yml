@@ -238,15 +238,22 @@ jobs:
           ssh -p $PORT $SSH_USER@$HOST "
             set -e
             for attempt in \$(seq 1 30); do
+              # Replica count first: a healthy container is not enough if the
+              # service is running fewer than it should. A clean exit once left
+              # it at 0/1 with nothing serving, and a check that only looked for
+              # a healthy container would have called that a success.
+              REPLICAS=\$(docker service ls --filter name=shazamer_app --format '{{.Replicas}}')
+              RUNNING=\${REPLICAS%%/*}
+              WANTED=\${REPLICAS##*/}
               CONTAINER=\$(docker ps --filter 'name=shazamer_app' --filter 'health=healthy' -q | head -1)
-              if [ -n \"\$CONTAINER\" ]; then
+              if [ -n \"\$CONTAINER\" ] && [ \"\$RUNNING\" = \"\$WANTED\" ]; then
                 echo \"Healthy container: \$CONTAINER\"
                 docker exec \$CONTAINER python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()\"
                 exit 0
               fi
               sleep 10
             done
-            echo 'No healthy task after 5 minutes.'
+            echo \"No healthy task after 5 minutes (replicas: \$REPLICAS).\"
             docker service ps shazamer_app --no-trunc | head -20
             CONTAINER=\$(docker ps --filter 'name=shazamer_app' -q | head -1)
             [ -n \"\$CONTAINER\" ] && docker logs \$CONTAINER --tail 50
