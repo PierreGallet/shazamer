@@ -20,6 +20,9 @@ export interface Track {
   year: string;
   genre: string;
   isrc: string;
+  /** Filled in after the analysis by MusicBrainz, when it can be found. */
+  catalog_number: string;
+  mbid: string;
   key: string;
   confidence: number;
   /** How much evidence backs the match, not just how much of it agreed. */

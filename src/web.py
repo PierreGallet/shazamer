@@ -207,6 +207,13 @@ async def run_analysis(task_id: str, path: Path, title: str, *,
                      set_id=set_id)
         logger.info("Analysis %s complete: %s", task_id, result.stats)
 
+        # Enrichment follows as its own job so the set is usable immediately;
+        # labels appear a minute or two later. Best-effort: a set without them
+        # is still a tracklist.
+        if not await jobs.enqueue("enrich_set_job", set_id,
+                                  job_id=f"enrich:{set_id}"):
+            logger.debug("No queue for enrichment of %s", set_id)
+
     except asyncio.CancelledError:
         # No set was written, so the audio has no owner.
         discard_media(path)

@@ -188,6 +188,13 @@
 }
 .running-pct { font-size: 0.72rem; flex: none; }
 
+.catalog {
+  font-size: 0.72rem;
+  padding: 0.05em 0.3em;
+  border-radius: 3px;
+  background: var(--surface-3);
+}
+
 .legacy-banner {
   display: flex; flex-direction: column; gap: 0.6rem;
   background: var(--warn-soft);

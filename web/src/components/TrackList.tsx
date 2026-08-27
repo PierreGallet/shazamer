@@ -135,6 +135,14 @@ export default function TrackList(props: Props) {
                     <Show when={track.label}>
                       <span class="faint"> · {track.label}</span>
                     </Show>
+                    <Show when={track.catalog_number}>
+                      {/* The catalogue number is what you search a shop or
+                          Discogs with — more use than the label alone. */}
+                      <span class="faint mono catalog"> {track.catalog_number}</span>
+                    </Show>
+                    <Show when={track.year}>
+                      <span class="faint"> · {track.year}</span>
+                    </Show>
                   </Show>
                 </div>
               </div>

@@ -36,6 +36,22 @@ async def analyze_url_job(ctx: Dict[str, Any], task_id: str, url: str,
     await web.run_url_analysis(task_id, url, set_id=set_id)
 
 
+async def enrich_set_job(ctx: Dict[str, Any], set_id: str) -> Dict[str, int]:
+    """Fill in labels and catalogue numbers for a set that has been analysed.
+
+    Its own job rather than a stage of the analysis: lookups are paced at about
+    one per second, so this adds minutes a listener should not wait through,
+    and a provider being down should not fail an analysis that already
+    succeeded.
+    """
+    from src import web
+    from src.enrich.musicbrainz import MusicBrainzEnricher
+    from src.enrich.runner import enrich_set
+
+    report = await enrich_set(web.library, MusicBrainzEnricher(), set_id)
+    return report.as_dict()
+
+
 async def startup(ctx: Dict[str, Any]) -> None:
     """Reclaim whatever the previous worker was doing when it died.
 
@@ -77,7 +93,7 @@ async def startup(ctx: Dict[str, Any]) -> None:
 
 
 class WorkerSettings:
-    functions = [analyze_upload_job, analyze_url_job]
+    functions = [analyze_upload_job, analyze_url_job, enrich_set_job]
     on_startup = startup
     queue_name = QUEUE_NAME
     job_timeout = JOB_TIMEOUT

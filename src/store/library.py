@@ -62,7 +62,30 @@ CREATE TABLE IF NOT EXISTS tracks (
     camelot      TEXT,
     musical_key  TEXT,
     confidence   REAL DEFAULT 0,
-    strength     TEXT DEFAULT ''
+    strength     TEXT DEFAULT '',
+    catalog_number TEXT DEFAULT '',
+    mbid         TEXT DEFAULT ''
+);
+
+-- Enrichment is rate-limited to about one lookup per second, so the same
+-- track appearing in five sets must not cost five lookups. Keyed by the same
+-- normalised artist/title everything else uses.
+CREATE TABLE IF NOT EXISTS enrichment (
+    track_key    TEXT PRIMARY KEY,
+    label        TEXT DEFAULT '',
+    catalog_number TEXT DEFAULT '',
+    year         TEXT DEFAULT '',
+    album        TEXT DEFAULT '',
+    genre        TEXT DEFAULT '',
+    isrc         TEXT DEFAULT '',
+    mbid         TEXT DEFAULT '',
+    provider     TEXT DEFAULT '',
+    confidence   REAL DEFAULT 0,
+    -- A miss is cached too. Most unidentified-by-MusicBrainz tracks are white
+    -- labels and dubs that will never be there, and re-asking every time is
+    -- how you get rate-limited for nothing.
+    found        INTEGER NOT NULL DEFAULT 0,
+    checked_at   TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_tracks_set ON tracks(set_id);
@@ -110,6 +133,8 @@ class Library:
     # or it only appears on fresh installs and production keeps the old shape.
     MIGRATIONS = (
         ("tracks", "strength", "TEXT DEFAULT ''"),
+        ("tracks", "catalog_number", "TEXT DEFAULT ''"),
+        ("tracks", "mbid", "TEXT DEFAULT ''"),
     )
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
@@ -306,6 +331,85 @@ class Library:
             out.append(item)
         return out
 
+    # ── Enrichment ───────────────────────────────────────────────────────
+
+    async def cached_enrichment(self, track_key: str) -> Optional[Dict[str, Any]]:
+        """What a provider last said about this track, hit or miss."""
+        return await self._run(self._cached_enrichment_sync, track_key)
+
+    def _cached_enrichment_sync(self, track_key: str) -> Optional[Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT * FROM enrichment WHERE track_key = ?",
+                               (track_key,)).fetchone()
+        return dict(row) if row else None
+
+    async def remember_enrichment(self, track_key: str,
+                                  meta: Optional[Dict[str, Any]]) -> None:
+        """Record a lookup result. `None` records that nothing was found."""
+        async with self._lock:
+            await self._run(self._remember_enrichment_sync, track_key, meta)
+
+    def _remember_enrichment_sync(self, track_key: str,
+                                  meta: Optional[Dict[str, Any]]) -> None:
+        payload = meta or {}
+        with closing(self._connect()) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO enrichment (track_key, label,"
+                " catalog_number, year, album, genre, isrc, mbid, provider,"
+                " confidence, found, checked_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (track_key, payload.get("label", ""),
+                 payload.get("catalog_number", ""), payload.get("year", ""),
+                 payload.get("album", ""), payload.get("genre", ""),
+                 payload.get("isrc", ""), payload.get("recording_id", ""),
+                 payload.get("provider", ""), payload.get("confidence", 0.0),
+                 1 if meta else 0, _now()),
+            )
+            conn.commit()
+
+    async def apply_enrichment(self, track_key: str,
+                               fields: Dict[str, Any]) -> int:
+        """Write found metadata onto every track sharing this key.
+
+        Across all sets, not just the one being enriched: the same record in
+        four mixes is one lookup and four updated rows.
+        """
+        if not fields:
+            return 0
+        async with self._lock:
+            return await self._run(self._apply_enrichment_sync, track_key, fields)
+
+    def _apply_enrichment_sync(self, track_key: str,
+                               fields: Dict[str, Any]) -> int:
+        allowed = {"label", "year", "album", "genre", "isrc",
+                   "catalog_number", "mbid"}
+        writable = {k: v for k, v in fields.items() if k in allowed}
+        if not writable:
+            return 0
+        assignments = ", ".join(f"{k} = ?" for k in writable)
+        with closing(self._connect()) as conn:
+            cur = conn.execute(
+                f"UPDATE tracks SET {assignments} WHERE track_key = ?",
+                (*writable.values(), track_key),
+            )
+            conn.commit()
+            return cur.rowcount
+
+    async def tracks_needing_enrichment(self, set_id: str) -> List[Dict[str, str]]:
+        """Identified tracks in a set that have no label yet."""
+        return await self._run(self._needing_enrichment_sync, set_id)
+
+    def _needing_enrichment_sync(self, set_id: str) -> List[Dict[str, str]]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT track_key, artist, title, isrc FROM tracks"
+                " WHERE set_id = ? AND identified = 1 AND track_key != ''"
+                "   AND (label IS NULL OR label = '')",
+                (set_id,),
+            ).fetchall()
+        return [{"key": r["track_key"], "artist": r["artist"],
+                 "title": r["title"], "isrc": r["isrc"] or ""} for r in rows]
+
     # ── Crate ────────────────────────────────────────────────────────────
 
     async def toggle_star(self, track_key: str, title: str = "",
@@ -439,5 +543,7 @@ def _track_row(r: sqlite3.Row, starred: set) -> Dict[str, Any]:
         "bpm": r["bpm"], "camelot": r["camelot"], "musical_key": r["musical_key"],
         "confidence": r["confidence"],
         "strength": r["strength"] if "strength" in r.keys() else "",
+        "catalog_number": r["catalog_number"] if "catalog_number" in r.keys() else "",
+        "mbid": r["mbid"] if "mbid" in r.keys() else "",
         "starred": key in starred,
     }
