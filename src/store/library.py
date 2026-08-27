@@ -1,0 +1,408 @@
+"""The library: every track from every set, in one queryable place.
+
+This is what turns the tool from a converter into something worth keeping. A
+tracklist you download and forget is a one-shot; a library accumulates, and the
+single most useful digging signal falls straight out of it — *this track shows
+up in four of your sets*, which is how you find the records that actually
+matter to the DJs you follow.
+
+Plain `sqlite3` on purpose: no server to run, the file lives next to the
+outputs, and it backs up by copying. Writes are serialised behind a lock and
+every call is dispatched to a thread so the event loop is never blocked.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import sqlite3
+from contextlib import closing
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from ..core.timecode import format_timestamp
+
+logger = logging.getLogger(__name__)
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS sets (
+    id           TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    source_url   TEXT DEFAULT '',
+    source_kind  TEXT DEFAULT 'upload',
+    uploader     TEXT DEFAULT '',
+    audio_path   TEXT DEFAULT '',
+    quality      TEXT DEFAULT '',
+    duration     REAL DEFAULT 0,
+    waveform     TEXT DEFAULT '[]',
+    stats        TEXT DEFAULT '{}',
+    created_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tracks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    set_id       TEXT NOT NULL REFERENCES sets(id) ON DELETE CASCADE,
+    position     INTEGER NOT NULL,
+    start        REAL NOT NULL,
+    end          REAL NOT NULL,
+    identified   INTEGER NOT NULL DEFAULT 0,
+    track_key    TEXT DEFAULT '',
+    title        TEXT DEFAULT '',
+    artist       TEXT DEFAULT '',
+    album        TEXT DEFAULT '',
+    label        TEXT DEFAULT '',
+    year         TEXT DEFAULT '',
+    genre        TEXT DEFAULT '',
+    isrc         TEXT DEFAULT '',
+    url          TEXT DEFAULT '',
+    cover_url    TEXT DEFAULT '',
+    bpm          REAL,
+    camelot      TEXT,
+    musical_key  TEXT,
+    confidence   REAL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_tracks_set ON tracks(set_id);
+CREATE INDEX IF NOT EXISTS idx_tracks_key ON tracks(track_key);
+
+CREATE TABLE IF NOT EXISTS crate (
+    track_key    TEXT PRIMARY KEY,
+    title        TEXT DEFAULT '',
+    artist       TEXT DEFAULT '',
+    note         TEXT DEFAULT '',
+    starred_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS watches (
+    id           TEXT PRIMARY KEY,
+    url          TEXT NOT NULL UNIQUE,
+    title        TEXT DEFAULT '',
+    kind         TEXT DEFAULT 'channel',
+    created_at   TEXT NOT NULL,
+    last_checked TEXT,
+    seen_ids     TEXT DEFAULT '[]'
+);
+"""
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+@dataclass
+class Library:
+    path: Path
+
+    def __post_init__(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = asyncio.Lock()
+        with closing(self._connect()) as conn:
+            conn.executescript(SCHEMA)
+            conn.commit()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path, timeout=15)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        # WAL lets the API read while an analysis is writing.
+        conn.execute("PRAGMA journal_mode = WAL")
+        return conn
+
+    async def _run(self, fn, *args):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, fn, *args)
+
+    # ── Sets ──────────────────────────────────────────────────────────────
+
+    async def save_set(self, set_id: str, title: str, result: Dict[str, Any],
+                       *, source_url: str = "", source_kind: str = "upload",
+                       uploader: str = "", audio_path: str = "",
+                       quality: str = "") -> None:
+        async with self._lock:
+            await self._run(self._save_set_sync, set_id, title, result,
+                            source_url, source_kind, uploader, audio_path, quality)
+
+    def _save_set_sync(self, set_id, title, result, source_url, source_kind,
+                       uploader, audio_path, quality) -> None:
+        with closing(self._connect()) as conn:
+            conn.execute("DELETE FROM sets WHERE id = ?", (set_id,))
+            conn.execute(
+                "INSERT INTO sets (id, title, source_url, source_kind, uploader,"
+                " audio_path, quality, duration, waveform, stats, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (set_id, title, source_url, source_kind, uploader, audio_path,
+                 quality, result.get("duration", 0),
+                 json.dumps(result.get("waveform", [])),
+                 json.dumps(result.get("stats", {})), _now()),
+            )
+            conn.executemany(
+                "INSERT INTO tracks (set_id, position, start, end, identified,"
+                " track_key, title, artist, album, label, year, genre, isrc, url,"
+                " cover_url, bpm, camelot, musical_key, confidence)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                    (set_id, t.get("index", i + 1), t.get("start", 0), t.get("end", 0),
+                     1 if t.get("identified") else 0, t.get("key", ""),
+                     t.get("title", ""), t.get("artist", ""), t.get("album", ""),
+                     t.get("label", ""), t.get("year", ""), t.get("genre", ""),
+                     t.get("isrc", ""), t.get("url", ""), t.get("cover_url", ""),
+                     t.get("bpm"), t.get("camelot"), t.get("musical_key"),
+                     t.get("confidence", 0))
+                    for i, t in enumerate(result.get("tracks", []))
+                ],
+            )
+            conn.commit()
+
+    async def list_sets(self, limit: int = 50) -> List[Dict[str, Any]]:
+        return await self._run(self._list_sets_sync, limit)
+
+    def _list_sets_sync(self, limit: int) -> List[Dict[str, Any]]:
+        """Summaries for the library list.
+
+        `audio_path` is deliberately dropped: it is a server filesystem path
+        and the client has no use for it — playback goes through
+        /api/sets/{id}/audio, which validates the path itself.
+        """
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT s.*,"
+                " (SELECT COUNT(*) FROM tracks t WHERE t.set_id = s.id) AS track_count,"
+                " (SELECT COUNT(*) FROM tracks t WHERE t.set_id = s.id"
+                "   AND t.identified = 1) AS identified_count"
+                " FROM sets s ORDER BY s.created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        summaries = []
+        for row in rows:
+            item = _set_row(row)
+            item.pop("audio_path", None)
+            summaries.append(item)
+        return summaries
+
+    async def get_set(self, set_id: str) -> Optional[Dict[str, Any]]:
+        return await self._run(self._get_set_sync, set_id)
+
+    def _get_set_sync(self, set_id: str) -> Optional[Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT * FROM sets WHERE id = ?", (set_id,)).fetchone()
+            if row is None:
+                return None
+            tracks = conn.execute(
+                "SELECT * FROM tracks WHERE set_id = ? ORDER BY position", (set_id,)
+            ).fetchall()
+            starred = {r["track_key"] for r in conn.execute(
+                "SELECT track_key FROM crate").fetchall()}
+        data = _set_row(row)
+        data["waveform"] = json.loads(row["waveform"] or "[]")
+        data["tracks"] = [_track_row(t, starred) for t in tracks]
+        return data
+
+    async def delete_set(self, set_id: str) -> bool:
+        async with self._lock:
+            return await self._run(self._delete_set_sync, set_id)
+
+    def _delete_set_sync(self, set_id: str) -> bool:
+        with closing(self._connect()) as conn:
+            cur = conn.execute("DELETE FROM sets WHERE id = ?", (set_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ── Cross-set digging ────────────────────────────────────────────────
+
+    async def recurring_tracks(self, min_sets: int = 2, limit: int = 100
+                               ) -> List[Dict[str, Any]]:
+        """Tracks appearing across several sets — the strongest digging signal."""
+        return await self._run(self._recurring_sync, min_sets, limit)
+
+    def _recurring_sync(self, min_sets: int, limit: int) -> List[Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT track_key,"
+                "  MAX(title) AS title, MAX(artist) AS artist,"
+                "  MAX(url) AS url, MAX(cover_url) AS cover_url,"
+                "  MAX(label) AS label, AVG(bpm) AS bpm, MAX(camelot) AS camelot,"
+                "  COUNT(DISTINCT set_id) AS set_count"
+                " FROM tracks WHERE identified = 1 AND track_key != ''"
+                " GROUP BY track_key HAVING set_count >= ?"
+                " ORDER BY set_count DESC, artist ASC LIMIT ?",
+                (min_sets, limit),
+            ).fetchall()
+        return [{
+            "key": r["track_key"], "title": r["title"], "artist": r["artist"],
+            "url": r["url"], "cover_url": r["cover_url"], "label": r["label"],
+            "bpm": round(r["bpm"], 1) if r["bpm"] else None,
+            "camelot": r["camelot"], "set_count": r["set_count"],
+        } for r in rows]
+
+    async def search_tracks(self, query: str = "", *, bpm_min: Optional[float] = None,
+                            bpm_max: Optional[float] = None,
+                            camelot: Optional[str] = None,
+                            starred_only: bool = False,
+                            limit: int = 200) -> List[Dict[str, Any]]:
+        return await self._run(self._search_sync, query, bpm_min, bpm_max,
+                               camelot, starred_only, limit)
+
+    def _search_sync(self, query, bpm_min, bpm_max, camelot, starred_only, limit):
+        sql = ["SELECT t.*, s.title AS set_title FROM tracks t"
+               " JOIN sets s ON s.id = t.set_id WHERE t.identified = 1"]
+        params: List[Any] = []
+        if query:
+            sql.append(" AND (t.title LIKE ? OR t.artist LIKE ? OR t.label LIKE ?)")
+            params += [f"%{query}%"] * 3
+        if bpm_min is not None:
+            sql.append(" AND t.bpm >= ?"); params.append(bpm_min)
+        if bpm_max is not None:
+            sql.append(" AND t.bpm <= ?"); params.append(bpm_max)
+        if camelot:
+            sql.append(" AND t.camelot = ?"); params.append(camelot)
+        if starred_only:
+            sql.append(" AND t.track_key IN (SELECT track_key FROM crate)")
+        sql.append(" ORDER BY t.artist, t.title LIMIT ?")
+        params.append(limit)
+
+        with closing(self._connect()) as conn:
+            rows = conn.execute("".join(sql), params).fetchall()
+            starred = {r["track_key"] for r in conn.execute(
+                "SELECT track_key FROM crate").fetchall()}
+        out = []
+        for r in rows:
+            item = _track_row(r, starred)
+            item["set_title"] = r["set_title"]
+            out.append(item)
+        return out
+
+    # ── Crate ────────────────────────────────────────────────────────────
+
+    async def toggle_star(self, track_key: str, title: str = "",
+                          artist: str = "") -> bool:
+        """Star or unstar. Returns the resulting state."""
+        async with self._lock:
+            return await self._run(self._toggle_star_sync, track_key, title, artist)
+
+    def _toggle_star_sync(self, track_key: str, title: str, artist: str) -> bool:
+        with closing(self._connect()) as conn:
+            existing = conn.execute(
+                "SELECT 1 FROM crate WHERE track_key = ?", (track_key,)).fetchone()
+            if existing:
+                conn.execute("DELETE FROM crate WHERE track_key = ?", (track_key,))
+                conn.commit()
+                return False
+            conn.execute(
+                "INSERT INTO crate (track_key, title, artist, starred_at)"
+                " VALUES (?,?,?,?)", (track_key, title, artist, _now()))
+            conn.commit()
+            return True
+
+    async def crate(self) -> List[Dict[str, Any]]:
+        return await self._run(self._crate_sync)
+
+    def _crate_sync(self) -> List[Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT c.track_key, c.starred_at,"
+                " MAX(t.title) AS title, MAX(t.artist) AS artist,"
+                " MAX(t.url) AS url, MAX(t.cover_url) AS cover_url,"
+                " MAX(t.label) AS label, AVG(t.bpm) AS bpm,"
+                " MAX(t.camelot) AS camelot, COUNT(DISTINCT t.set_id) AS set_count"
+                " FROM crate c LEFT JOIN tracks t ON t.track_key = c.track_key"
+                " GROUP BY c.track_key ORDER BY c.starred_at DESC"
+            ).fetchall()
+        return [{
+            "key": r["track_key"], "title": r["title"] or "", "artist": r["artist"] or "",
+            "url": r["url"] or "", "cover_url": r["cover_url"] or "",
+            "label": r["label"] or "", "camelot": r["camelot"],
+            "bpm": round(r["bpm"], 1) if r["bpm"] else None,
+            "set_count": r["set_count"], "starred_at": r["starred_at"], "starred": True,
+        } for r in rows]
+
+    # ── Watches ──────────────────────────────────────────────────────────
+
+    async def add_watch(self, watch_id: str, url: str, title: str,
+                        kind: str = "channel") -> None:
+        async with self._lock:
+            await self._run(self._add_watch_sync, watch_id, url, title, kind)
+
+    def _add_watch_sync(self, watch_id, url, title, kind) -> None:
+        with closing(self._connect()) as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO watches (id, url, title, kind, created_at)"
+                " VALUES (?,?,?,?,?)", (watch_id, url, title, kind, _now()))
+            conn.commit()
+
+    async def list_watches(self) -> List[Dict[str, Any]]:
+        return await self._run(self._list_watches_sync)
+
+    def _list_watches_sync(self) -> List[Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT * FROM watches ORDER BY created_at DESC").fetchall()
+        return [{
+            "id": r["id"], "url": r["url"], "title": r["title"], "kind": r["kind"],
+            "created_at": r["created_at"], "last_checked": r["last_checked"],
+            "seen_count": len(json.loads(r["seen_ids"] or "[]")),
+        } for r in rows]
+
+    async def mark_watch_checked(self, watch_id: str, seen_ids: List[str]) -> None:
+        async with self._lock:
+            await self._run(self._mark_watch_sync, watch_id, seen_ids)
+
+    def _mark_watch_sync(self, watch_id: str, seen_ids: List[str]) -> None:
+        with closing(self._connect()) as conn:
+            conn.execute(
+                "UPDATE watches SET last_checked = ?, seen_ids = ? WHERE id = ?",
+                (_now(), json.dumps(seen_ids[-500:]), watch_id))
+            conn.commit()
+
+    async def watch_seen_ids(self, watch_id: str) -> List[str]:
+        return await self._run(self._watch_seen_sync, watch_id)
+
+    def _watch_seen_sync(self, watch_id: str) -> List[str]:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT seen_ids FROM watches WHERE id = ?", (watch_id,)).fetchone()
+        return json.loads(row["seen_ids"] or "[]") if row else []
+
+    async def delete_watch(self, watch_id: str) -> bool:
+        async with self._lock:
+            return await self._run(self._delete_watch_sync, watch_id)
+
+    def _delete_watch_sync(self, watch_id: str) -> bool:
+        with closing(self._connect()) as conn:
+            cur = conn.execute("DELETE FROM watches WHERE id = ?", (watch_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+
+def _set_row(r: sqlite3.Row) -> Dict[str, Any]:
+    keys = r.keys()
+    return {
+        "id": r["id"], "title": r["title"], "source_url": r["source_url"],
+        "source_kind": r["source_kind"], "uploader": r["uploader"],
+        "quality": r["quality"], "duration": r["duration"],
+        "has_audio": bool(r["audio_path"] and Path(r["audio_path"]).exists()),
+        "audio_path": r["audio_path"],
+        "stats": json.loads(r["stats"] or "{}"),
+        "created_at": r["created_at"],
+        "track_count": r["track_count"] if "track_count" in keys else None,
+        "identified_count": r["identified_count"] if "identified_count" in keys else None,
+    }
+
+
+def _track_row(r: sqlite3.Row, starred: set) -> Dict[str, Any]:
+    key = r["track_key"]
+    return {
+        "index": r["position"], "start": r["start"], "end": r["end"],
+        # Recomputed rather than stored: the exporters need it, and deriving
+        # it here keeps a set read back from the library identical in shape to
+        # one straight out of the pipeline.
+        "start_label": format_timestamp(r["start"]),
+        "duration": round(r["end"] - r["start"], 3),
+        "identified": bool(r["identified"]), "key": key,
+        "title": r["title"], "artist": r["artist"], "album": r["album"],
+        "label": r["label"], "year": r["year"], "genre": r["genre"],
+        "isrc": r["isrc"], "url": r["url"], "cover_url": r["cover_url"],
+        "bpm": r["bpm"], "camelot": r["camelot"], "musical_key": r["musical_key"],
+        "confidence": r["confidence"], "starred": key in starred,
+    }
