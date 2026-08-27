@@ -91,14 +91,37 @@ class ShazamIdentifier:
 
     def __init__(self, concurrency: int = 4, language: str = "en-US",
                  endpoint_country: str = "GB", max_attempts: int = 4,
-                 backoff: float = 2.0) -> None:
+                 backoff: float = 2.0, probe_timeout: float = 45.0) -> None:
+        from aiohttp_retry import ExponentialRetry
         from shazamio import Shazam
+        from shazamio.client import HTTPClient
 
-        self._shazam = Shazam(language=language, endpoint_country=endpoint_country)
+        # shazamio's own client retries twenty times with a sixty-second
+        # ceiling. Layering four attempts on top of that gives a worst case of
+        # eighty minutes — for one probe, of a hundred and eighteen. An
+        # analysis hung on exactly that: the job ran for half an hour with the
+        # CPU idle, waiting inside a library that was waiting.
+        #
+        # The retry policy belongs in one place. This one is short, and the
+        # attempts around it handle what it gives up on.
+        self._shazam = Shazam(
+            language=language,
+            endpoint_country=endpoint_country,
+            http_client=HTTPClient(
+                retry_options=ExponentialRetry(
+                    attempts=2, max_timeout=8,
+                    statuses={500, 502, 503, 504, 429},
+                ),
+            ),
+        )
         self._sem = asyncio.Semaphore(concurrency)
         self.concurrency = concurrency
         self.max_attempts = max_attempts
         self.backoff = backoff
+        # A hard ceiling per probe. Without one, a single stalled request holds
+        # a semaphore slot indefinitely and the analysis never finishes — it
+        # does not fail either, which is worse, because nothing says so.
+        self.probe_timeout = probe_timeout
 
     async def identify(self, wav_bytes: bytes) -> Optional[TrackMatch]:
         """Identify a probe, retrying when the service refuses rather than
@@ -118,11 +141,23 @@ class ShazamIdentifier:
         for attempt in range(self.max_attempts):
             async with self._sem:
                 try:
-                    result = await self._shazam.recognize(wav_bytes)
+                    result = await asyncio.wait_for(
+                        self._shazam.recognize(wav_bytes),
+                        timeout=self.probe_timeout,
+                    )
                     return parse_shazam_track(result or {})
                 except asyncio.CancelledError:
                     raise
-                except Exception as exc:
+                except asyncio.TimeoutError:
+                    # Treated as transient: a stalled request usually means the
+                    # service is struggling, which is exactly when to back off
+                    # and ask again rather than give up on the segment.
+                    if attempt == self.max_attempts - 1:
+                        logger.warning("Shazam probe timed out after %d attempts",
+                                       attempt + 1)
+                        return None
+                    logger.debug("Shazam probe timed out, retrying")
+                except Exception as exc:  # noqa: BLE001 - classified below
                     transient = _looks_transient(exc)
                     if not transient or attempt == self.max_attempts - 1:
                         logger.warning(

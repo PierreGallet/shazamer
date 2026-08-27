@@ -192,3 +192,49 @@ def test_the_default_concurrency_reflects_what_the_service_gives():
     assert default <= 4, (
         f"concurrency defaults to {default}; measurement showed no gain past 2"
     )
+
+
+@pytest.mark.anyio
+async def test_a_stalled_request_cannot_hang_the_analysis(identifier):
+    """A probe that never answers must not hold the whole run.
+
+    An analysis stalled on exactly this: the job ran for half an hour with the
+    CPU idle, waiting inside a library that was itself waiting. It did not fail
+    either, which is worse — nothing said so.
+    """
+    import asyncio
+
+    class NeverAnswers:
+        calls = 0
+
+        async def recognize(self, wav_bytes):
+            NeverAnswers.calls += 1
+            # An event nobody sets, not a sleep: the fixture replaces
+            # asyncio.sleep to keep the backoff instant, and a sleep here would
+            # be short-circuited by that — the stall would never happen and the
+            # test would pass for the wrong reason.
+            await asyncio.Event().wait()
+
+    identifier._shazam = NeverAnswers()
+    identifier.probe_timeout = 0.05
+
+    assert await identifier.identify(b"audio") is None
+    assert NeverAnswers.calls == identifier.max_attempts, (
+        "a timeout should be retried, then given up on"
+    )
+
+
+def test_the_library_retry_budget_is_not_doubled():
+    """shazamio retries internally; ours must not multiply with it.
+
+    Its default is twenty attempts with a sixty-second ceiling. Four attempts
+    layered on top gave a worst case of eighty minutes for one probe out of a
+    hundred and eighteen.
+    """
+    from src.identify.shazam import ShazamIdentifier
+
+    identifier = ShazamIdentifier(concurrency=1)
+    worst_case = identifier.max_attempts * identifier.probe_timeout
+    assert worst_case <= 300, (
+        f"a single probe can take {worst_case / 60:.0f} minutes"
+    )
