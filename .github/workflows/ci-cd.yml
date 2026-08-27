@@ -211,9 +211,27 @@ jobs:
             git reset --hard origin/main
           "
 
-          # 2. Write runtime env (.env is git-ignored, so git reset above is safe)
+          # 2. Merge the runtime env rather than replacing it.
+          #
+          # This used to `cat >` two lines over the whole file, which meant any
+          # variable set on the server by hand — Soulseek credentials, an API
+          # key — was silently wiped by the next deploy. Anything CI does not
+          # manage is now left alone, so the server .env is a place secrets can
+          # actually live.
           printf 'PYTHON_ENV=Production\nSENTRY_DSN=%s\n' "$SENTRY_DSN" \
-            | ssh -p $PORT $SSH_USER@$HOST "cat > $DEPLOY_PATH/.env && chmod 600 $DEPLOY_PATH/.env"
+            | ssh -p $PORT $SSH_USER@$HOST "
+              set -e
+              cd $DEPLOY_PATH
+              touch .env && chmod 600 .env
+              MANAGED=\$(cat)
+              # Keys CI owns are rewritten; every other line survives.
+              OWNED=\$(printf '%s\n' \"\$MANAGED\" | cut -d= -f1 | paste -sd'|' -)
+              KEPT=\$(grep -vE \"^(\$OWNED)=\" .env 2>/dev/null || true)
+              printf '%s\n' \"\$MANAGED\" > .env.new
+              [ -n \"\$KEPT\" ] && printf '%s\n' \"\$KEPT\" >> .env.new
+              mv .env.new .env && chmod 600 .env
+              echo \"env: \$(grep -c '=' .env) variable(s)\"
+            "
 
           # 3. Run blue-green deployment
           ssh -p $PORT $SSH_USER@$HOST "
