@@ -175,3 +175,89 @@ def test_the_retry_budget_survives_ordinary_churn():
         f"a job is abandoned after {jobs.MAX_TRIES} interruptions; on a shared "
         "machine that is an afternoon"
     )
+
+
+def test_no_estimate_until_there_is_something_to_estimate_from():
+    """A countdown that starts by lying is worse than no countdown."""
+    from src.tasks import Task
+
+    task = Task("t1")
+    task.observe(5)
+    assert task.eta_seconds is None
+    task.observe(10)
+    assert task.eta_seconds is None, "estimated from two points"
+
+
+def test_the_estimate_comes_from_the_observed_rate():
+    """Not from an expected duration — that is not knowable.
+
+    Identification is bounded by a rate-limited service whose throughput varies
+    by an order of magnitude between runs, so a number derived from what is
+    actually happening beats one derived from what usually happens.
+    """
+    from unittest.mock import patch
+
+    from src.tasks import Task
+
+    clock = [0.0]
+    with patch("src.tasks.time.monotonic", side_effect=lambda: clock[0]):
+        task = Task("t1")
+        # 1% per second: 40% done, 60 seconds left.
+        for pct in (10, 20, 30, 40):
+            clock[0] = float(pct)
+            task.observe(pct)
+
+    assert task.eta_seconds is not None
+    assert 50 <= task.eta_seconds <= 70, (
+        f"estimated {task.eta_seconds}s where about 60 was expected"
+    )
+
+
+def test_the_estimate_follows_a_change_of_pace():
+    """Stages differ by an order of magnitude; the estimate has to notice."""
+    from unittest.mock import patch
+
+    from src.tasks import Task
+
+    clock = [0.0]
+    with patch("src.tasks.time.monotonic", side_effect=lambda: clock[0]):
+        task = Task("t1")
+        for pct in (10, 20, 30, 40):        # fast: 1% per second
+            clock[0] = float(pct)
+            task.observe(pct)
+        quick = task.eta_seconds
+
+        for i, pct in enumerate((45, 50, 55, 60)):   # slow: 1% per 10 seconds
+            clock[0] = 40.0 + (i + 1) * 50
+            task.observe(pct)
+        slow = task.eta_seconds
+
+    assert slow > quick * 2, (
+        f"the estimate barely moved ({quick}s to {slow}s) when the pace "
+        "dropped tenfold"
+    )
+
+
+def test_a_finished_task_has_no_estimate():
+    from src.tasks import Task
+
+    task = Task("t1")
+    for pct in (20, 50, 80, 100):
+        task.observe(pct)
+    assert task.eta_seconds is None
+
+
+def test_the_estimate_never_counts_down_to_zero_while_working():
+    """"0 seconds remaining" on a bar that keeps moving reads as broken."""
+    from unittest.mock import patch
+
+    from src.tasks import Task
+
+    clock = [0.0]
+    with patch("src.tasks.time.monotonic", side_effect=lambda: clock[0]):
+        task = Task("t1")
+        for i, pct in enumerate((97, 98, 99)):
+            clock[0] = i * 0.01
+            task.observe(pct)
+
+    assert task.eta_seconds is None or task.eta_seconds >= 5

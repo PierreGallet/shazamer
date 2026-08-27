@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,11 @@ _VOLATILE = {"_task", "_queues", "filepath"}
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# How much of the recent past to weigh when estimating what is left. Short
+# enough to follow a stage change, long enough not to swing on one slow probe.
+ETA_WINDOW = 8
 
 
 class Task:
@@ -52,8 +58,47 @@ class Task:
         # Stored with the task so an interrupted job can be reclaimed without
         # the worker having to reconstruct what it was doing.
         self.job: Optional[Dict[str, Any]] = None
+        self.eta_seconds: Optional[int] = None
+        # (monotonic time, progress) samples, for estimating what remains.
+        self._samples: List[tuple] = []
         self._queues: List[asyncio.Queue] = []
         self._handle: Optional[asyncio.Task] = None
+
+    def observe(self, progress: int) -> None:
+        """Record progress and re-estimate what is left.
+
+        From the observed rate rather than any expected duration, because the
+        expected duration is not knowable: identification is bounded by a
+        rate-limited service whose throughput varies by an order of magnitude
+        between one run and the next. A number derived from what is actually
+        happening is worth more than one derived from what usually happens, and
+        it corrects itself when conditions change.
+
+        Deliberately unreported until there is enough to go on — a countdown
+        that starts by lying is worse than no countdown.
+        """
+        now = time.monotonic()
+        if self._samples and self._samples[-1][1] == progress:
+            return                          # no movement, nothing to learn
+        self._samples.append((now, progress))
+        del self._samples[:-ETA_WINDOW]
+
+        if len(self._samples) < 3 or progress <= 0 or progress >= 100:
+            self.eta_seconds = None
+            return
+
+        first_at, first_pct = self._samples[0]
+        gained = progress - first_pct
+        elapsed = now - first_at
+        if gained <= 0 or elapsed <= 0:
+            return                          # keep the previous estimate
+
+        remaining = (100 - progress) * (elapsed / gained)
+        # Rounded coarsely on purpose: this is an estimate, and showing it to
+        # the second would claim a precision it does not have. Never rounded
+        # down to zero while there is work left — "0 seconds remaining" on a
+        # bar that keeps moving reads as broken.
+        self.eta_seconds = max(5, int(round(remaining / 5.0) * 5))
 
     def snapshot(self) -> Dict[str, Any]:
         return {
@@ -62,6 +107,7 @@ class Task:
             "source_url": self.source_url, "error": self.error, "set_id": self.set_id,
             "quality": self.quality, "created_at": self.created_at,
             "finished_at": self.finished_at, "job": self.job,
+            "eta_seconds": self.eta_seconds,
         }
 
     @property
@@ -166,6 +212,7 @@ class TaskManager:
             task.stage = stage
         if progress is not None:
             task.progress = max(0, min(100, int(progress)))
+            task.observe(task.progress)
         if message is not None:
             task.message = message
         if status is not None:
@@ -238,6 +285,7 @@ class TaskManager:
         task.created_at = data.get("created_at", _now())
         task.finished_at = data.get("finished_at")
         task.job = data.get("job")
+        task.eta_seconds = data.get("eta_seconds")
         return task
 
     async def watch(self, task_id: str, poll: float = 0.5

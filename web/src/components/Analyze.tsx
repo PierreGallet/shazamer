@@ -1,6 +1,6 @@
-import { Show, createEffect, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createResource, createSignal, onCleanup } from "solid-js";
 import type { TaskState } from "../lib/api";
-import { api, subscribeToTask } from "../lib/api";
+import { api, formatTime, subscribeToTask } from "../lib/api";
 
 /**
  * Start an analysis and watch it run.
@@ -52,6 +52,21 @@ export default function Analyze(props: Props) {
   const [error, setError] = createSignal("");
   const [uploadPct, setUploadPct] = createSignal<number | null>(null);
   const [dragging, setDragging] = createSignal(false);
+
+  /**
+   * What is already running, shown on arrival.
+   *
+   * An analysis takes an hour and nobody watches it, so the first question on
+   * opening this page is usually "is something already going?" — and before
+   * this it could only be answered by remembering a URL.
+   */
+  const [tick, setTick] = createSignal(0);
+  const queueTimer = setInterval(() => setTick((n) => n + 1), 5000);
+  onCleanup(() => clearInterval(queueTimer));
+  const [active] = createResource(tick, () => api.activeTasks());
+  const queue = () =>
+    (active.latest ?? []).filter((t) => t.task_id !== task()?.task_id);
+
   let disposer: (() => void) | null = null;
   let fileInput!: HTMLInputElement;
 
@@ -236,7 +251,14 @@ export default function Analyze(props: Props) {
                     <span class="faint"> · {state().filename}</span>
                   </Show>
                 </span>
-                <span class="mono">{state().progress}%</span>
+                <span class="mono">
+                  {state().progress}%
+                  <Show when={state().eta_seconds}>
+                    <span class="faint" title="Estimated, from the rate so far">
+                      {" "}· ~{formatTime(state().eta_seconds!)} left
+                    </span>
+                  </Show>
+                </span>
               </div>
               <div class="progress-track">
                 <div
@@ -274,6 +296,33 @@ export default function Analyze(props: Props) {
               </div>
             </div>
           )}
+        </Show>
+
+        <Show when={queue().length > 0}>
+          <div class="queue">
+            <div class="eyebrow">
+              {queue().length === 1 ? "Already running" : "Already running"}
+            </div>
+            <For each={queue()}>
+              {(item) => (
+                <a class="queue-row" href={`/analyzing/${item.task_id}`}>
+                  <span class="spinner" />
+                  <span class="queue-name">
+                    {item.filename && item.filename !== "Resolving..."
+                      ? item.filename
+                      : "Resolving…"}
+                  </span>
+                  <span class="tiny muted">{item.message}</span>
+                  <span class="tiny faint mono">{item.progress}%</span>
+                  <Show when={item.eta_seconds}>
+                    <span class="tiny faint mono" title="Estimated, from the rate so far">
+                      ~{formatTime(item.eta_seconds!)}
+                    </span>
+                  </Show>
+                </a>
+              )}
+            </For>
+          </div>
         </Show>
 
         <Show when={error()}>

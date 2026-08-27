@@ -82,6 +82,9 @@ export interface TaskState {
   quality: string;
   created_at: string;
   finished_at: string | null;
+  /** Estimated seconds remaining, from the observed rate. Null until there is
+   *  enough movement to say anything honest. */
+  eta_seconds: number | null;
 }
 
 export interface LibraryTrack {
