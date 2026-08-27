@@ -54,9 +54,6 @@ jobs:
           uv pip install -r requirements.txt
           uv pip install pytest pytest-asyncio pytest-cov anyio httpx
 
-      - name: Run tests
-        run: uv run pytest -x -q -m "not integration" --ignore=tests/test_integration.py
-
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -76,6 +73,9 @@ jobs:
       - name: Build frontend
         working-directory: web
         run: npm run build
+
+      - name: Run tests
+        run: uv run pytest -x -q -m "not integration" --ignore=tests/test_integration.py
 
   release-please:
     name: "\U0001F4E6 Release Please"
