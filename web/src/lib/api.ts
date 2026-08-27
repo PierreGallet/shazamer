@@ -159,12 +159,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  analyzeUrl: (url: string) =>
-    request<{ task_id: string; url: string }>("/api/analyze/url", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
-    }),
+  /**
+   * Start an analysis from a URL.
+   *
+   * `replaces` re-analyses an existing set in place, which is how an imported
+   * stub gets its audio, waveform, BPM and key — none of which were recorded
+   * before 1.0, so running the source again is the only way to obtain them.
+   */
+  analyzeUrl: (url: string, replaces?: string) =>
+    request<{ task_id: string; url: string; replaces: string | null }>(
+      "/api/analyze/url",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, replaces: replaces ?? null }),
+      },
+    ),
 
   analyzeUpload: (file: File, onProgress?: (pct: number) => void) =>
     new Promise<{ task_id: string; filename: string }>((resolve, reject) => {
@@ -198,6 +208,8 @@ export const api = {
       xhr.send(form);
     }),
 
+  /** Analyses still running, for the header's "back to it" affordance. */
+  activeTasks: () => request<TaskState[]>("/api/tasks"),
   task: (id: string) => request<TaskState>(`/api/tasks/${id}`),
   cancelTask: (id: string) =>
     request<{ cancelled: boolean }>(`/api/tasks/${id}/cancel`, { method: "POST" }),

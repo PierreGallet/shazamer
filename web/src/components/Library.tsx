@@ -108,7 +108,12 @@ export default function Library(props: Props) {
                         <span>·</span><span class="mono">{item.quality}</span>
                       </Show>
                       <Show when={!item.has_audio}>
-                        <span>·</span><span>audio cleared</span>
+                        <span>·</span>
+                        <span>
+                          {item.source_kind === "legacy"
+                            ? "imported — no audio"
+                            : "audio cleared"}
+                        </span>
                       </Show>
                     </div>
                   </div>

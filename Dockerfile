@@ -32,6 +32,8 @@ COPY requirements.txt .
 RUN uv pip install --system -r requirements.txt
 
 COPY src/ ./src/
+# Read at runtime by /api/health, so the deployed version is knowable.
+COPY .release-please-manifest.json ./
 COPY --from=web /web/dist ./web/dist
 
 # uploads/media hold audio; data holds the SQLite library; tmp holds task state.

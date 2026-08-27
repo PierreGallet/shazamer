@@ -48,6 +48,21 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+
+def _version() -> str:
+    """Read the released version rather than restating it.
+
+    A hardcoded string drifts the moment release-please cuts a version, and
+    then /api/health confidently reports something false — which is worse than
+    reporting nothing, because it is exactly what you check when asking what
+    is deployed.
+    """
+    manifest = Path(__file__).resolve().parent.parent / ".release-please-manifest.json"
+    try:
+        return json.loads(manifest.read_text())["."]
+    except (OSError, json.JSONDecodeError, KeyError):
+        return "unknown"
+
 init_sentry()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -104,7 +119,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Shazamer", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Shazamer", version=_version(), lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -125,6 +140,11 @@ def make_pipeline() -> Pipeline:
 
 class URLRequest(BaseModel):
     url: str
+    # Set to re-analyse in place. An imported set carries no audio, waveform,
+    # BPM or key — none of that was recorded before 1.0 — so the only way to
+    # get them is to run the source again. Re-analysing under the same id
+    # replaces the stub instead of leaving a duplicate beside it.
+    replaces: Optional[str] = None
 
 
 class StarRequest(BaseModel):
@@ -154,7 +174,8 @@ class SoulseekDownloadRequest(BaseModel):
 
 async def run_analysis(task_id: str, path: Path, title: str, *,
                        source_url: str = "", source_kind: str = "upload",
-                       uploader: str = "", quality: str = "") -> None:
+                       uploader: str = "", quality: str = "",
+                       set_id: Optional[str] = None) -> None:
     """Analyse a local file and store the result. Runs as a background task."""
     task = tasks.get(task_id)
     if task is None:
@@ -172,7 +193,7 @@ async def run_analysis(task_id: str, path: Path, title: str, *,
                      message="Starting analysis...", filename=title)
         result = await make_pipeline().run(str(path), on_progress=on_progress)
 
-        set_id = task_id
+        set_id = set_id or task_id
         await library.save_set(
             set_id, title, result.to_dict(),
             source_url=source_url, source_kind=source_kind, uploader=uploader,
@@ -192,7 +213,8 @@ async def run_analysis(task_id: str, path: Path, title: str, *,
         tasks.finish(task, status="error", message="Analysis failed", error=str(exc))
 
 
-async def run_url_analysis(task_id: str, url: str) -> None:
+async def run_url_analysis(task_id: str, url: str,
+                           set_id: Optional[str] = None) -> None:
     """Download then analyse. Progress spans both phases."""
     task = tasks.get(task_id)
     if task is None:
@@ -221,7 +243,8 @@ async def run_url_analysis(task_id: str, url: str) -> None:
                            source_url=media.webpage_url,
                            source_kind=media.extractor.lower(),
                            uploader=media.uploader,
-                           quality=media.quality_label)
+                           quality=media.quality_label,
+                           set_id=set_id)
 
     except asyncio.CancelledError:
         tasks.finish(task, status="cancelled", message="Cancelled")
@@ -298,11 +321,22 @@ async def analyze_url(request: URLRequest):
     if not url.lower().startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="URL must start with http(s)://")
 
+    replaces = (request.replaces or "").strip() or None
+    if replaces is not None and await library.get_set(replaces) is None:
+        raise HTTPException(status_code=404,
+                            detail="The set to replace no longer exists")
+
     task_id = str(uuid.uuid4())
     task = tasks.create(task_id, filename="Resolving...", source_url=url)
-    handle = asyncio.create_task(run_url_analysis(task_id, url))
+    handle = asyncio.create_task(run_url_analysis(task_id, url, set_id=replaces))
     tasks.attach(task, handle)
-    return {"task_id": task_id, "url": url}
+    return {"task_id": task_id, "url": url, "replaces": replaces}
+
+
+@app.get("/api/tasks")
+async def list_active_tasks():
+    """Analyses currently running, so the UI can offer a way back to them."""
+    return [task.snapshot() for task in tasks.active()]
 
 
 @app.get("/api/tasks/{task_id}")

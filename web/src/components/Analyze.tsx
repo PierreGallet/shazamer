@@ -28,6 +28,16 @@ const STAGE_LABELS: Record<string, string> = {
 
 const STAGE_ORDER = ["downloading", "decoding", "identifying", "features"];
 
+/**
+ * An uploaded file never downloads, so showing that step — let alone ticking
+ * it off — describes something that did not happen.
+ */
+function stagesFor(state: TaskState): string[] {
+  return state.source_url
+    ? STAGE_ORDER
+    : STAGE_ORDER.filter((stage) => stage !== "downloading");
+}
+
 interface Props {
   /** Task to resume watching, from the URL. Undefined on a fresh form. */
   taskId?: string;
@@ -245,7 +255,7 @@ export default function Analyze(props: Props) {
               </div>
 
               <div class="stage-track">
-                {STAGE_ORDER.map((stage) => {
+                {stagesFor(state()).map((stage) => {
                   const reached = () =>
                     STAGE_ORDER.indexOf(state().stage) >= STAGE_ORDER.indexOf(stage) ||
                     state().status === "completed";

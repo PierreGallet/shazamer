@@ -10,6 +10,7 @@ import Waveform from "./Waveform";
 interface Props {
   setId: string;
   onBack: () => void;
+  onReanalyse: (taskId: string) => void;
 }
 
 const EXPORTS: { fmt: string; label: string; hint: string }[] = [
@@ -29,6 +30,29 @@ export default function SetView(props: Props) {
   const [currentTime, setCurrentTime] = createSignal(initialStart);
   const [activeIndex, setActiveIndex] = createSignal<number | null>(null);
   const [playerError, setPlayerError] = createSignal("");
+  const [reanalyseUrl, setReanalyseUrl] = createSignal("");
+  const [reanalyseError, setReanalyseError] = createSignal("");
+  const [reanalysing, setReanalysing] = createSignal(false);
+
+  async function reanalyse(event: Event) {
+    event.preventDefault();
+    const url = reanalyseUrl().trim();
+    if (!url) {
+      setReanalyseError("Paste the link this set came from.");
+      return;
+    }
+    setReanalysing(true);
+    setReanalyseError("");
+    try {
+      const { task_id } = await api.analyzeUrl(url, props.setId);
+      props.onReanalyse(task_id);
+    } catch (err) {
+      setReanalysing(false);
+      setReanalyseError(
+        err instanceof Error ? err.message : "Could not start the analysis",
+      );
+    }
+  }
   const [audio, setAudio] = createSignal<HTMLAudioElement | null>(null);
 
   // Follow playback: whichever segment contains the playhead becomes active.
@@ -133,6 +157,39 @@ export default function SetView(props: Props) {
               </div>
             </div>
 
+            <Show when={data().source_kind === "legacy"}>
+              <div class="legacy-banner">
+                <div>
+                  <strong>Imported from an old tracklist.</strong>{" "}
+                  <span class="muted">
+                    No audio, waveform, BPM or key — none of it was recorded
+                    back then. Paste the link this set came from to re-analyse
+                    it in place.
+                  </span>
+                </div>
+                <form class="url-form" onSubmit={reanalyse}>
+                  <input
+                    class="input input-sm"
+                    type="url"
+                    placeholder="https://youtube.com/… or a SoundCloud link"
+                    value={reanalyseUrl()}
+                    onInput={(e) => setReanalyseUrl(e.currentTarget.value)}
+                    disabled={reanalysing()}
+                  />
+                  <button class="btn btn-primary btn-sm" type="submit"
+                          disabled={reanalysing()}>
+                    <Show when={reanalysing()}><span class="spinner" /></Show>
+                    Re-analyse
+                  </button>
+                </form>
+                <Show when={reanalyseError()}>
+                  <div class="tiny" style={{ color: "var(--crit)" }}>
+                    {reanalyseError()}
+                  </div>
+                </Show>
+              </div>
+            </Show>
+
             <div class="set-stage-sticky">
             <div class="panel panel-flush set-stage">
               <Waveform
@@ -149,8 +206,18 @@ export default function SetView(props: Props) {
                 when={data().has_audio}
                 fallback={
                   <div class="player player-absent tiny faint">
-                    Audio for this set has been cleared. The tracklist and waveform
-                    remain — re-run the source URL to play it again.
+                    <Show
+                      when={data().source_kind === "legacy"}
+                      fallback={
+                        <>
+                          Audio for this set has been cleared. The tracklist and
+                          waveform remain — re-run the source URL to play it again.
+                        </>
+                      }
+                    >
+                      No audio for an imported set — it was never kept. Paste the
+                      source link above to get it.
+                    </Show>
                   </div>
                 }
               >

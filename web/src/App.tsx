@@ -1,5 +1,5 @@
 import { Router, Route, useNavigate, useParams, useLocation, A } from "@solidjs/router";
-import { Show, createResource, type ParentProps } from "solid-js";
+import { For, Show, createResource, createSignal, onCleanup, type ParentProps } from "solid-js";
 import Analyze from "./components/Analyze";
 import Crate from "./components/Crate";
 import Library from "./components/Library";
@@ -27,6 +27,27 @@ const NAV: { href: string; label: string }[] = [
 function Shell(props: ParentProps) {
   const [sets] = createResource(() => api.sets(60));
   const location = useLocation();
+
+  /**
+   * Running analyses, surfaced everywhere.
+   *
+   * A set takes minutes to analyse and people do not sit and watch it — they
+   * go look at the library, or open another tab. Without a global marker the
+   * only way back to a run in progress is remembering its URL, so the analysis
+   * feels lost even though it is still going.
+   *
+   * Polled rather than streamed: this is one small list for the header, and a
+   * second SSE connection alongside the per-task one buys nothing.
+   */
+  const [tick, setTick] = createSignal(0);
+  const timer = setInterval(() => setTick((n) => n + 1), 4000);
+  onCleanup(() => clearInterval(timer));
+  const [active] = createResource(tick, () => api.activeTasks());
+
+  // Keep the last good value while a poll is in flight, so the pill does not
+  // blink out and back on every refresh.
+  const running = () => active.latest ?? [];
+  const onItsPage = () => location.pathname.startsWith("/analyzing/");
 
   // A set is reached from the library and belongs to it, but /sets/:id is not
   // a child path, so activeClass alone would unlight the tab you came from.
@@ -66,6 +87,26 @@ function Shell(props: ParentProps) {
             </A>
           ))}
         </nav>
+
+        <Show when={running().length > 0 && !onItsPage()}>
+          <For each={running().slice(0, 2)}>
+            {(task) => (
+              <A href={`/analyzing/${task.task_id}`} class="running-pill"
+                 title={task.message}>
+                <span class="running-dot" />
+                <span class="running-label">
+                  {task.filename && task.filename !== "Resolving..."
+                    ? task.filename
+                    : "Analysing"}
+                </span>
+                <span class="running-pct mono">{task.progress}%</span>
+              </A>
+            )}
+          </For>
+          <Show when={running().length > 2}>
+            <span class="tiny faint">+{running().length - 2}</span>
+          </Show>
+        </Show>
       </header>
 
       <main>{props.children}</main>
@@ -95,7 +136,13 @@ function LibraryRoute() {
 function SetRoute() {
   const params = useParams<{ id: string }>();
   const navigate = useNavigate();
-  return <SetView setId={params.id} onBack={() => navigate("/library")} />;
+  return (
+    <SetView
+      setId={params.id}
+      onBack={() => navigate("/library")}
+      onReanalyse={(taskId) => navigate(`/analyzing/${taskId}`)}
+    />
+  );
 }
 
 function NotFound() {

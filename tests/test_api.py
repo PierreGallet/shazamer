@@ -338,3 +338,53 @@ async def test_completed_tasks_are_evicted_but_running_ones_are_not(client):
 
     assert "live" in manager._tasks, "an in-flight task must never be evicted"
     assert len(manager._tasks) <= 4
+
+
+async def test_reanalysing_replaces_the_set_in_place(client, monkeypatch):
+    """An imported set is re-analysed under its own id, not beside itself.
+
+    Without this, recovering the audio and waveform of a legacy import would
+    leave two entries for the same mix — the stub and the real one.
+    """
+    import asyncio
+
+    await client.web.library.save_set("legacy-abc", "Old Set", RESULT,
+                                      source_kind="legacy")
+
+    captured = {}
+
+    async def fake_run(task_id, url, set_id=None):
+        captured["task_id"] = task_id
+        captured["url"] = url
+        captured["set_id"] = set_id
+
+    monkeypatch.setattr(client.web, "run_url_analysis", fake_run)
+
+    response = await client.post("/api/analyze/url", json={
+        "url": "https://youtube.com/watch?v=abc", "replaces": "legacy-abc"})
+    assert response.status_code == 200
+    assert response.json()["replaces"] == "legacy-abc"
+
+    await asyncio.sleep(0)  # let the background task start
+    assert captured["set_id"] == "legacy-abc"
+
+
+async def test_reanalysing_a_missing_set_is_rejected(client):
+    response = await client.post("/api/analyze/url", json={
+        "url": "https://youtube.com/watch?v=abc", "replaces": "not-a-set"})
+    assert response.status_code == 404
+    assert "no longer exists" in response.json()["detail"]
+
+
+async def test_a_plain_analysis_still_gets_its_own_id(client, monkeypatch):
+    import asyncio
+
+    captured = {}
+
+    async def fake_run(task_id, url, set_id=None):
+        captured["set_id"] = set_id
+
+    monkeypatch.setattr(client.web, "run_url_analysis", fake_run)
+    await client.post("/api/analyze/url", json={"url": "https://x/y"})
+    await asyncio.sleep(0)
+    assert captured["set_id"] is None

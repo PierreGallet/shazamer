@@ -81,6 +81,20 @@ class TaskManager:
         self.persist(task)
         return task
 
+    def active(self) -> List[Task]:
+        """Tasks still running, newest first.
+
+        The header needs this to show a way back to an analysis you navigated
+        away from. It reads from memory rather than disk on purpose: only this
+        process can actually still be running them, and a task left on disk by
+        a previous process is by definition no longer in flight.
+        """
+        return sorted(
+            (t for t in self._tasks.values() if not t.terminal),
+            key=lambda t: t.created_at,
+            reverse=True,
+        )
+
     def get(self, task_id: str) -> Optional[Task]:
         task = self._tasks.get(task_id)
         if task is not None:
