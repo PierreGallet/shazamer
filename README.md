@@ -1,240 +1,139 @@
-# Shazamer 🎵
+# Shazamer 🎛️
 
-> Automatically identify tracks in DJ sets and long audio mixes using audio fingerprinting
+> Identify every track in a DJ set, see it on the waveform, and go find the records.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
-[![Release](https://img.shields.io/github/release/pierregallet/shazamer.svg)](https://github.com/pierregallet/shazamer/releases/latest)
-[![Release Please](https://github.com/pierregallet/shazamer/actions/workflows/release-please.yml/badge.svg)](https://github.com/pierregallet/shazamer/actions/workflows/release-please.yml)
+[![CI](https://github.com/pierregallet/shazamer/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/pierregallet/shazamer/actions)
 
-Shazamer analyzes long audio files (DJ sets, playlists, radio shows) to automatically detect song boundaries and identify tracks using the Shazam API. Perfect for DJs, radio hosts, and music enthusiasts who want to generate tracklists from their mixes.
+Shazamer takes a mix — a URL or a file — and gives you a timestamped tracklist
+with BPM and key, drawn on an interactive waveform you can scrub through. Every
+track links out to where you can actually buy it, and everything you analyse
+collects in a library you can dig through afterwards.
 
-## Features
+## What it does
 
-- 🎵 **Automatic Track Detection**: Uses spectral analysis to detect song boundaries in continuous mixes
-- 🔍 **Shazam Integration**: Identifies tracks using audio fingerprinting
-- 📊 **Confidence Scoring**: Shows match count for each track (1-20 matches)
-- 🕒 **Timestamp Tracking**: Precise timestamps for each detected track
-- 📁 **Multiple Output Formats**: JSON (detailed) and TXT (simple) outputs
-- ⚡ **Async Processing**: Fast, parallel recognition of multiple segments
-- 🎛️ **Customizable Parameters**: Adjust detection sensitivity and minimum song duration
-- 🌐 **Web Interface**: Easy-to-use web UI for drag-and-drop analysis
-
-## Prerequisites
-
-- **Python 3.12**: Required (shazamio has compatibility issues with Python 3.13+)
-  - The Makefile will automatically install Python 3.12 if not present
-- **FFmpeg**: Required for audio processing. Install with:
-  ```bash
-  # macOS
-  brew install ffmpeg
-  
-  # Ubuntu/Debian
-  sudo apt-get install ffmpeg
-  
-  # Windows
-  # Download from https://ffmpeg.org/download.html
-  ```
-
-## Installation
-
-### Using Make (Recommended)
-```bash
-make install
-```
-
-This will automatically:
-- Install Homebrew (on macOS) if not present
-- Install Python 3.12 if not present
-- Install uv package manager for fast dependency management
-- Create a virtual environment
-- Install all dependencies
-
-### Manual Installation
-```bash
-# Install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Create virtual environment with Python 3.12
-uv venv venv --python python3.12
-
-# Install dependencies
-uv pip install -r requirements.txt
-```
-
-## Usage
-
-### Web Interface (Easiest)
-```bash
-# Start the web interface
-make web
-
-# Then open http://localhost:5000 in your browser
-```
-
-The web interface provides:
-- Drag-and-drop file upload
-- Real-time progress tracking
-- Visual results display
-- Download results as JSON or TXT
-- Recent analyses history
-
-### Command Line
-```bash
-# Analyze any audio file directly
-make ~/Music/your_dj_set.mp3
-
-# Or with spaces in the filename
-make analyze FILE="/path/to/my dj set.mp3"
-```
-
-### Manual Usage
-```bash
-# Basic usage with uv
-uv run python src/shazamer.py your_dj_set.mp3
-# Creates: outputs/your_dj_set_tracklist.json and outputs/your_dj_set_tracklist.txt
-
-# With custom output
-uv run python src/shazamer.py mix.mp3 -o outputs/summer_mix_2024.json
-
-# With options
-uv run python src/shazamer.py your_dj_set.mp3 --min-song-duration 45 --threshold 0.4
-```
-
-Output files will be saved in the `outputs/` directory (created automatically).
-
-### Options
-
-- `-o, --output`: Custom output file path (default: outputs/<input_filename>_tracklist.json)
-- `--min-song-duration`: Minimum song duration in seconds (default: auto-adjusted based on audio length)
-- `--threshold`: Peak detection threshold 0-1 (default: auto-adjusted based on audio length)
-  - Lower values (0.1-0.2) = More sensitive, detects more boundaries
-  - Higher values (0.4-0.5) = Less sensitive, detects fewer boundaries
-- `--debug`: Enable debug mode to see full Shazam responses
-
-### Parameter Recommendations
-
-The tool automatically adjusts parameters based on the audio duration if you use defaults:
-
-| Audio Duration | Threshold | Min Song Duration | Typical Use Case |
-|----------------|-----------|-------------------|------------------|
-| < 1 hour       | 0.30      | 30 seconds        | Short DJ sets, radio shows |
-| 1-2 hours      | 0.25      | 45 seconds        | Standard DJ sets |
-| 2-3 hours      | 0.20      | 60 seconds        | Extended sets |
-| > 3 hours      | 0.15      | 90 seconds        | Long festival sets, marathons |
-
-**Manual Override Examples:**
-```bash
-# For a very smooth, minimal mix with long transitions
-uv run python src/shazamer.py smooth_mix.mp3 --threshold 0.1 --min-song-duration 120
-
-# For a fast-paced mix with quick transitions
-uv run python src/shazamer.py hardcore_mix.mp3 --threshold 0.4 --min-song-duration 20
-
-# For a radio show with talk segments
-uv run python src/shazamer.py radio_show.mp3 --threshold 0.35 --min-song-duration 90
-```
-
-## How it works
-
-1. **Audio Loading**: Loads the entire audio file using librosa
-2. **Boundary Detection**: Uses spectral analysis to detect transitions between songs:
-   - Analyzes spectral centroid (frequency balance)
-   - Monitors RMS energy changes
-   - Finds peaks in combined features to identify transitions
-3. **Song Recognition**: Each detected segment is sent to Shazam for identification
-4. **Output**: Generates a JSON file with track information and timestamps
-
-## Output Format
-
-The tool outputs two files:
-
-### JSON Format
-Contains detailed information for each recognized track:
-```json
-[
-  {
-    "title": "Song Title",
-    "artist": "Artist Name",
-    "start_time": "00:00:00",
-    "start_time_seconds": 0.0,
-    "shazam_url": "https://www.shazam.com/track/...",
-    "match_count": 15
-  },
-  ...
-]
-```
-
-### TXT Format
-Simple format with one track per line:
-```
-00:00:00 - Song Title - Artist Name [15 matches]
-00:04:13 - Another Song - Another Artist [12 matches]
-```
-
-The `match_count` indicates the number of potential song matches found by Shazam:
-- **1-5 matches**: High confidence (clear match)
-- **6-15 matches**: Medium confidence (some ambiguity)
-- **16+ matches**: Low confidence (many potential songs, unclear match)
+- **Streams, never loads.** Audio is decoded through ffmpeg block by block, so
+  peak memory is flat regardless of set length — measured at ~24 MB whether the
+  set is 2 minutes or 6 hours. There is no duration limit.
+- **Probes in parallel.** Identification is I/O bound, so it runs concurrently
+  instead of one segment at a time behind a rate limiter.
+- **Finds boundaries by result, not by guess.** Probing on a fixed cadence and
+  merging matching neighbours beats hunting for transitions in a beatmatched
+  set, where the "boundary" lands in the middle of a 32-bar blend.
+- **Keeps the gaps.** A stretch nobody can name stays in the tracklist with its
+  timestamp. Dubs, edits and unsigned promos are the point of digging.
+- **BPM and Camelot key** per track, so the tracklist is usable at the decks.
+- **Exports to Rekordbox XML**, plus M3U, CSV, text and JSON.
+- **Remembers.** Sets land in a SQLite library; a track appearing across several
+  of them is surfaced, which is the strongest digging signal there is.
+- **Points at the record.** Bandcamp, Beatport and Discogs first; Soulseek via
+  [slskd](https://github.com/slskd/slskd) if you configure your own instance.
 
 ## Requirements
 
-- Python 3.10+
-- Audio file in a format supported by librosa (MP3, WAV, FLAC, etc.)
-- Internet connection for Shazam API
+- **Python 3.12** — shazamio is incompatible with 3.13+
+- **ffmpeg** — every decode, seek and probe goes through it
+- **Node 20+** — to build the frontend
 
-## Example Output
-
-### Console Output
-```
-Analysis complete! Found 24 unique tracks:
---------------------------------------------------------------------------------
-[00:00:00] J.1.0 - Crystaline (Original Mix)
-[00:04:13] Faithless - Drifting Away (Paradiso Remix)
-[00:06:26] Andy Compton - That Acid Track
-[00:07:16] BLR & Rave & Crave - Taj
-...
---------------------------------------------------------------------------------
-
-Full tracklist saved to:
-  JSON: outputs/tracklist.json
-  TXT: outputs/tracklist.txt
+```bash
+brew install ffmpeg node          # macOS
+sudo apt-get install ffmpeg nodejs # Debian/Ubuntu
 ```
 
-### TXT Output (tracklist.txt)
+## Install and run
+
+```bash
+make install     # Python venv + frontend dependencies
+make web         # builds the UI and serves everything on :8000
 ```
-00:00:00 - Crystaline (Original Mix) - J.1.0 [1 matches]
-00:04:13 - Drifting Away (Paradiso Remix) - Faithless [3 matches]
-00:06:26 - That Acid Track - Andy Compton [20 matches]
-...
+
+For development, `make dev` runs the API on `:8000` and Vite with hot reload on
+`:5173`, proxying `/api` to the backend.
+
+### Command line
+
+```bash
+make analyze FILE="~/Music/dj_set.mp3"
+
+# or directly, with options
+./venv/bin/python -m src.shazamer mix.mp3 \
+    --strategy grid --interval 20 --concurrency 8 \
+    --formats json,txt,rekordbox
 ```
 
-## How It Works
+| Option | Meaning |
+| --- | --- |
+| `--strategy grid` | Probe on a cadence and merge (default; best on mixed sets) |
+| `--strategy spectral` | Detect boundaries first (better on hard-cut compilations) |
+| `--interval` | Seconds between probes (default: derived from set length) |
+| `--concurrency` | Parallel identification requests (default 8) |
+| `--probe-duration` | Seconds per probe; Shazam fingerprints a centred 10 s of it |
+| `--no-musical-features` | Skip BPM and key detection |
+| `--formats` | `json,txt,csv,m3u,rekordbox` |
 
-1. **Audio Analysis**: The tool loads your audio file and analyzes spectral features (spectral centroid and RMS energy) to detect transitions between songs
-2. **Boundary Detection**: Peaks in the combined feature analysis indicate potential song boundaries
-3. **Track Recognition**: Each detected segment is sent to Shazam for identification
-4. **Deduplication**: Duplicate tracks are automatically removed from the final tracklist
+## The waveform
 
-## Notes & Limitations
+Click to seek, scroll to zoom, shift-drag to pan. The ribbon along the top is
+one block per segment: numbered and filled when identified, dashed and hollow
+when not. The played portion of the envelope is lit, and the tracklist below
+follows the playhead.
 
-- Song boundary detection works best with clear transitions between tracks
-- Very smooth DJ mixes might not have all transitions detected  
-- Recognition depends on tracks being in Shazam's database
-- Underground/unreleased tracks may not be recognized
-- The tool includes rate limiting to respect Shazam API limits
-- Processing time depends on the length of the audio file (approximately 1-2 minutes per hour of audio)
+## How it works
 
-## Contributing
+```
+URL ──▶ yt-dlp ──▶ ffmpeg (30 s blocks) ──▶ spectral centroid + RMS
+                                                     │  ~3 MB of vectors
+                                                     ▼
+                            probe grid ──▶ ffmpeg -ss (12 s) ──▶ Shazam ×8
+                                                     │
+                                    merge ──▶ segments ──▶ BPM + key ──▶ library
+```
 
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+The design notes behind this — including the measurements that motivated the
+streaming rewrite — are in `docs/`.
+
+### Audio quality
+
+The download ladder never transcodes upward. YouTube's ceiling is Opus at
+~160 kbps; re-encoding that to "320 kbps MP3" produces a bigger file carrying
+strictly less information, so the native stream is kept. SoundCloud is the
+opposite case: when the uploader enabled downloads, yt-dlp exposes the original
+file — often WAV-sourced — and that is requested first.
+
+## Configuration
+
+Copy `.env.example` to `.env`. Everything has a working default; the ones worth
+knowing:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SHAZAM_CONCURRENCY` | `8` | Parallel identification requests |
+| `KEEP_AUDIO_DAYS` | `14` | How long set audio is kept for playback |
+| `ALLOWED_ORIGINS` | localhost | Browser origins allowed to call the API |
+| `SLSKD_URL` / `SLSKD_API_KEY` | empty | Enables Soulseek acquisition |
+
+Soulseek stays off unless `SLSKD_URL` is set. It needs your own account and a
+shared folder in return — the network runs on reciprocity — which is why the
+purchase links are the default path and this is opt-in.
+
+## Tests
+
+```bash
+make test              # unit + integration-free suite
+make test-integration  # hits YouTube and SoundCloud for real
+make lint              # frontend typecheck
+```
+
+The suite runs against synthetic audio with a stub identifier: what is being
+verified is segmentation, merging and the streaming maths, not that Shazam's
+servers are reachable.
+
+## Deployment
+
+`docker-stack.yml` deploys to Docker Swarm behind Traefik. The Dockerfile builds
+the frontend in a first stage and copies `web/dist` into the runtime image.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- [shazamio](https://github.com/shazamio/shazamio) for the Python Shazam API implementation
-- [librosa](https://librosa.org/) for audio analysis capabilities
-- [pydub](https://github.com/jiaaro/pydub) for audio file handling
+MIT — see [LICENSE](LICENSE).
