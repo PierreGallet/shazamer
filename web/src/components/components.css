@@ -188,6 +188,12 @@
 }
 .running-pct { font-size: 0.72rem; flex: none; }
 
+.get-state {
+  display: flex; align-items: center; gap: 0.45rem;
+  min-width: 0;
+}
+.get-state .tiny { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .catalog {
   font-size: 0.72rem;
   padding: 0.05em 0.3em;

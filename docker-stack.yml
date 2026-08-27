@@ -32,6 +32,9 @@ services:
       - type: bind
         source: /home/sharon/shazamer/tmp
         target: /app/tmp
+      - type: bind
+        source: /home/sharon/shazamer/downloads
+        target: /app/downloads
     networks:
       - traefik
       - internal
@@ -96,6 +99,7 @@ services:
       - KEEP_AUDIO_DAYS=${KEEP_AUDIO_DAYS:-14}
       - SLSKD_URL=${SLSKD_URL:-}
       - SLSKD_API_KEY=${SLSKD_API_KEY:-}
+      - SLSKD_DOWNLOADS_DIR=/slskd-downloads
       - REDIS_URL=redis://redis:6379
     volumes:
       - type: bind
@@ -110,6 +114,14 @@ services:
       - type: bind
         source: /home/sharon/shazamer/tmp
         target: /app/tmp
+      - type: bind
+        source: /home/sharon/shazamer/downloads
+        target: /app/downloads
+      # Read-only: slskd owns what it writes here, this only collects from it.
+      - type: bind
+        source: /home/sharon/slskd/downloads
+        target: /slskd-downloads
+        read_only: true
     networks:
       - internal
     deploy:

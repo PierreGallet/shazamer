@@ -1,5 +1,6 @@
 import { For, Show, createResource, createSignal } from "solid-js";
-import type { SoulseekCandidate } from "../lib/api";
+import type { SoulseekCandidate, Track } from "../lib/api";
+import GetTrack from "./GetTrack";
 import { api, formatBytes } from "../lib/api";
 
 /**
@@ -13,13 +14,12 @@ import { api, formatBytes } from "../lib/api";
  */
 
 interface Props {
-  artist: string;
-  title: string;
+  track: Track;
 }
 
 export default function AcquirePanel(props: Props) {
   const [sources] = createResource(
-    () => ({ artist: props.artist, title: props.title }),
+    () => ({ artist: props.track.artist, title: props.track.title }),
     (params) => api.acquisitionSources(params.artist, params.title),
   );
 
@@ -32,7 +32,7 @@ export default function AcquirePanel(props: Props) {
     setSearching(true);
     setError("");
     try {
-      const result = await api.soulseekSearch(props.artist, props.title);
+      const result = await api.soulseekSearch(props.track.artist, props.track.title);
       setCandidates(result.candidates);
       if (result.candidates.length === 0) {
         setError("No peer is sharing this one right now. Try again later — the "
@@ -59,7 +59,7 @@ export default function AcquirePanel(props: Props) {
     <div class="acquire">
       <div class="acquire-head">
         <span class="eyebrow">Where to get it</span>
-        <span class="tiny faint">{props.artist} — {props.title}</span>
+        <span class="tiny faint">{props.track.artist} — {props.track.title}</span>
       </div>
 
       <Show when={sources()} fallback={<div class="tiny faint">Loading sources…</div>}>
@@ -93,13 +93,16 @@ export default function AcquirePanel(props: Props) {
         <Show when={sources()!.soulseek_configured}>
           <div class="acquire-p2p">
             <div class="row">
+              {/* One click, best match, verified and tagged — the list below
+                  is for when you want to overrule that choice. */}
+              <GetTrack track={props.track} enabled={true} />
               <button
                 class="btn btn-ghost btn-sm"
                 onClick={searchSoulseek}
                 disabled={searching()}
               >
                 <Show when={searching()}><span class="spinner" /></Show>
-                {searching() ? "Searching Soulseek…" : "Search Soulseek"}
+                {searching() ? "Searching…" : "Show all candidates"}
               </button>
               <span class="tiny faint">
                 Needs your own account and a shared folder

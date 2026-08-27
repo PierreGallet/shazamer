@@ -228,7 +228,7 @@ export default function TrackList(props: Props) {
             </div>
 
             <Show when={expanded() === i() && track.identified}>
-              <AcquirePanel artist={track.artist} title={track.title} />
+              <AcquirePanel track={track} />
             </Show>
           </>
         )}

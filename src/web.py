@@ -68,12 +68,14 @@ init_sentry()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = BASE_DIR / "uploads"
+# Tracks fetched from Soulseek, served to the browser and swept with the rest.
+DOWNLOAD_DIR = BASE_DIR / "downloads"
 MEDIA_DIR = BASE_DIR / "media"
 DATA_DIR = BASE_DIR / "data"
 TMP_DIR = BASE_DIR / "tmp"
 FRONTEND_DIST = BASE_DIR / "web" / "dist"
 
-for directory in (UPLOAD_DIR, MEDIA_DIR, DATA_DIR, TMP_DIR):
+for directory in (UPLOAD_DIR, MEDIA_DIR, DATA_DIR, TMP_DIR, DOWNLOAD_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 2 * 1024 * 1024 * 1024))
@@ -97,7 +99,8 @@ def sweep_media(max_age_days: int) -> int:
     """
     cutoff = datetime.now().timestamp() - max_age_days * 86400
     removed = 0
-    for path in list(MEDIA_DIR.iterdir()) + list(UPLOAD_DIR.iterdir()):
+    folders = (MEDIA_DIR, UPLOAD_DIR, DOWNLOAD_DIR)
+    for path in [p for folder in folders for p in folder.iterdir()]:
         try:
             if path.is_file() and path.stat().st_mtime < cutoff:
                 path.unlink()
@@ -171,6 +174,17 @@ class SoulseekDownloadRequest(BaseModel):
     username: str
     filename: str
     size: int = 0
+
+
+class AcquireRequest(BaseModel):
+    """Fetch a track by name — the app picks the best candidate itself."""
+    key: str
+    artist: str
+    title: str
+    label: str = ""
+    year: str = ""
+    album: str = ""
+    genre: str = ""
 
 
 # ── Analysis ─────────────────────────────────────────────────────────────
@@ -345,7 +359,7 @@ def discard_media(path: Optional[Path]) -> None:
         resolved = Path(path).resolve()
     except OSError:
         return
-    roots = (MEDIA_DIR.resolve(), UPLOAD_DIR.resolve())
+    roots = (MEDIA_DIR.resolve(), UPLOAD_DIR.resolve(), DOWNLOAD_DIR.resolve())
     if not any(resolved.is_relative_to(root) for root in roots):
         logger.warning("Refusing to discard %s: outside the media directories",
                        resolved)
@@ -757,6 +771,89 @@ async def soulseek_download(request: SoulseekDownloadRequest):
         return await SlskdClient().enqueue(candidate)
     except SlskdError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.post("/api/acquire/track")
+async def acquire_track_endpoint(request: AcquireRequest):
+    """Find the best Soulseek match for a track and fetch it.
+
+    Returns immediately with a download id: a Soulseek transfer can take an
+    hour behind a peer's queue, so the work happens in the worker and the UI
+    follows the row.
+    """
+    if not (request.key and request.artist and request.title):
+        raise HTTPException(status_code=400,
+                            detail="A track key, artist and title are required")
+    if not acquire_resolve.soulseek_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Soulseek is not configured on this server. Set SLSKD_URL "
+                   "and SLSKD_API_KEY to enable it.")
+
+    download_id = await library.start_download(
+        request.key, request.artist, request.title)
+
+    meta = {"label": request.label, "year": request.year,
+            "album": request.album, "genre": request.genre}
+    queued = await jobs.enqueue("acquire_track_job", download_id, request.key,
+                                request.artist, request.title, meta,
+                                job_id=f"acquire:{download_id}")
+    if not queued:
+        # No queue: do it here rather than refuse. It will not survive a
+        # restart, which the row's message says.
+        from src.acquire.runner import acquire_track
+        from src.identify.shazam import ShazamIdentifier
+
+        asyncio.create_task(acquire_track(
+            library, DOWNLOAD_DIR, request.key, request.artist, request.title,
+            download_id=download_id, meta=meta,
+            identifier=ShazamIdentifier(concurrency=1)))
+
+    return {"download_id": download_id, "queued": queued}
+
+
+@app.get("/api/acquire/downloads")
+async def list_downloads(key: Optional[str] = None,
+                         limit: int = Query(50, ge=1, le=200)):
+    """Download attempts, for one track or the most recent overall."""
+    if key:
+        return await library.downloads_for(key)
+    return await library.recent_downloads(limit)
+
+
+@app.get("/api/acquire/downloads/{download_id}")
+async def get_download(download_id: int):
+    row = await library.get_download(download_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Download not found")
+    return row
+
+
+@app.get("/api/acquire/downloads/{download_id}/file")
+async def serve_download(download_id: int):
+    """Hand the file to the browser.
+
+    The server is not storage: this is how a track reaches you, and the file is
+    swept on the same schedule as set audio.
+    """
+    stored = await library.download_path(download_id)
+    if stored is None:
+        raise HTTPException(
+            status_code=404,
+            detail="That download has no file — it may still be running, or it "
+                   "may have failed.")
+
+    path = Path(stored).resolve()
+    if not path.is_relative_to(DOWNLOAD_DIR.resolve()):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not path.exists():
+        raise HTTPException(
+            status_code=410,
+            detail=f"The file was removed after {KEEP_AUDIO_DAYS} days. "
+                   "Fetch it again if you still want it.")
+
+    return FileResponse(path, filename=path.name,
+                        media_type="application/octet-stream")
 
 
 @app.get("/api/acquire/soulseek/downloads")

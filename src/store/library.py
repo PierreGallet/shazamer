@@ -91,6 +91,29 @@ CREATE TABLE IF NOT EXISTS enrichment (
 CREATE INDEX IF NOT EXISTS idx_tracks_set ON tracks(set_id);
 CREATE INDEX IF NOT EXISTS idx_tracks_key ON tracks(track_key);
 
+-- Files fetched from Soulseek. One row per attempt, so a failure is visible
+-- rather than silently absent: "nothing happened" and "the peer vanished at
+-- 60%" need to look different to whoever clicked the button.
+CREATE TABLE IF NOT EXISTS downloads (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_key    TEXT NOT NULL,
+    artist       TEXT DEFAULT '',
+    title        TEXT DEFAULT '',
+    status       TEXT NOT NULL,          -- queued|downloading|verifying|ready|failed
+    message      TEXT DEFAULT '',
+    quality      TEXT DEFAULT '',
+    username     TEXT DEFAULT '',
+    remote_path  TEXT DEFAULT '',
+    local_path   TEXT DEFAULT '',
+    size         INTEGER DEFAULT 0,
+    verified     INTEGER DEFAULT 0,
+    progress     REAL DEFAULT 0,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_downloads_key ON downloads(track_key);
+
 CREATE TABLE IF NOT EXISTS crate (
     track_key    TEXT PRIMARY KEY,
     title        TEXT DEFAULT '',
@@ -331,6 +354,90 @@ class Library:
             out.append(item)
         return out
 
+    # ── Downloads ────────────────────────────────────────────────────────
+
+    async def start_download(self, track_key: str, artist: str, title: str,
+                             username: str = "", remote_path: str = "",
+                             quality: str = "", size: int = 0) -> int:
+        """Record an attempt and return its id."""
+        async with self._lock:
+            return await self._run(self._start_download_sync, track_key, artist,
+                                   title, username, remote_path, quality, size)
+
+    def _start_download_sync(self, track_key, artist, title, username,
+                             remote_path, quality, size) -> int:
+        with closing(self._connect()) as conn:
+            cur = conn.execute(
+                "INSERT INTO downloads (track_key, artist, title, status,"
+                " message, quality, username, remote_path, size, created_at,"
+                " updated_at) VALUES (?,?,?,'queued','Queued',?,?,?,?,?,?)",
+                (track_key, artist, title, quality, username, remote_path,
+                 size, _now(), _now()),
+            )
+            conn.commit()
+            return int(cur.lastrowid)
+
+    async def update_download(self, download_id: int, **fields) -> None:
+        async with self._lock:
+            await self._run(self._update_download_sync, download_id, fields)
+
+    def _update_download_sync(self, download_id: int,
+                              fields: Dict[str, Any]) -> None:
+        allowed = {"status", "message", "local_path", "verified", "progress",
+                   "quality", "size", "username", "remote_path"}
+        writable = {k: v for k, v in fields.items() if k in allowed}
+        if not writable:
+            return
+        writable["updated_at"] = _now()
+        assignments = ", ".join(f"{k} = ?" for k in writable)
+        with closing(self._connect()) as conn:
+            conn.execute(f"UPDATE downloads SET {assignments} WHERE id = ?",
+                         (*writable.values(), download_id))
+            conn.commit()
+
+    async def get_download(self, download_id: int) -> Optional[Dict[str, Any]]:
+        return await self._run(self._get_download_sync, download_id)
+
+    def _get_download_sync(self, download_id: int) -> Optional[Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT * FROM downloads WHERE id = ?",
+                               (download_id,)).fetchone()
+        return _download_row(row) if row else None
+
+    async def download_path(self, download_id: int) -> Optional[str]:
+        """The file's location on disk, for serving it.
+
+        Separate from `get_download` because that shape goes to the browser and
+        a server filesystem path has no business there.
+        """
+        return await self._run(self._download_path_sync, download_id)
+
+    def _download_path_sync(self, download_id: int) -> Optional[str]:
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT local_path FROM downloads WHERE id = ?",
+                               (download_id,)).fetchone()
+        return (row["local_path"] or None) if row else None
+
+    async def downloads_for(self, track_key: str) -> List[Dict[str, Any]]:
+        return await self._run(self._downloads_for_sync, track_key)
+
+    def _downloads_for_sync(self, track_key: str) -> List[Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT * FROM downloads WHERE track_key = ?"
+                " ORDER BY created_at DESC", (track_key,)).fetchall()
+        return [_download_row(r) for r in rows]
+
+    async def recent_downloads(self, limit: int = 50) -> List[Dict[str, Any]]:
+        return await self._run(self._recent_downloads_sync, limit)
+
+    def _recent_downloads_sync(self, limit: int) -> List[Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT * FROM downloads ORDER BY created_at DESC LIMIT ?",
+                (limit,)).fetchall()
+        return [_download_row(r) for r in rows]
+
     # ── Enrichment ───────────────────────────────────────────────────────
 
     async def cached_enrichment(self, track_key: str) -> Optional[Dict[str, Any]]:
@@ -510,6 +617,21 @@ class Library:
             cur = conn.execute("DELETE FROM watches WHERE id = ?", (watch_id,))
             conn.commit()
             return cur.rowcount > 0
+
+
+def _download_row(r: sqlite3.Row) -> Dict[str, Any]:
+    local = r["local_path"] or ""
+    return {
+        "id": r["id"], "track_key": r["track_key"], "artist": r["artist"],
+        "title": r["title"], "status": r["status"], "message": r["message"],
+        "quality": r["quality"], "username": r["username"],
+        "filename": Path(local).name if local else "",
+        # Whether the bytes are still here, not merely whether they once were:
+        # downloads are swept on the same schedule as set audio.
+        "available": bool(local and Path(local).exists()),
+        "size": r["size"], "verified": bool(r["verified"]),
+        "progress": r["progress"], "created_at": r["created_at"],
+    }
 
 
 def _set_row(r: sqlite3.Row) -> Dict[str, Any]:

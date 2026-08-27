@@ -38,6 +38,11 @@ _FORMAT_SCORE = {"flac": 100, "wav": 96, "aiff": 94, "aif": 94, "alac": 92,
 
 _LOSSLESS = {"flac", "wav", "aiff", "aif", "alac"}
 
+# How long a transfer may sit at the same percentage before it is abandoned.
+# Soulseek queues are genuinely slow — being forty deep behind someone on ADSL
+# is normal — so this is generous, and measures stalling rather than duration.
+STALL_SECONDS = float(os.environ.get("SLSKD_STALL_SECONDS", "600"))
+
 _JUNK = re.compile(r"[_\-\.]+")
 
 
@@ -235,6 +240,65 @@ class SlskdClient:
         return {"queued": True, "username": candidate.username,
                 "filename": candidate.basename}
 
+    async def transfer(self, username: str, filename: str
+                       ) -> Optional[Dict[str, Any]]:
+        """State of one transfer, or None once slskd has forgotten it."""
+        for entry in await self.downloads():
+            if entry["username"] == username and entry["full_path"] == filename:
+                return entry
+        return None
+
+    async def await_transfer(self, username: str, filename: str,
+                             timeout: float = 1800.0, poll: float = 5.0,
+                             on_progress=None) -> Dict[str, Any]:
+        """Wait for a queued download to finish.
+
+        Soulseek transfers are not a request-response: a peer can queue you
+        behind forty other people, throttle you to a trickle, or go offline
+        halfway through. So this reports what it sees rather than assuming
+        progress, and gives up on a stall rather than on the clock alone — an
+        hour of genuine downloading is fine, ten minutes of nothing is not.
+        """
+        import asyncio
+
+        started = time.monotonic()
+        last_change = started
+        last_seen = -1.0
+
+        while True:
+            entry = await self.transfer(username, filename)
+            if entry is None:
+                # slskd drops completed transfers from the list after a while.
+                raise SlskdError(
+                    "The transfer disappeared from slskd before completing. "
+                    "The peer may have gone offline."
+                )
+
+            state = (entry.get("state") or "").lower()
+            percent = float(entry.get("percent") or 0)
+            if on_progress:
+                on_progress(percent, state)
+
+            if "completed" in state and "succeeded" in state:
+                return entry
+            if any(word in state for word in
+                   ("cancelled", "errored", "rejected", "timedout", "failed")):
+                raise SlskdError(f"Transfer failed: {entry.get('state')}")
+
+            if percent > last_seen:
+                last_seen, last_change = percent, time.monotonic()
+            elif time.monotonic() - last_change > STALL_SECONDS:
+                raise SlskdError(
+                    f"Transfer stalled at {percent:.0f}% for "
+                    f"{STALL_SECONDS // 60} minutes. The peer is probably gone."
+                )
+
+            if time.monotonic() - started > timeout:
+                raise SlskdError(
+                    f"Transfer did not finish within {timeout / 60:.0f} minutes"
+                )
+            await asyncio.sleep(poll)
+
     async def downloads(self) -> List[Dict[str, Any]]:
         """Current transfer state, flattened for the UI."""
         raw = await self._request("GET", "/transfers/downloads")
@@ -244,12 +308,15 @@ class SlskdClient:
                 for f in directory.get("files") or []:
                     out.append({
                         "username": user.get("username", ""),
+                        "full_path": f.get("filename") or "",
                         "filename": (f.get("filename") or "")
                                     .replace("\\", "/").rsplit("/", 1)[-1],
                         "state": f.get("state", ""),
                         "percent": round(f.get("percentComplete") or 0, 1),
                         "size": f.get("size", 0),
                         "speed": f.get("averageSpeed", 0),
+                        # Where slskd wrote it. Absent until the transfer ends.
+                        "local_path": f.get("localPath") or "",
                     })
         return out
 
@@ -258,6 +325,12 @@ def search_query(artist: str, title: str) -> str:
     """Build the search string Soulseek responds best to.
 
     Peers index by filename, so punctuation and mix suffixes hurt more than
-    they help — "artist title" finds what "Artist - Title (Original Mix)" misses.
+    they help — "artist title" finds what "Artist - Title (Original Mix)"
+    misses.
+
+    Whitespace is collapsed at the end: stripping punctuation from a name like
+    "Fred again.." leaves a run of spaces, and slskd forwards the query
+    verbatim to peers whose matching is a plain substring test.
     """
-    return _JUNK.sub(" ", f"{artist} {title}").strip()
+    stripped = _JUNK.sub(" ", f"{artist} {title}")
+    return re.sub(r"\s+", " ", stripped).strip()

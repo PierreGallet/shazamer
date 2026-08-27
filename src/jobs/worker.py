@@ -52,6 +52,27 @@ async def enrich_set_job(ctx: Dict[str, Any], set_id: str) -> Dict[str, int]:
     return report.as_dict()
 
 
+async def acquire_track_job(ctx: Dict[str, Any], download_id: int,
+                            track_key: str, artist: str, title: str,
+                            meta: Optional[Dict[str, Any]] = None) -> None:
+    """Fetch one track from Soulseek.
+
+    A job because a Soulseek transfer can take an hour: a peer may queue you
+    behind forty other people, and holding an HTTP request open for that is
+    not a design.
+    """
+    from src import web
+    from src.acquire.runner import acquire_track
+    from src.identify.shazam import ShazamIdentifier
+
+    await acquire_track(
+        web.library, web.DOWNLOAD_DIR, track_key, artist, title,
+        download_id=download_id, meta=meta,
+        # The same fingerprinter that found the track checks what arrived.
+        identifier=ShazamIdentifier(concurrency=1),
+    )
+
+
 async def startup(ctx: Dict[str, Any]) -> None:
     """Reclaim whatever the previous worker was doing when it died.
 
@@ -93,7 +114,8 @@ async def startup(ctx: Dict[str, Any]) -> None:
 
 
 class WorkerSettings:
-    functions = [analyze_upload_job, analyze_url_job, enrich_set_job]
+    functions = [analyze_upload_job, analyze_url_job, enrich_set_job,
+                 acquire_track_job]
     on_startup = startup
     queue_name = QUEUE_NAME
     job_timeout = JOB_TIMEOUT

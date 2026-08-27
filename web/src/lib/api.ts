@@ -120,6 +120,25 @@ export interface SoulseekCandidate {
   score: number;
 }
 
+export interface Download {
+  id: number;
+  track_key: string;
+  artist: string;
+  title: string;
+  status: "queued" | "downloading" | "verifying" | "ready" | "failed";
+  message: string;
+  quality: string;
+  username: string;
+  filename: string;
+  /** Whether the bytes are still on the server — they are swept after a while. */
+  available: boolean;
+  size: number;
+  /** Fingerprinted and confirmed to be the track that was asked for. */
+  verified: boolean;
+  progress: number;
+  created_at: string;
+}
+
 export interface Watch {
   id: string;
   url: string;
@@ -285,6 +304,29 @@ export const api = {
         }),
       },
     ),
+
+  /** Find the best Soulseek match for a track and fetch it. */
+  acquireTrack: (track: {
+    key: string;
+    artist: string;
+    title: string;
+    label?: string;
+    year?: string;
+    album?: string;
+    genre?: string;
+  }) =>
+    request<{ download_id: number; queued: boolean }>("/api/acquire/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(track),
+    }),
+  downloads: (key?: string) =>
+    request<Download[]>(
+      key ? `/api/acquire/downloads?key=${encodeURIComponent(key)}`
+          : "/api/acquire/downloads",
+    ),
+  download: (id: number) => request<Download>(`/api/acquire/downloads/${id}`),
+  downloadFileUrl: (id: number) => `/api/acquire/downloads/${id}/file`,
 
   watches: () => request<Watch[]>("/api/watches"),
   addWatch: (url: string) =>
