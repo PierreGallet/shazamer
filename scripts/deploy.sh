@@ -70,6 +70,35 @@ mkdir -p /home/sharon/shazamer/{data,media,uploads,tmp,redis,downloads}
 # the server offers back the tracks it has taken.
 mkdir -p /home/sharon/slskd/{config,downloads}
 
+# slskd's API key has to be written into its config file. Its environment
+# mapping does not reach dictionary entries, so SLSKD_API_KEYS__name__key
+# looks plausible, is accepted silently, and registers nothing — every request
+# then comes back "rejected the API key" while the key is demonstrably correct.
+#
+# Rewritten on each deploy rather than appended, so rotating the key works and
+# repeated deploys do not stack duplicate blocks.
+if [ -n "${SLSKD_API_KEY:-}" ]; then
+  SLSKD_CFG=/home/sharon/slskd/config/slskd.yml
+  touch "$SLSKD_CFG"
+  # Drop any block we wrote before, keeping whatever slskd manages itself.
+  awk '/^# >>> shazamer api key/{skip=1} !skip{print} /^# <<< shazamer api key/{skip=0}' \
+      "$SLSKD_CFG" > "$SLSKD_CFG.new" 2>/dev/null || cp "$SLSKD_CFG" "$SLSKD_CFG.new"
+  {
+    echo "# >>> shazamer api key (managed by deploy.sh — edits here are lost)"
+    echo "web:"
+    echo "  authentication:"
+    echo "    api_keys:"
+    echo "      shazamer:"
+    echo "        key: ${SLSKD_API_KEY}"
+    echo "        role: readwrite"
+    echo "        cidr: 0.0.0.0/0,::/0"
+    echo "# <<< shazamer api key"
+  } >> "$SLSKD_CFG.new"
+  mv "$SLSKD_CFG.new" "$SLSKD_CFG"
+  chmod 600 "$SLSKD_CFG"
+  echo ">> slskd API key written to its config"
+fi
+
 echo ">> Building shazamer image"
 docker build -t shazamer_app:latest .
 
@@ -86,8 +115,15 @@ docker stack deploy -c docker-stack.yml shazamer
 # and PierreGallet/AgentMemory (commit a9ca0f7). With
 # update_config.order=start-first + failure_action=rollback in
 # docker-stack.yml, this stays zero-downtime and auto-reverts.
+# Every service running the application image needs this, not just the API.
+# The worker was left out when it was added, so deploys updated the API and
+# silently left the worker on whatever code it started with — including
+# through a fix written specifically to unstick it.
 echo ">> Force task recreate (locally-built image has no registry digest)"
-docker service update --force --image shazamer_app:latest shazamer_app
+for svc in shazamer_app shazamer_worker; do
+  echo "   $svc"
+  docker service update --force --image shazamer_app:latest "$svc"
+done
 
 echo ">> Done. Current service:"
 docker service ls --filter name=shazamer_app

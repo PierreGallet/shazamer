@@ -279,15 +279,22 @@ jobs:
               REPLICAS=\$(docker service ls --filter name=shazamer_app --format '{{.Replicas}}')
               RUNNING=\${REPLICAS%%/*}
               WANTED=\${REPLICAS##*/}
+              # The worker runs the same image and does the actual work. A
+              # deploy that leaves it down, or on old code, is not a success —
+              # one did exactly that, and the fix written to unstick an
+              # analysis never reached the process running it.
+              WORKER=\$(docker service ls --filter name=shazamer_worker --format '{{.Replicas}}')
+              W_RUNNING=\${WORKER%%/*}
+              W_WANTED=\${WORKER##*/}
               CONTAINER=\$(docker ps --filter 'name=shazamer_app' --filter 'health=healthy' -q | head -1)
-              if [ -n \"\$CONTAINER\" ] && [ \"\$RUNNING\" = \"\$WANTED\" ]; then
+              if [ -n \"\$CONTAINER\" ] && [ \"\$RUNNING\" = \"\$WANTED\" ] && [ \"\$W_RUNNING\" = \"\$W_WANTED\" ]; then
                 echo \"Healthy container: \$CONTAINER\"
                 docker exec \$CONTAINER python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()\"
                 exit 0
               fi
               sleep 10
             done
-            echo \"No healthy task after 5 minutes (replicas: \$REPLICAS).\"
+            echo \"No healthy task after 5 minutes (app: \$REPLICAS worker: \$WORKER).\"
             docker service ps shazamer_app --no-trunc | head -20
             CONTAINER=\$(docker ps --filter 'name=shazamer_app' -q | head -1)
             [ -n \"\$CONTAINER\" ] && docker logs \$CONTAINER --tail 50

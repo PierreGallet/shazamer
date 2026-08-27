@@ -203,11 +203,10 @@ services:
     environment:
       - SLSKD_REMOTE_CONFIGURATION=false
       - SLSKD_NO_AUTH=false
-      - SLSKD_API_KEYS__shazamer__key=${SLSKD_API_KEY:-}
-      - SLSKD_API_KEYS__shazamer__role=readwrite
-      # The API is reachable from the internal overlay only, so anything on it
-      # is already inside the trust boundary.
-      - SLSKD_API_KEYS__shazamer__cidr=0.0.0.0/0,::/0
+      # The API key is NOT set here. slskd's environment mapping does not
+      # reach dictionary entries, so these variables were accepted silently and
+      # registered nothing — every call came back "rejected the API key" while
+      # the key itself was correct. deploy.sh writes it into slskd.yml instead.
       - SLSKD_SLSK_USERNAME=${SLSKD_SLSK_USERNAME:-}
       - SLSKD_SLSK_PASSWORD=${SLSKD_SLSK_PASSWORD:-}
       - SLSKD_SHARED_DIR=/shared
