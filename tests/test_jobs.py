@@ -160,3 +160,18 @@ async def test_dispatch_prefers_the_queue_when_it_answers(client, monkeypatch):
     assert enqueue.await_count == 1
     assert task._handle is None, "work was also started in-process"
     assert task.job["function"] == "analyze_url_job"
+
+
+def test_the_retry_budget_survives_ordinary_churn():
+    """An interruption is not a failing job.
+
+    arq counts a replaced container as an attempt like any other, so a small
+    budget is spent by deploys and evictions rather than by anything wrong with
+    the work — and an hour of analysis is abandoned for reasons that have
+    nothing to do with it. A genuinely broken job is not what this protects
+    against: a dead URL fails in seconds at the download step.
+    """
+    assert jobs.MAX_TRIES >= 5, (
+        f"a job is abandoned after {jobs.MAX_TRIES} interruptions; on a shared "
+        "machine that is an afternoon"
+    )

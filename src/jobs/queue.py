@@ -35,10 +35,17 @@ REDIS_URL = os.environ.get("REDIS_URL", "")
 # worker, not to bound normal work, so it sits well above the worst real case.
 JOB_TIMEOUT = int(os.environ.get("JOB_TIMEOUT_SECONDS", "14400"))
 
-# One attempt beyond the first. A job that died because its container was
-# replaced deserves another go; one that died because the URL is dead does not
-# deserve five.
-MAX_TRIES = int(os.environ.get("JOB_MAX_TRIES", "2"))
+# Generous on purpose, because of what actually consumes the budget.
+#
+# An interrupted analysis is not a failing job — it is a job whose container
+# was replaced, and arq counts that as an attempt like any other. Two tries
+# sounded prudent and meant something else: a couple of deploys, or an eviction
+# on a busy machine, and an hour of work was abandoned for reasons that had
+# nothing to do with it. That is precisely what the queue exists to prevent.
+#
+# A genuinely broken job is not the thing this protects: a dead URL fails in
+# seconds at the download step, so retrying it is cheap and quickly exhausted.
+MAX_TRIES = int(os.environ.get("JOB_MAX_TRIES", "6"))
 
 QUEUE_NAME = "shazamer:analysis"
 
