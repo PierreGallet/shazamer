@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0](https://github.com/PierreGallet/shazamer/compare/v1.2.0...v1.3.0) (2026-08-27)
+
+
+### Features
+
+* keep a running analysis reachable from anywhere ([ebb2412](https://github.com/PierreGallet/shazamer/commit/ebb2412367916f406cb0e7b18415cb611e6b90aa))
+
+
+### Documentation
+
+* document the routes and the legacy import ([7d8a37f](https://github.com/PierreGallet/shazamer/commit/7d8a37fc3569f13a9009e352b10143b3fcb266fc))
+
 ## [1.2.0](https://github.com/PierreGallet/shazamer/compare/v1.1.0...v1.2.0) (2026-08-27)
 
 
