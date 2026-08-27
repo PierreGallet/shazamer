@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0](https://github.com/PierreGallet/shazamer/compare/v1.4.1...v1.5.0) (2026-08-27)
+
+
+### Features
+
+* report how long each stage of an analysis took ([12ecdd5](https://github.com/PierreGallet/shazamer/commit/12ecdd55f67ecb38b723ed17295cc1eeeb4d2c9a))
+
 ## [1.4.1](https://github.com/PierreGallet/shazamer/compare/v1.4.0...v1.4.1) (2026-08-27)
 
 
