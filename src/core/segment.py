@@ -356,14 +356,23 @@ def confirmation_times(segment: Segment, already: Sequence[float],
 def auto_interval(duration: float) -> float:
     """Probe cadence as a function of set length.
 
-    Short mixes get dense probing; a six-hour set would otherwise generate
-    close to a thousand requests for no extra resolution.
+    Deliberately sparse. A track runs three to six minutes, so a probe every
+    forty seconds still puts four to nine of them inside it — several times
+    what is needed to name it. The earlier cadence of twenty seconds fired
+    nine to eighteen per track, which was five-fold redundancy paid for in
+    requests to a service that rate-limits.
+
+    Density was originally there to place boundaries accurately and to avoid
+    missing a short track. Neither argument survives: boundaries are refined
+    against the novelty curve rather than snapped to the nearest probe, and
+    thin segments now get extra probes aimed at them by the confirmation pass.
+    Starting sparse and adding where it matters beats blanketing the set.
     """
     hours = duration / 3600
     if hours < 0.5:
-        return 15.0
-    if hours < 1.5:
-        return 20.0
-    if hours < 3:
         return 25.0
-    return 35.0
+    if hours < 1.5:
+        return 35.0
+    if hours < 3:
+        return 45.0
+    return 60.0

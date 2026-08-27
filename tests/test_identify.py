@@ -91,3 +91,104 @@ def test_the_same_record_credited_differently_shares_one_key():
 
 def test_different_records_do_not_collide():
     assert normalize_key("A", "Track One") != normalize_key("A", "Track Two")
+
+
+class FlakyShazam:
+    """Fails a given number of times, then answers."""
+
+    def __init__(self, failures, error=None):
+        self.failures = failures
+        self.error = error or Exception("Failed to decode json")
+        self.calls = 0
+
+    async def recognize(self, wav_bytes):
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise self.error
+        return SHAZAM_RESPONSE
+
+
+@pytest.fixture
+def identifier(monkeypatch):
+    """A ShazamIdentifier with its network client replaced and no real waits."""
+    import asyncio
+
+    from src.identify.shazam import ShazamIdentifier
+
+    monkeypatch.setattr("shazamio.Shazam", lambda **kwargs: None)
+    instance = ShazamIdentifier(concurrency=2, max_attempts=4, backoff=0.001)
+
+    async def instant(_seconds):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", instant)
+    return instance
+
+
+@pytest.mark.anyio
+async def test_a_refusal_is_retried_not_recorded_as_no_match(identifier):
+    """Under load Shazam stops returning JSON and serves something else.
+
+    Treated as "nothing found", that manufactures gaps: in one production run
+    113 of 206 probes came back this way and every one became an unidentified
+    segment — more than half the set silently blanked, with nothing to say the
+    question had never been asked.
+    """
+    fake = FlakyShazam(failures=2)
+    identifier._shazam = fake
+
+    match = await identifier.identify(b"audio")
+
+    assert match is not None, "a recoverable refusal was filed as no-match"
+    assert match.title == "Loose Lips"
+    assert fake.calls == 3
+
+
+@pytest.mark.anyio
+async def test_a_genuine_no_match_is_not_retried(identifier):
+    """An unmatched window is a real answer — and a common, useful one."""
+
+    class Empty:
+        calls = 0
+
+        async def recognize(self, wav_bytes):
+            Empty.calls += 1
+            return {"matches": []}
+
+    identifier._shazam = Empty()
+    assert await identifier.identify(b"audio") is None
+    assert Empty.calls == 1, "a legitimate no-match was retried"
+
+
+@pytest.mark.anyio
+async def test_retries_give_up_rather_than_hanging_a_set(identifier):
+    fake = FlakyShazam(failures=99)
+    identifier._shazam = fake
+
+    assert await identifier.identify(b"audio") is None
+    assert fake.calls == identifier.max_attempts
+
+
+@pytest.mark.anyio
+async def test_a_permanent_error_is_not_retried(identifier):
+    """Retrying something that cannot succeed just spends the analysis budget."""
+    fake = FlakyShazam(failures=99, error=ValueError("malformed audio payload"))
+    identifier._shazam = fake
+
+    assert await identifier.identify(b"audio") is None
+    assert fake.calls == 1
+
+
+def test_the_default_concurrency_reflects_what_the_service_gives():
+    """Measured live, throughput plateaus around three probes per second.
+
+    Two in parallel and eight in parallel move the same number; the extra slots
+    buy nothing and are what tips the service into refusing.
+    """
+    from src.identify.shazam import ShazamIdentifier
+
+    import inspect
+    default = inspect.signature(ShazamIdentifier).parameters["concurrency"].default
+    assert default <= 4, (
+        f"concurrency defaults to {default}; measurement showed no gain past 2"
+    )
