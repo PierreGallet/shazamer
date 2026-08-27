@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2](https://github.com/PierreGallet/shazamer/compare/v1.3.1...v1.3.2) (2026-08-27)
+
+
+### Bug Fixes
+
+* **deploy:** keep the service up after a clean container exit ([01eb0e9](https://github.com/PierreGallet/shazamer/commit/01eb0e99feadfa8e75122eb494847e73dcc37fbc))
+
 ## [1.3.1](https://github.com/PierreGallet/shazamer/compare/v1.3.0...v1.3.1) (2026-08-27)
 
 
