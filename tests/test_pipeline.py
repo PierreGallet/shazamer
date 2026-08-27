@@ -1,5 +1,6 @@
 """Segmentation, merging and the parallelism that makes analysis fast."""
 import asyncio
+from typing import List
 
 import pytest
 
@@ -247,4 +248,51 @@ async def test_musical_feature_extraction_is_bounded_too(synthetic_set,
 
     assert peak <= max(2, limit // 2), (
         f"{peak} PCM extractions ran at once — the BPM/key pass is unbounded"
+    )
+
+
+async def test_the_event_loop_stays_responsive_during_analysis(synthetic_set,
+                                                               stub_identifier):
+    """The server must keep answering while a set is being analysed.
+
+    Feature extraction is librosa doing an STFT per block — hundreds of
+    milliseconds of solid CPU — and blocks arrive as fast as ffmpeg can decode
+    them. Run inline, it pins the event loop for nearly the whole analysis: in
+    production the healthcheck timed out and the container was killed as
+    unhealthy, taking the analysis with it.
+
+    Measured the way it actually matters: a heartbeat ticks alongside the
+    pipeline and the longest gap between ticks is checked. That catches the
+    blocking regardless of which stage introduces it.
+    """
+    gaps: List[float] = []
+    stop = False
+
+    async def heartbeat() -> None:
+        loop = asyncio.get_running_loop()
+        last = loop.time()
+        while not stop:
+            await asyncio.sleep(0.02)
+            now = loop.time()
+            gaps.append(now - last)
+            last = now
+
+    beat = asyncio.create_task(heartbeat())
+    try:
+        await Pipeline(
+            stub_identifier,
+            AnalyzeConfig(probe_interval=10.0, concurrency=4,
+                          compute_musical_features=True),
+        ).run(synthetic_set["path"])
+    finally:
+        stop = True
+        await beat
+
+    worst = max(gaps)
+    assert len(gaps) > 20, "heartbeat barely ran — the loop was starved"
+    # Generous: the production healthcheck allows 10 s. Anything approaching a
+    # second here means CPU work is running on the loop thread again.
+    assert worst < 1.0, (
+        f"event loop blocked for {worst:.2f}s during analysis — CPU-bound work "
+        "is running on the loop thread"
     )

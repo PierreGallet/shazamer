@@ -165,11 +165,22 @@ class Pipeline:
         """
         report("decoding", 5, "Decoding audio...")
         features = StreamingFeatures(sample_rate=audio_io.ANALYSIS_SR)
+        loop = asyncio.get_running_loop()
 
         seconds_done = 0.0
         last_pct = 5
         async for block in audio_io.stream_blocks(path):
-            features.push(block)
+            # Offloaded, not awaited inline. push() is librosa doing an STFT —
+            # hundreds of milliseconds of solid CPU — and blocks arrive as fast
+            # as ffmpeg can decode, so running it here pins the event loop for
+            # nearly the whole analysis. The server then stops answering: the
+            # healthcheck times out and the container is killed as unhealthy,
+            # taking the analysis with it.
+            #
+            # A thread is enough because numpy and librosa drop the GIL for the
+            # heavy parts; only one push runs at a time, so the accumulator is
+            # never touched concurrently.
+            await loop.run_in_executor(None, features.push, block)
             seconds_done += len(block) / audio_io.ANALYSIS_SR
             if duration > 0:
                 pct = 5 + int(30 * min(1.0, seconds_done / duration))
@@ -180,7 +191,7 @@ class Pipeline:
                            f" / {format_timestamp(duration)}")
 
         report("decoding", 35, "Audio analysed. Planning probes...")
-        return features.finish()
+        return await loop.run_in_executor(None, features.finish)
 
     def _plan_probes(self, duration: float, features) -> List[float]:
         if self.config.strategy == "spectral":
