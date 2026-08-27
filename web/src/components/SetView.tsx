@@ -1,3 +1,4 @@
+import { useSearchParams } from "@solidjs/router";
 import { For, Show, createEffect, createResource, createSignal } from "solid-js";
 import { api, formatDuration, formatTime } from "../lib/api";
 import Player from "./Player";
@@ -21,7 +22,11 @@ const EXPORTS: { fmt: string; label: string; hint: string }[] = [
 
 export default function SetView(props: Props) {
   const [detail] = createResource(() => props.setId, api.set);
-  const [currentTime, setCurrentTime] = createSignal(0);
+  // ?t=<seconds> deep-links into a moment. Sharing "the bit at 47 minutes" is
+  // most of what a set is worth passing around for.
+  const [searchParams, setSearchParams] = useSearchParams<{ t?: string }>();
+  const initialStart = Math.max(0, Number(searchParams.t) || 0);
+  const [currentTime, setCurrentTime] = createSignal(initialStart);
   const [activeIndex, setActiveIndex] = createSignal<number | null>(null);
   const [playerError, setPlayerError] = createSignal("");
   const [audio, setAudio] = createSignal<HTMLAudioElement | null>(null);
@@ -45,6 +50,15 @@ export default function SetView(props: Props) {
    */
   function seek(time: number) {
     setCurrentTime(time);
+    // replace, not push: scrubbing must not fill the history stack with every
+    // position you passed through.
+    setSearchParams({ t: time > 0 ? String(Math.round(time)) : undefined },
+                    { replace: true });
+    applyToAudio(time);
+  }
+
+  /** Position the element, waiting for metadata if it is not ready yet. */
+  function applyToAudio(time: number) {
     const element = audio();
     if (!element) return;
     if (element.readyState >= 1) {
@@ -57,6 +71,7 @@ export default function SetView(props: Props) {
       );
     }
   }
+
 
   return (
     <div class="wrap wrap-wide">
@@ -142,6 +157,7 @@ export default function SetView(props: Props) {
                 <Player
                   src={api.audioUrl(props.setId)}
                   duration={data().duration}
+                  startAt={initialStart}
                   currentTime={currentTime()}
                   onTimeUpdate={setCurrentTime}
                   onReady={setAudio}

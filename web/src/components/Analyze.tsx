@@ -1,4 +1,4 @@
-import { Show, createSignal, onCleanup } from "solid-js";
+import { Show, createEffect, createSignal, onCleanup } from "solid-js";
 import type { TaskState } from "../lib/api";
 import { api, subscribeToTask } from "../lib/api";
 
@@ -29,6 +29,10 @@ const STAGE_LABELS: Record<string, string> = {
 const STAGE_ORDER = ["downloading", "decoding", "identifying", "features"];
 
 interface Props {
+  /** Task to resume watching, from the URL. Undefined on a fresh form. */
+  taskId?: string;
+  /** Fired as soon as a task exists, so the URL can name it. */
+  onStarted: (taskId: string) => void;
   onComplete: (setId: string) => void;
 }
 
@@ -43,12 +47,35 @@ export default function Analyze(props: Props) {
 
   onCleanup(() => disposer?.());
 
+  /**
+   * Resume the task named in the URL.
+   *
+   * Reloading during a twenty-minute analysis used to drop you back to an
+   * empty form with no way back to the run. The task id is in the address
+   * now, so the stream is simply re-attached — and if it finished while the
+   * page was closed, the first frame carries the final state.
+   */
+  createEffect(() => {
+    const id = props.taskId;
+    if (!id || id === task()?.task_id) return;
+    setError("");
+    setUploadPct(null);
+    watch(id);
+  });
+
   function watch(taskId: string) {
     disposer?.();
     disposer = subscribeToTask(taskId, {
       onUpdate: (state) => {
         setTask(state);
         if (state.status === "error" && state.error) setError(state.error);
+        // Handled here rather than only in onEnd: a task that finished while
+        // the page was closed sends its final state in the very first frame
+        // and the stream closes immediately, so waiting for `end` alone would
+        // leave a completed analysis sitting on the progress bar.
+        if (state.status === "completed" && state.set_id) {
+          props.onComplete(state.set_id);
+        }
       },
       onEnd: () => {
         const state = task();
@@ -70,6 +97,7 @@ export default function Analyze(props: Props) {
     reset();
     try {
       const { task_id } = await api.analyzeUrl(value);
+      props.onStarted(task_id);
       watch(task_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start the analysis");
@@ -82,6 +110,7 @@ export default function Analyze(props: Props) {
     try {
       const { task_id } = await api.analyzeUpload(file, setUploadPct);
       setUploadPct(null);
+      props.onStarted(task_id);
       watch(task_id);
     } catch (err) {
       setUploadPct(null);

@@ -13,6 +13,8 @@ import { formatTime } from "../lib/api";
 interface Props {
   src: string;
   duration: number;
+  /** Where a shared link asked playback to begin, in seconds. */
+  startAt?: number;
   /** Owned by the parent so the waveform and the transport can never disagree. */
   currentTime: number;
   onTimeUpdate: (time: number) => void;
@@ -24,6 +26,21 @@ const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
 
 export default function Player(props: Props) {
   let audio!: HTMLAudioElement;
+
+  /**
+   * Start position, expressed as a media fragment on the URL.
+   *
+   * Browsers honour `#t=` natively and begin decoding at that offset, which
+   * sidesteps the race in setting `currentTime` by hand: with preload
+   * "metadata" the element has no timeline yet, so an assignment is dropped,
+   * and doing it from a loadedmetadata handler means playback can start at
+   * zero and jump a moment later. Read once, deliberately — re-reading it on
+   * every scrub would rewrite src and reload the audio.
+   */
+  const initialSrc = (() => {
+    const start = Math.round(props.startAt ?? 0);
+    return start > 0 ? `${props.src}#t=${start}` : props.src;
+  })();
   const [playing, setPlaying] = createSignal(false);
   const [volume, setVolume] = createSignal(1);
   const [speed, setSpeed] = createSignal(1);
@@ -83,7 +100,7 @@ export default function Player(props: Props) {
     <div class="player">
       <audio
         ref={audio}
-        src={props.src}
+        src={initialSrc}
         preload="metadata"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
