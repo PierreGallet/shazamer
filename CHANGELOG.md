@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0](https://github.com/PierreGallet/shazamer/compare/v1.0.0...v1.1.0) (2026-08-27)
+
+
+### Features
+
+* **store:** import pre-1.0 tracklists into the library ([f647c4d](https://github.com/PierreGallet/shazamer/commit/f647c4d1aee96d3d91cc0a5bd59a0524fa0705d0))
+* **store:** let the legacy import skip one-track leftovers ([e1a6998](https://github.com/PierreGallet/shazamer/commit/e1a69988144cfc75fb244b0511cf82fea8abf9eb))
+
 ## [1.0.0](https://github.com/PierreGallet/shazamer/compare/v0.6.3...v1.0.0) (2026-08-27)
 
 
