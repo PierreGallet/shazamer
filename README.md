@@ -79,6 +79,41 @@ one block per segment: numbered and filled when identified, dashed and hollow
 when not. The played portion of the envelope is lit, and the tracklist below
 follows the playhead.
 
+## Addresses
+
+Everything worth returning to has a URL, so links can be shared and the back
+button behaves.
+
+| Route | |
+| --- | --- |
+| `/` | Start an analysis |
+| `/analyzing/:taskId` | A run in progress — reloading re-attaches to it |
+| `/library` | Every set analysed |
+| `/sets/:id` | One set |
+| `/sets/:id?t=1420` | …starting at 23:40 |
+| `/crate` | Starred tracks, filterable by BPM and key |
+| `/following` | Channels and artists being watched |
+
+## Importing pre-1.0 tracklists
+
+Before 1.0 results were loose JSON files in `outputs/`, listed by scanning the
+directory. The library reads SQLite instead, so those files became invisible —
+still on disk, nothing reads them. Bring them across:
+
+```bash
+PYTHONPATH=. python scripts/import_legacy.py outputs --dry-run
+PYTHONPATH=. python scripts/import_legacy.py outputs --min-tracks 5
+```
+
+They arrive keyed the same way as new sets, so an imported track links up with
+the same track found later — which is the point of importing at all. What
+cannot come across, because it was never recorded: waveform, BPM and key;
+unidentified stretches, which the old pipeline dropped; and repeats, which it
+deduplicated before saving. Re-analyse a set to get those.
+
+`--min-tracks` keeps one-track leftovers from testing out of the library;
+whatever it excludes is listed by name.
+
 ## How it works
 
 ```
