@@ -33,6 +33,9 @@ services:
     build: .
     command: ["arq", "src.jobs.worker.WorkerSettings"]
     restart: unless-stopped
+    # The image's healthcheck probes an HTTP port only the API serves.
+    healthcheck:
+      disable: true
     volumes:
       - ./data:/app/data
       - ./media:/app/media

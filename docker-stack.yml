@@ -126,6 +126,16 @@ services:
         read_only: true
     networks:
       - internal
+    # Disabled, not replaced. The image's HEALTHCHECK probes an HTTP port that
+    # only the API serves, so the worker inherited a check it could never pass
+    # and Swarm killed it in a loop — the container was fine, the question was
+    # nonsense.
+    #
+    # Nothing takes its place on purpose. arq reconnects to Redis by itself, a
+    # dead process is already caught by the restart policy, and today has been
+    # a long lesson in what a health probe that can be wrong costs.
+    healthcheck:
+      test: ["NONE"]
     deploy:
       # Exactly one. The startup reclaim assumes a worker starting means
       # nothing else is running; with two, a starting worker could snatch a job
