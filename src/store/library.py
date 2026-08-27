@@ -61,7 +61,8 @@ CREATE TABLE IF NOT EXISTS tracks (
     bpm          REAL,
     camelot      TEXT,
     musical_key  TEXT,
-    confidence   REAL DEFAULT 0
+    confidence   REAL DEFAULT 0,
+    strength     TEXT DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_tracks_set ON tracks(set_id);
@@ -100,7 +101,32 @@ class Library:
         self._lock = asyncio.Lock()
         with closing(self._connect()) as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
             conn.commit()
+
+    # Columns added after the first release, as (table, column, definition).
+    # SCHEMA above uses CREATE TABLE IF NOT EXISTS, which does nothing to a
+    # database that already exists — so a new column has to be added here too
+    # or it only appears on fresh installs and production keeps the old shape.
+    MIGRATIONS = (
+        ("tracks", "strength", "TEXT DEFAULT ''"),
+    )
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Add any column missing from an existing database.
+
+        Deliberately additive only: SQLite cannot drop or retype a column
+        without rebuilding the table, and a tracklist is worth more than a tidy
+        schema. Anything beyond adding a column needs a real migration written
+        by hand.
+        """
+        for table, column, definition in self.MIGRATIONS:
+            existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if not existing:
+                continue                # table not created yet; SCHEMA handles it
+            if column not in existing:
+                logger.info("Adding %s.%s to the library", table, column)
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=15)
@@ -147,8 +173,8 @@ class Library:
             conn.executemany(
                 "INSERT INTO tracks (set_id, position, start, end, identified,"
                 " track_key, title, artist, album, label, year, genre, isrc, url,"
-                " cover_url, bpm, camelot, musical_key, confidence)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " cover_url, bpm, camelot, musical_key, confidence, strength)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     (set_id, t.get("index", i + 1), t.get("start", 0), t.get("end", 0),
                      1 if t.get("identified") else 0, t.get("key", ""),
@@ -156,7 +182,7 @@ class Library:
                      t.get("label", ""), t.get("year", ""), t.get("genre", ""),
                      t.get("isrc", ""), t.get("url", ""), t.get("cover_url", ""),
                      t.get("bpm"), t.get("camelot"), t.get("musical_key"),
-                     t.get("confidence", 0))
+                     t.get("confidence", 0), t.get("strength", ""))
                     for i, t in enumerate(result.get("tracks", []))
                 ],
             )
@@ -411,5 +437,7 @@ def _track_row(r: sqlite3.Row, starred: set) -> Dict[str, Any]:
         "label": r["label"], "year": r["year"], "genre": r["genre"],
         "isrc": r["isrc"], "url": r["url"], "cover_url": r["cover_url"],
         "bpm": r["bpm"], "camelot": r["camelot"], "musical_key": r["musical_key"],
-        "confidence": r["confidence"], "starred": key in starred,
+        "confidence": r["confidence"],
+        "strength": r["strength"] if "strength" in r.keys() else "",
+        "starred": key in starred,
     }

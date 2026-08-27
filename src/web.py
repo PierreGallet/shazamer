@@ -205,11 +205,14 @@ async def run_analysis(task_id: str, path: Path, title: str, *,
         logger.info("Analysis %s complete: %s", task_id, result.stats)
 
     except asyncio.CancelledError:
+        # No set was written, so the audio has no owner.
+        discard_media(path)
         tasks.finish(task, status="cancelled", message="Analysis cancelled")
         raise
     except Exception as exc:
         logger.exception("Analysis %s failed", task_id)
         _report(exc, task_id=task_id, stage="analysis")
+        discard_media(path)
         tasks.finish(task, status="error", message="Analysis failed", error=str(exc))
 
 
@@ -220,6 +223,7 @@ async def run_url_analysis(task_id: str, url: str,
     if task is None:
         return
 
+    downloaded: Optional[Path] = None
     try:
         tasks.update(task, status="downloading", stage="downloading", progress=1,
                      message="Resolving URL...")
@@ -235,6 +239,7 @@ async def run_url_analysis(task_id: str, url: str,
 
         media = await dl.download_audio(url, MEDIA_DIR, task_id,
                                         on_progress=on_download)
+        downloaded = media.path
         tasks.update(task, stage="downloaded", progress=13,
                      message=f"Downloaded ({media.quality_label}). Analysing...",
                      filename=media.title, quality=media.quality_label)
@@ -247,14 +252,59 @@ async def run_url_analysis(task_id: str, url: str,
                            set_id=set_id)
 
     except asyncio.CancelledError:
+        discard_media(downloaded)
         tasks.finish(task, status="cancelled", message="Cancelled")
         raise
     except dl.DownloadError as exc:
+        # A failed download can still have written a partial file.
+        discard_media(downloaded or MEDIA_DIR / task_id)
+        _discard_partials(task_id)
         tasks.finish(task, status="error", message="Download failed", error=str(exc))
     except Exception as exc:
         logger.exception("URL analysis %s failed", task_id)
         _report(exc, task_id=task_id, stage="download")
+        discard_media(downloaded)
         tasks.finish(task, status="error", message="Download failed", error=str(exc))
+
+
+def _discard_partials(task_id: str) -> None:
+    """Remove anything yt-dlp left behind for a task, whatever its extension.
+
+    The container format is only known once the download succeeds, so a failure
+    has to be cleaned up by prefix.
+    """
+    for leftover in MEDIA_DIR.glob(f"{task_id}.*"):
+        discard_media(leftover)
+
+
+def discard_media(path: Optional[Path]) -> None:
+    """Delete audio belonging to an analysis that produced nothing.
+
+    Audio is deliberately kept for a set that succeeded — the waveform player
+    streams it. When the analysis fails or is cancelled no set is written, so
+    nothing will ever reference the file and the boot sweep would sit on it for
+    the whole retention window. Seven failed attempts at one 69-minute set left
+    503 MB behind before this existed.
+
+    Guarded by location: only files under the directories this app writes to
+    are removable, so a bad path can never delete anything else.
+    """
+    if path is None:
+        return
+    try:
+        resolved = Path(path).resolve()
+    except OSError:
+        return
+    roots = (MEDIA_DIR.resolve(), UPLOAD_DIR.resolve())
+    if not any(resolved.is_relative_to(root) for root in roots):
+        logger.warning("Refusing to discard %s: outside the media directories",
+                       resolved)
+        return
+    try:
+        resolved.unlink(missing_ok=True)
+        logger.info("Discarded unused audio %s", resolved.name)
+    except OSError as exc:
+        logger.warning("Could not discard %s: %s", resolved, exc)
 
 
 def _report(exc: Exception, **tags) -> None:

@@ -64,13 +64,34 @@ class Segment:
         """Share of probes in this segment that agreed on the winning track.
 
         This replaces the old `match_count` heuristic, which counted entries in
-        Shazam's `matches` array — a number that reflects how many internal
-        fingerprint hits were returned, not how sure the match is. Agreement
-        across independent probes is a real confidence signal.
+        Shazam's `matches` array — a number reflecting how many internal
+        fingerprint hits came back, not how sure the answer is. Agreement across
+        independent probes is a real signal.
+
+        Read it with `strength`, never alone: a lone probe scores 1.0 here
+        because it agrees with itself.
         """
         if self.probes <= 0:
             return 0.0
         return round(self.votes / self.probes, 3)
+
+    @property
+    def strength(self) -> str:
+        """How much evidence stands behind the match: strong, medium or weak.
+
+        Agreement on its own is misleading at small sample sizes — one probe
+        matching is 100% agreement and almost no evidence. This weighs the
+        count as well, so a track backed by four consistent probes reads
+        differently from one backed by a single lucky hit.
+        """
+        if not self.identified or self.probes <= 0:
+            return "none"
+        agreement = self.votes / self.probes
+        if self.votes >= 3 and agreement >= 0.99:
+            return "strong"
+        if self.votes >= 2 and agreement >= 0.6:
+            return "medium"
+        return "weak"
 
 
 def grid_probes(duration: float, interval: float = 25.0,
@@ -276,6 +297,60 @@ def spectral_boundaries(features: FeatureSet, min_song_duration: float,
     if filtered[-1] != times[-1]:
         filtered[-1] = times[-1]
     return filtered
+
+
+def confirmation_times(segment: Segment, already: Sequence[float],
+                       wanted: int, probe_duration: float = 12.0,
+                       edge_margin: float = 6.0) -> List[float]:
+    """Extra probe positions inside a segment whose evidence is thin.
+
+    The goal is independent evidence, so each position is chosen to sit as far
+    as possible from every probe already taken — including the ones added by
+    this call. Even spacing across the segment was tried first and placed
+    probes badly whenever an existing one already sat near the middle: the
+    obvious slot at the edge went unused and the segment kept its single vote.
+
+    "Far enough" is defined by the probe window rather than a fixed number of
+    seconds: two probes closer than half a window overlap by more than half, so
+    they are not independent. Tying the rule to the window keeps it correct if
+    the window size ever changes.
+
+    Both ends are trimmed — a boundary is approximate, and audio there may
+    belong to the neighbouring track.
+
+    Returns fewer than requested, possibly none, when the segment has no room.
+    A short track backed by one probe then stays weak, which is the honest
+    outcome: there is nowhere independent left to look.
+    """
+    missing = wanted - segment.probes
+    if missing <= 0:
+        return []
+
+    lo = segment.start + edge_margin
+    hi = segment.end - edge_margin
+    if hi <= lo:
+        return []
+
+    min_gap = probe_duration / 2
+    # A candidate grid fine enough to find a good slot, capped so a long
+    # segment does not turn this into a search problem.
+    steps = max(2, min(200, int((hi - lo) / 2)))
+    candidates = [lo + (hi - lo) * i / steps for i in range(steps + 1)]
+
+    taken = list(already)
+    out: List[float] = []
+    for _ in range(missing):
+        best: Optional[float] = None
+        best_gap = 0.0
+        for t in candidates:
+            gap = min((abs(t - u) for u in taken + out), default=float("inf"))
+            if gap > best_gap:
+                best_gap, best = gap, t
+        if best is None or best_gap < min_gap:
+            break                       # nowhere independent left
+        out.append(round(best, 3))
+
+    return sorted(out)
 
 
 def auto_interval(duration: float) -> float:

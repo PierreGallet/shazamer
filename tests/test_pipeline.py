@@ -5,7 +5,8 @@ from typing import List
 import pytest
 
 from src.core.pipeline import AnalyzeConfig, Pipeline, format_timestamp
-from src.core.segment import ProbeResult, grid_probes, merge_probes
+from src.core.segment import (ProbeResult, Segment, confirmation_times,
+                              grid_probes, merge_probes)
 
 pytestmark = pytest.mark.anyio
 
@@ -296,3 +297,107 @@ async def test_the_event_loop_stays_responsive_during_analysis(synthetic_set,
         f"event loop blocked for {worst:.2f}s during analysis — CPU-bound work "
         "is running on the loop thread"
     )
+
+
+def test_strength_separates_evidence_from_agreement():
+    """One probe agreeing with itself is not a strong finding.
+
+    Agreement alone reports 1.0 for a single probe — the weakest possible
+    evidence wearing the strongest possible number. `strength` weighs how many
+    probes stand behind the answer, which is what the badge in the UI shows.
+    """
+    def seg(votes: int, probes: int) -> Segment:
+        return Segment(start=0, end=300, key="a::b", payload={},
+                       votes=votes, probes=probes)
+
+    assert seg(1, 1).confidence == 1.0 and seg(1, 1).strength == "weak"
+    assert seg(2, 2).strength == "medium"
+    assert seg(3, 3).strength == "strong"
+    assert seg(2, 3).strength == "medium"       # one dissenter, still plural
+    assert seg(1, 3).strength == "weak"         # outvoted
+    assert Segment(start=0, end=10, key=None, payload=None).strength == "none"
+
+
+def test_confirmation_positions_spread_across_the_segment():
+    """Clustered probes re-read the same audio and confirm nothing."""
+    segment = Segment(start=0, end=300, key="a::b", payload={}, votes=1, probes=1)
+    times = confirmation_times(segment, already=[10.0], wanted=3)
+
+    assert len(times) == 2
+    assert all(6 <= t <= 294 for t in times), "probes must avoid the edges"
+    assert min(b - a for a, b in zip(times, times[1:])) > 8, "probes clustered"
+
+
+def test_confirmation_skips_segments_too_short_to_hold_probes():
+    segment = Segment(start=0, end=8, key="a::b", payload={}, votes=1, probes=1)
+    assert confirmation_times(segment, already=[], wanted=3) == []
+
+
+def test_confirmation_skips_segments_that_already_have_enough():
+    segment = Segment(start=0, end=300, key="a::b", payload={}, votes=4, probes=4)
+    assert confirmation_times(segment, already=[], wanted=3) == []
+
+
+async def test_confirmation_strengthens_a_thinly_probed_track(synthetic_set,
+                                                              stub_identifier):
+    """A segment found by one probe should end up backed by several."""
+    result = await Pipeline(
+        stub_identifier,
+        AnalyzeConfig(probe_interval=35.0, concurrency=4, votes_per_segment=3,
+                      compute_musical_features=False),
+    ).run(synthetic_set["path"])
+
+    identified = [t for t in result.tracks if t.identified]
+    assert identified, "nothing identified — the fixture changed"
+    assert all(t.probes >= 2 for t in identified), (
+        "segments left resting on a single probe: "
+        f"{[(t.title, t.probes) for t in identified]}"
+    )
+    assert any(t.strength == "strong" for t in identified)
+
+
+async def test_confirmation_can_overturn_a_wrong_match(synthetic_set):
+    """Extra probes are evidence, not decoration: a majority can flip a segment.
+
+    The stub answers with a wrong track only for the very first probe it sees,
+    the way one unlucky window inside a long track can fingerprint as something
+    else. Confirmation should catch it.
+    """
+    from src.identify.base import TrackMatch
+
+    class FlipIdentifier:
+        name = "flip"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def identify(self, wav_bytes: bytes):
+            self.calls += 1
+            await asyncio.sleep(0)
+            if self.calls == 1:
+                return TrackMatch(title="Wrong", artist="Nobody", provider="stub")
+            return TrackMatch(title="Right", artist="Somebody", provider="stub")
+
+    result = await Pipeline(
+        FlipIdentifier(),
+        AnalyzeConfig(probe_interval=60.0, concurrency=1, votes_per_segment=3,
+                      compute_musical_features=False, min_segment=5.0),
+    ).run(synthetic_set["path"])
+
+    titles = {t.title for t in result.tracks if t.identified}
+    assert "Right" in titles
+    assert "Wrong" not in titles, "a single bad probe survived confirmation"
+
+
+async def test_votes_per_segment_of_one_skips_the_pass(synthetic_set,
+                                                       stub_identifier):
+    """The pass must be genuinely optional, not merely cheap."""
+    before = stub_identifier.calls
+    result = await Pipeline(
+        stub_identifier,
+        AnalyzeConfig(probe_interval=20.0, concurrency=4, votes_per_segment=1,
+                      compute_musical_features=False),
+    ).run(synthetic_set["path"])
+
+    grid = len(grid_probes(result.duration, interval=20.0))
+    assert stub_identifier.calls - before == grid, "extra probes were fired"

@@ -388,3 +388,111 @@ async def test_a_plain_analysis_still_gets_its_own_id(client, monkeypatch):
     await client.post("/api/analyze/url", json={"url": "https://x/y"})
     await asyncio.sleep(0)
     assert captured["set_id"] is None
+
+
+async def test_failed_analysis_does_not_leave_its_audio_behind(client, monkeypatch):
+    """Audio is kept for a set that succeeded, discarded for one that did not.
+
+    Seven failed attempts at a single 69-minute set left 503 MB on the
+    production disk before this: no set was written, so nothing referenced the
+    files and the boot sweep would not touch them for the whole retention
+    window.
+    """
+    audio = client.web.MEDIA_DIR / "doomed.mp3"
+    audio.write_bytes(b"\x00" * 2048)
+
+    async def exploding_run(self, path, on_progress=None):
+        raise RuntimeError("analysis blew up")
+
+    monkeypatch.setattr(client.web.Pipeline, "run", exploding_run)
+
+    task = client.web.tasks.create("t-fail", filename="Doomed")
+    await client.web.run_analysis("t-fail", audio, "Doomed")
+
+    assert task.status == "error"
+    assert not audio.exists(), "audio survived an analysis that produced no set"
+
+
+async def test_successful_analysis_keeps_its_audio(client, monkeypatch):
+    """The waveform player streams it, so a completed set must retain its file."""
+    from src.core.pipeline import AnalysisResult
+
+    audio = client.web.MEDIA_DIR / "keeper.mp3"
+    audio.write_bytes(b"\x00" * 2048)
+
+    async def fake_run(self, path, on_progress=None):
+        return AnalysisResult(duration=10.0, tracks=[], waveform=[],
+                              stats={"identified": 0})
+
+    monkeypatch.setattr(client.web.Pipeline, "run", fake_run)
+
+    client.web.tasks.create("t-ok", filename="Keeper")
+    await client.web.run_analysis("t-ok", audio, "Keeper")
+
+    assert audio.exists(), "audio for a saved set was discarded"
+    assert await client.web.library.get_set("t-ok") is not None
+
+
+async def test_discard_refuses_paths_outside_the_media_directories(client, tmp_path):
+    """A bad path must never delete something that is not ours."""
+    outsider = tmp_path / "important.txt"
+    outsider.write_text("do not delete")
+
+    client.web.discard_media(outsider)
+    assert outsider.exists(), "discard_media deleted a file outside its roots"
+
+
+async def test_an_existing_library_gains_new_columns(tmp_path):
+    """A column added after release must reach production, not just fresh installs.
+
+    SCHEMA uses CREATE TABLE IF NOT EXISTS, which does nothing to a database
+    that already exists. Without a migration the column appears only on a clean
+    install and every real deployment keeps the old shape — then every read of
+    it raises.
+    """
+    import sqlite3
+
+    from src.store.library import Library
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE sets (id TEXT PRIMARY KEY, title TEXT NOT NULL,"
+        " source_url TEXT DEFAULT '', source_kind TEXT DEFAULT 'upload',"
+        " uploader TEXT DEFAULT '', audio_path TEXT DEFAULT '',"
+        " quality TEXT DEFAULT '', duration REAL DEFAULT 0,"
+        " waveform TEXT DEFAULT '[]', stats TEXT DEFAULT '{}',"
+        " created_at TEXT NOT NULL);"
+        "CREATE TABLE tracks (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " set_id TEXT NOT NULL, position INTEGER NOT NULL, start REAL NOT NULL,"
+        " end REAL NOT NULL, identified INTEGER NOT NULL DEFAULT 0,"
+        " track_key TEXT DEFAULT '', title TEXT DEFAULT '', artist TEXT DEFAULT '',"
+        " album TEXT DEFAULT '', label TEXT DEFAULT '', year TEXT DEFAULT '',"
+        " genre TEXT DEFAULT '', isrc TEXT DEFAULT '', url TEXT DEFAULT '',"
+        " cover_url TEXT DEFAULT '', bpm REAL, camelot TEXT, musical_key TEXT,"
+        " confidence REAL DEFAULT 0);"
+    )
+    conn.execute(
+        "INSERT INTO sets VALUES ('s1','Old Set','','upload','','','',"
+        "60,'[]','{}','2026-01-01')")
+    conn.execute(
+        "INSERT INTO tracks (set_id,position,start,end,identified,track_key,"
+        "title,artist) VALUES ('s1',1,0,60,1,'a::b','Track','Artist')")
+    conn.commit()
+    conn.close()
+
+    library = Library(path)
+    columns = {r[1] for r in sqlite3.connect(path).execute(
+        "PRAGMA table_info(tracks)")}
+    assert "strength" in columns, "migration did not run"
+
+    stored = await library.get_set("s1")
+    assert stored["title"] == "Old Set", "existing data was lost"
+    assert stored["tracks"][0]["strength"] == ""
+
+
+async def test_strength_survives_a_round_trip(client):
+    payload = {**RESULT, "tracks": [{**RESULT["tracks"][0], "strength": "strong"}]}
+    await client.web.library.save_set("s1", "Set", payload)
+    stored = (await client.get("/api/sets/s1")).json()
+    assert stored["tracks"][0]["strength"] == "strong"

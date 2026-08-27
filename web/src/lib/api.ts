@@ -22,6 +22,8 @@ export interface Track {
   isrc: string;
   key: string;
   confidence: number;
+  /** How much evidence backs the match, not just how much of it agreed. */
+  strength: "strong" | "medium" | "weak" | "none" | "";
   votes: number;
   probes: number;
   bpm: number | null;

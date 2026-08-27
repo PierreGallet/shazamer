@@ -148,12 +148,25 @@ export default function TrackList(props: Props) {
                     {track.camelot}
                   </span>
                 </Show>
-                <Show when={track.identified && track.confidence < 1}>
+                <Show when={track.identified && track.strength &&
+                            track.strength !== "strong"}>
+                  {/* Only the shaky ones are flagged. Marking every track
+                      would turn the signal into wallpaper — what a digger
+                      needs to see is which findings not to trust. */}
                   <span
-                    class="chip chip-warn"
-                    title={`${track.votes} of ${track.probes} probes agreed`}
+                    class="chip"
+                    classList={{
+                      "chip-warn": track.strength === "medium",
+                      "chip-crit": track.strength === "weak",
+                    }}
+                    title={
+                      track.strength === "weak"
+                        ? `Thin evidence: ${track.votes} of ${track.probes} probes. ` +
+                          "Often a short track, or one sitting across a transition."
+                        : `${track.votes} of ${track.probes} probes agreed`
+                    }
                   >
-                    {Math.round(track.confidence * 100)}%
+                    {track.strength === "weak" ? "unsure" : "likely"}
                   </span>
                 </Show>
               </div>

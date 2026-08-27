@@ -15,13 +15,23 @@ from typing import Any, Callable, Dict, List, Optional
 from ..identify.base import Identifier, TrackMatch
 from . import audio as audio_io
 from .features import StreamingFeatures, estimate_bpm, estimate_key
-from .segment import (ProbeResult, Segment, auto_interval, grid_probes,
-                      merge_probes, spectral_boundaries)
+from .segment import (ProbeResult, Segment, auto_interval, confirmation_times,
+                      grid_probes, merge_probes, spectral_boundaries)
 from .timecode import format_timestamp
 
 logger = logging.getLogger(__name__)
 
 ProgressFn = Callable[[str, int, str], None]
+
+# Progress is one shared 0-100 scale across stages that take wildly different
+# amounts of time, so the boundaries live here rather than as literals at each
+# report() call. They must not overlap: a bar that goes backwards reads as a
+# bug even when the work is fine.
+DECODE_FROM, DECODE_TO = 5, 35
+IDENTIFY_FROM, IDENTIFY_TO = 36, 80
+MERGE_AT = 81
+CONFIRM_FROM, CONFIRM_TO = 82, 87
+FEATURES_FROM, FEATURES_TO = 88, 95
 
 
 @dataclass
@@ -29,7 +39,10 @@ class AnalyzeConfig:
     strategy: str = "grid"          # "grid" (default) or "spectral"
     probe_interval: Optional[float] = None   # None → derived from duration
     probe_duration: float = 12.0    # Shazam uses a centred 10 s of this
-    votes_per_segment: int = 1      # >1 adds confirmation probes per candidate
+    # Minimum probes to stand behind a track before it is reported as solidly
+    # identified. Segments thinner than this get extra probes spread across
+    # them; see _confirm_segments. 1 disables the pass entirely.
+    votes_per_segment: int = 3
     concurrency: int = 8
     waveform_points: int = 1600
     min_segment: float = 20.0
@@ -59,6 +72,7 @@ class Track:
     isrc: str = ""
     key: str = ""
     confidence: float = 0.0
+    strength: str = "none"          # strong | medium | weak — see Segment
     votes: int = 0
     probes: int = 0
     bpm: Optional[float] = None
@@ -120,14 +134,17 @@ class Pipeline:
 
         # ── Stage 2: fingerprint probes, in parallel ──────────────────────
         probes = self._plan_probes(duration, features)
-        report("identifying", 36,
+        report("identifying", IDENTIFY_FROM,
                f"Identifying {len(probes)} probes across {format_timestamp(duration)}...")
         results = await self._run_probes(path, probes, report)
 
         # ── Stage 3: probes → segments ────────────────────────────────────
-        report("merging", 86, "Merging probes into tracks...")
+        report("merging", MERGE_AT, "Merging probes into tracks...")
         segments = merge_probes(results, duration, features,
                                 min_segment=self.config.min_segment)
+
+        # ── Stage 4: confirm the thin ones ────────────────────────────────
+        segments = await self._confirm_segments(path, segments, results, report)
         tracks = self._to_tracks(segments)
 
         # ── Stage 4: per-track BPM and key ────────────────────────────────
@@ -163,7 +180,7 @@ class Pipeline:
         Peak memory here is one block (2.6 MB) plus the accumulating feature
         vectors (~1.2 MB per hour), regardless of how long the set is.
         """
-        report("decoding", 5, "Decoding audio...")
+        report("decoding", DECODE_FROM, "Decoding audio...")
         features = StreamingFeatures(sample_rate=audio_io.ANALYSIS_SR)
         loop = asyncio.get_running_loop()
 
@@ -190,7 +207,7 @@ class Pipeline:
                            f"Analysing audio... {format_timestamp(seconds_done)}"
                            f" / {format_timestamp(duration)}")
 
-        report("decoding", 35, "Audio analysed. Planning probes...")
+        report("decoding", DECODE_TO, "Audio analysed. Planning probes...")
         return await loop.run_in_executor(None, features.finish)
 
     def _plan_probes(self, duration: float, features) -> List[float]:
@@ -241,7 +258,8 @@ class Pipeline:
 
             async with lock:
                 done += 1
-                pct = 36 + int(49 * done / total)
+                pct = IDENTIFY_FROM + int(
+                    (IDENTIFY_TO - IDENTIFY_FROM) * done / total)
                 report("identifying", pct, f"Identifying... {done}/{total} probes")
 
             if match is None:
@@ -249,6 +267,93 @@ class Pipeline:
             return ProbeResult(time=t, key=match.key, payload=_match_payload(match))
 
         return list(await asyncio.gather(*(one(t) for t in times)))
+
+    async def _confirm_segments(self, path: str, segments: List[Segment],
+                                probes: List[ProbeResult],
+                                report: ProgressFn) -> List[Segment]:
+        """Re-probe segments that rest on too little evidence.
+
+        A track found by a single probe reports 100% agreement, because it
+        agrees with itself. That is the weakest possible finding dressed as the
+        strongest, and on a grid it happens constantly: short tracks and the
+        stretch either side of a transition often catch only one probe.
+
+        Extra probes go in spread across the segment — a second probe near the
+        first re-reads the same audio and confirms nothing. They can also
+        overturn the result: if the newcomers agree with each other rather than
+        with the original, the majority wins and the segment changes hands.
+
+        Segments already carrying enough votes are left alone, so a well-probed
+        set costs nothing here.
+        """
+        wanted = self.config.votes_per_segment
+        if wanted <= 1:
+            return segments
+
+        probed_at = [p.time for p in probes]
+        plan: List[tuple] = []          # (segment index, probe time)
+        for index, segment in enumerate(segments):
+            if not segment.identified:
+                continue                # nothing to confirm; a gap is a gap
+            for t in confirmation_times(segment, probed_at, wanted,
+                                         self.config.probe_duration):
+                plan.append((index, t))
+
+        if not plan:
+            return segments
+
+        report("confirming", CONFIRM_FROM,
+               f"Confirming {len({i for i, _ in plan})} thinly-probed tracks...")
+
+        slots = asyncio.Semaphore(self.config.concurrency)
+
+        async def one(index: int, t: float):
+            async with slots:
+                try:
+                    wav = await audio_io.extract_probe(
+                        path, t, self.config.probe_duration)
+                    match = await self.identifier.identify(wav)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning("Confirmation probe at %.1fs failed: %s", t, exc)
+                    return index, None
+            return index, match
+
+        outcomes = await asyncio.gather(*(one(i, t) for i, t in plan))
+
+        # Tally per segment, counting the original votes for the incumbent.
+        tallies: Dict[int, Dict[str, int]] = {}
+        extra_probes: Dict[int, int] = {}
+        payloads: Dict[str, Dict[str, Any]] = {}
+        for index, match in outcomes:
+            extra_probes[index] = extra_probes.get(index, 0) + 1
+            if match is None:
+                continue
+            counts = tallies.setdefault(index, {})
+            counts[match.key] = counts.get(match.key, 0) + 1
+            payloads.setdefault(match.key, _match_payload(match))
+
+        for index, added in extra_probes.items():
+            segment = segments[index]
+            counts = dict(tallies.get(index, {}))
+            if segment.key:
+                counts[segment.key] = counts.get(segment.key, 0) + segment.votes
+
+            segment.probes += added
+            if not counts:
+                continue                # every extra probe came back empty
+
+            winner = max(counts, key=lambda k: counts[k])
+            if winner != segment.key:
+                logger.info("Confirmation overturned %s -> %s at %.0fs",
+                            segment.key, winner, segment.start)
+                segment.key = winner
+                segment.payload = payloads.get(winner, segment.payload)
+            segment.votes = counts[winner]
+
+        report("confirming", CONFIRM_TO, "Confirmation complete")
+        return segments
 
     def _to_tracks(self, segments: List[Segment]) -> List[Track]:
         tracks: List[Track] = []
@@ -272,6 +377,7 @@ class Pipeline:
                 isrc=payload.get("isrc", ""),
                 key=seg.key or "",
                 confidence=seg.confidence,
+                strength=seg.strength,
                 votes=seg.votes,
                 probes=seg.probes,
             ))
@@ -284,7 +390,7 @@ class Pipeline:
         The window is taken from the middle of the segment, away from both
         transitions, where the tempo grid and harmony are cleanest.
         """
-        report("features", 88, "Detecting BPM and key...")
+        report("features", FEATURES_FROM, "Detecting BPM and key...")
         sem = asyncio.Semaphore(max(2, self.config.concurrency // 2))
         loop = asyncio.get_running_loop()
 
@@ -310,7 +416,7 @@ class Pipeline:
                 track.musical_key = key.label
 
         await asyncio.gather(*(one(t) for t in tracks))
-        report("features", 95, "BPM and key detected")
+        report("features", FEATURES_TO, "BPM and key detected")
 
 
 def _match_payload(match: TrackMatch) -> Dict[str, Any]:
