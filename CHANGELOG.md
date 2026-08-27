@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0](https://github.com/PierreGallet/shazamer/compare/v1.3.4...v1.4.0) (2026-08-27)
+
+
+### Features
+
+* **acquire:** finish the Soulseek path — fetch, verify, tag, serve ([e1c8e6d](https://github.com/PierreGallet/shazamer/commit/e1c8e6d35453c4c81c8e18621477e65426f95d4f))
+* **acquire:** rank by version and format profile, and show the choice ([3d99238](https://github.com/PierreGallet/shazamer/commit/3d99238cbf8457d61fa0cdfb8bfe94fd2e1fe043))
+* **deploy:** add slskd to the stack ([604178f](https://github.com/PierreGallet/shazamer/commit/604178f5ef96220cd72deef46423cae99d885e47))
+* **enrich:** fill in label, catalogue number and year from MusicBrainz ([5f5b2d5](https://github.com/PierreGallet/shazamer/commit/5f5b2d5f404b81d2177d1c3d23eaf7b86cbf5495))
+* **jobs:** run analyses in a worker so a deploy stops costing one ([ff598b8](https://github.com/PierreGallet/shazamer/commit/ff598b81f878d55f0aec8bec1a0730492e7aaf65))
+* score confidence by evidence, not just agreement ([977080e](https://github.com/PierreGallet/shazamer/commit/977080ecbeb80c2a5896dd8ce0a757272c01e49e))
+
+
+### Bug Fixes
+
+* **deploy:** stop the deploy wiping secrets set on the server ([07d26aa](https://github.com/PierreGallet/shazamer/commit/07d26aab51bf0a671022e0b6425cb1f500d47ba4))
+* **identify:** stop recording a refusal as "no match", and probe far less ([300641f](https://github.com/PierreGallet/shazamer/commit/300641f33c3fe891b877ed485f64a1e60f9cff21))
+
 ## [1.3.4](https://github.com/PierreGallet/shazamer/compare/v1.3.3...v1.3.4) (2026-08-27)
 
 
