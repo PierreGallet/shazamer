@@ -65,7 +65,7 @@ trap _deploy_finish EXIT
 # Bind mounts fail the whole service if the host path is missing, and the
 # stack now mounts a library database and a media store alongside uploads.
 echo ">> Ensuring host state directories"
-mkdir -p /home/sharon/shazamer/{data,media,uploads,tmp}
+mkdir -p /home/sharon/shazamer/{data,media,uploads,tmp,redis}
 
 echo ">> Building shazamer image"
 docker build -t shazamer_app:latest .

@@ -18,6 +18,7 @@ services:
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-https://shazamer.pierregallet.com}
       - SLSKD_URL=${SLSKD_URL:-}
       - SLSKD_API_KEY=${SLSKD_API_KEY:-}
+      - REDIS_URL=redis://redis:6379
     volumes:
       - type: bind
         source: /home/sharon/shazamer/data
@@ -33,6 +34,7 @@ services:
         target: /app/tmp
     networks:
       - traefik
+      - internal
     healthcheck:
       # See scripts/healthcheck.py: a raw socket under `python -S`, kept in a
       # file so no CRLF has to survive YAML and a shell. It costs a third of
@@ -57,22 +59,12 @@ services:
         - "traefik.http.services.shazamer.loadbalancer.server.port=8000"
       resources:
         limits:
-          # Was 6G to survive the one-shot STFT of a whole set. The pipeline
-          # streams now — feature extraction was measured at 24 MB, flat with
-          # duration — so this was cut to 1G. That proved too tight: the
-          # measurement covered decoding only, and probe extraction was
-          # spawning one ffmpeg per probe with no bound, which scales with set
-          # length. A long set opened hundreds at once and the container was
-          # OOM-killed.
-          #
-          # Extraction is bounded now, so the ceiling is roughly the Python
-          # process plus `concurrency` ffmpeg processes — a few hundred MB.
-          # 2G is deliberate headroom over that estimate rather than a measured
-          # peak; the estimate has been wrong once already.
-          memory: 2G
-          # Eight parallel probes plus BPM/key detection actually use CPU now.
-          # 4 of the host's 8, leaving half for the other services on the box.
-          cpus: "4.0"
+          # The API no longer analyses anything — that moved to the worker — so
+          # it needs room to serve requests and to fall back to running an
+          # analysis in-process if Redis is unreachable. 1G covers both.
+          memory: 1G
+          # Serving requests is close to free; the CPU belongs to the worker.
+          cpus: "1.0"
       update_config:
         order: start-first
         failure_action: rollback
@@ -89,6 +81,87 @@ services:
                                # caught by failure_action: rollback above
         window: 120s
 
+  # The analyses themselves. Same image, same state volume, different job:
+  # the API answers requests, this decodes audio for an hour at a time. Split
+  # so a long decode can no longer starve the API's health probe — which is
+  # how Swarm came to kill a container that was working perfectly.
+  worker:
+    image: shazamer_app:latest
+    command: ["arq", "src.jobs.worker.WorkerSettings"]
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHON_ENV=Production
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - SHAZAM_CONCURRENCY=${SHAZAM_CONCURRENCY:-8}
+      - KEEP_AUDIO_DAYS=${KEEP_AUDIO_DAYS:-14}
+      - SLSKD_URL=${SLSKD_URL:-}
+      - SLSKD_API_KEY=${SLSKD_API_KEY:-}
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - type: bind
+        source: /home/sharon/shazamer/data
+        target: /app/data
+      - type: bind
+        source: /home/sharon/shazamer/media
+        target: /app/media
+      - type: bind
+        source: /home/sharon/shazamer/uploads
+        target: /app/uploads
+      - type: bind
+        source: /home/sharon/shazamer/tmp
+        target: /app/tmp
+    networks:
+      - internal
+    deploy:
+      # Exactly one. The startup reclaim assumes a worker starting means
+      # nothing else is running; with two, a starting worker could snatch a job
+      # the other is part-way through. Raising this needs that revisited.
+      replicas: 1
+      resources:
+        limits:
+          # Measured at ~550 MB mid-analysis on a 69-minute set: the Python
+          # process plus `concurrency` ffmpeg subprocesses. 2G is headroom over
+          # a measurement, not over an estimate — an earlier limit set from a
+          # tracemalloc figure was an order of magnitude too low.
+          memory: 2G
+          # Where the work actually happens. 4 of the host's 8 cores.
+          cpus: "4.0"
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 0
+        window: 120s
+
+  # Broker only — task state lives on the shared volume, so there is one source
+  # of truth and nothing to keep in sync. Losing Redis costs queued jobs, not
+  # results; appendonly keeps even that across a restart.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", ""]
+    volumes:
+      - type: bind
+        source: /home/sharon/shazamer/redis
+        target: /data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+      restart_policy:
+        condition: any
+        delay: 5s
+
 networks:
   traefik:
     external: true
+  internal:
+    driver: overlay
+    attachable: false

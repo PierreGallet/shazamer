@@ -9,6 +9,7 @@ help:
 	@echo "  make install        Install Python + frontend dependencies"
 	@echo "  make dev            Run API (:8000) and Vite dev server (:5173)"
 	@echo "  make web            Run the production server (built frontend)"
+	@echo "  make worker         Run the analysis worker (needs REDIS_URL)"
 	@echo "  make build          Build the frontend into web/dist"
 	@echo "  make test           Run the test suite"
 	@echo "  make analyze FILE=… Analyse a file from the command line"
@@ -33,6 +34,11 @@ install-web:
 
 build:
 	@cd web && npm run build
+
+# The analysis worker. Needs REDIS_URL; without one the API runs analyses
+# itself and this is unnecessary.
+worker:
+	@$(VENV) -m arq src.jobs.worker.WorkerSettings
 
 # Two processes: the API, and Vite with hot reload proxying /api to it.
 dev:

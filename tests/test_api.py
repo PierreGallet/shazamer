@@ -28,31 +28,6 @@ RESULT = {
 }
 
 
-@pytest.fixture
-async def client(tmp_path, monkeypatch):
-    """A fresh app instance per test, with all state under tmp_path."""
-    import importlib
-
-    for name in ("UPLOAD_DIR", "MEDIA_DIR", "DATA_DIR", "TMP_DIR"):
-        (tmp_path / name.lower()).mkdir(exist_ok=True)
-
-    monkeypatch.setenv("SLSKD_URL", "")
-    import src.web as web
-    importlib.reload(web)
-
-    web.UPLOAD_DIR = tmp_path / "uploads"
-    web.MEDIA_DIR = tmp_path / "media"
-    for directory in (web.UPLOAD_DIR, web.MEDIA_DIR):
-        directory.mkdir(exist_ok=True)
-    web.library = web.Library(tmp_path / "library.db")
-    web.tasks = web.TaskManager(tmp_path / "tasks")
-
-    transport = ASGITransport(app=web.app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        c.web = web  # type: ignore[attr-defined]
-        yield c
-
-
 async def test_health(client):
     response = await client.get("/api/health")
     assert response.status_code == 200

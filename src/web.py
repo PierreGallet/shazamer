@@ -39,10 +39,11 @@ from src.acquire.slskd import SlskdClient, SlskdError, search_query
 from src.core.pipeline import AnalyzeConfig, Pipeline
 from src.export import formats as export_formats
 from src.identify.shazam import ShazamIdentifier
+from src.jobs import queue as jobs
 from src.sentry_setup import init_sentry
 from src.sources import download as dl
 from src.store.library import Library
-from src.tasks import TaskManager
+from src.tasks import Task, TaskManager
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
@@ -108,7 +109,9 @@ def sweep_media(max_age_days: int) -> int:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    interrupted = tasks.mark_interrupted()
+    # The API does not run analyses when a queue is configured, so an
+    # interrupted task belongs to the worker and will be handed back to it.
+    interrupted = tasks.mark_interrupted(requeued=jobs.enabled())
     if interrupted:
         logger.info("Marked %d interrupted task(s) after restart", interrupted)
     tasks.sweep()
@@ -277,6 +280,46 @@ def _discard_partials(task_id: str) -> None:
         discard_media(leftover)
 
 
+async def dispatch(task: "Task", function: str, *args) -> None:
+    """Send an analysis to the queue, or run it here when there is none.
+
+    The queue is what makes an analysis survive a deploy, so it is preferred
+    whenever it is reachable. Falling back to in-process keeps local
+    development and the test suite working without Redis, and keeps the app
+    usable — degraded, not broken — if Redis is down.
+
+    The fallback is explicitly the old behaviour, including its weakness: a
+    restart loses the work. It says so in the log rather than pretending
+    otherwise.
+    """
+    # Recorded before enqueueing so a crash between the two still leaves
+    # enough for the worker to reclaim the job.
+    task.job = {"function": function, "args": list(args)}
+    tasks.persist(task)
+
+    if await jobs.enqueue(function, *args, job_id=task.id):
+        tasks.update(task, message="Queued for analysis...")
+        return
+
+    if jobs.enabled():
+        logger.warning("Queue unreachable; running %s in-process. It will not "
+                       "survive a restart.", task.id)
+    target = {"analyze_upload_job": run_analysis,
+              "analyze_url_job": run_url_analysis}[function]
+    handle = asyncio.create_task(_run_inline(target, *args))
+    tasks.attach(task, handle)
+
+
+async def _run_inline(target, *args) -> None:
+    """Adapt a job signature (which carries an arq context) to a direct call."""
+    if target is run_analysis:
+        task_id, path, title = args
+        await target(task_id, Path(path), title)
+    else:
+        task_id, url, set_id = args
+        await target(task_id, url, set_id=set_id)
+
+
 def discard_media(path: Optional[Path]) -> None:
     """Delete audio belonging to an analysis that produced nothing.
 
@@ -358,8 +401,7 @@ async def analyze_upload(file: UploadFile = File(...)):
 
     title = Path(file.filename).stem
     task = tasks.create(task_id, filename=title)
-    handle = asyncio.create_task(run_analysis(task_id, dest, title))
-    tasks.attach(task, handle)
+    await dispatch(task, "analyze_upload_job", task_id, str(dest), title)
     return {"task_id": task_id, "filename": title}
 
 
@@ -378,15 +420,18 @@ async def analyze_url(request: URLRequest):
 
     task_id = str(uuid.uuid4())
     task = tasks.create(task_id, filename="Resolving...", source_url=url)
-    handle = asyncio.create_task(run_url_analysis(task_id, url, set_id=replaces))
-    tasks.attach(task, handle)
+    await dispatch(task, "analyze_url_job", task_id, url, replaces)
     return {"task_id": task_id, "url": url, "replaces": replaces}
 
 
 @app.get("/api/tasks")
 async def list_active_tasks():
-    """Analyses currently running, so the UI can offer a way back to them."""
-    return [task.snapshot() for task in tasks.active()]
+    """Analyses currently running, so the UI can offer a way back to them.
+
+    Read from disk rather than memory: the work happens in the worker
+    container, so the API has no in-process record of it.
+    """
+    return tasks.active_on_disk()
 
 
 @app.get("/api/tasks/{task_id}")
@@ -399,9 +444,11 @@ async def get_task(task_id: str):
 
 @app.post("/api/tasks/{task_id}/cancel")
 async def cancel_task(task_id: str):
-    if not await tasks.cancel(task_id):
-        raise HTTPException(status_code=400, detail="Task is not running")
-    return {"cancelled": True}
+    # The job may be running in the worker, where there is no local handle to
+    # cancel — ask the queue first, then fall back to the in-process case.
+    if await jobs.abort(task_id) or await tasks.cancel(task_id):
+        return {"cancelled": True}
+    raise HTTPException(status_code=400, detail="Task is not running")
 
 
 @app.get("/api/tasks/{task_id}/events")
@@ -417,15 +464,42 @@ async def task_events(task_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Task not found")
 
     async def stream():
-        queue = tasks.subscribe(task)
-        try:
-            yield _sse(task.snapshot())
-            if task.terminal:
+        yield _sse(task.snapshot())
+        if task.terminal:
+            yield "event: end\ndata: {}\n\n"
+            return
+
+        # An analysis normally runs in the worker container, so there is no
+        # in-process queue to subscribe to — the shared task file is the
+        # channel between the two. When the job is running here instead (no
+        # queue configured, or the queue was unreachable) the in-memory path is
+        # still used, because it is immediate and avoids a pointless poll.
+        if task._handle is not None:
+            async for frame in _stream_local(task, request):
+                yield frame
+            return
+
+        last_beat = asyncio.get_running_loop().time()
+        async for snapshot in tasks.watch(task_id):
+            if await request.is_disconnected():
+                return
+            yield _sse(snapshot)
+            last_beat = asyncio.get_running_loop().time()
+            if snapshot.get("status") in ("completed", "error", "cancelled"):
                 yield "event: end\ndata: {}\n\n"
                 return
+            # Long identification stretches produce few state changes; a
+            # comment keeps proxies from closing an idle connection.
+            if asyncio.get_running_loop().time() - last_beat > 15:
+                yield ": heartbeat\n\n"
+        yield "event: end\ndata: {}\n\n"
+
+    async def _stream_local(task, request):
+        queue = tasks.subscribe(task)
+        try:
             while True:
                 if await request.is_disconnected():
-                    break
+                    return
                 try:
                     payload = await asyncio.wait_for(queue.get(), timeout=15)
                 except asyncio.TimeoutError:
@@ -434,7 +508,7 @@ async def task_events(task_id: str, request: Request):
                 if payload is None:
                     yield _sse(task.snapshot())
                     yield "event: end\ndata: {}\n\n"
-                    break
+                    return
                 yield _sse(payload)
         finally:
             tasks.unsubscribe(task, queue)

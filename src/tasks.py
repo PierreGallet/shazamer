@@ -20,7 +20,7 @@ import os
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,10 @@ class Task:
         self.finished_at: Optional[str] = None
         self.filepath: Optional[str] = None
         self.quality: str = ""
+        # How to run this task again: the queue function and its arguments.
+        # Stored with the task so an interrupted job can be reclaimed without
+        # the worker having to reconstruct what it was doing.
+        self.job: Optional[Dict[str, Any]] = None
         self._queues: List[asyncio.Queue] = []
         self._handle: Optional[asyncio.Task] = None
 
@@ -57,7 +61,7 @@ class Task:
             "stage": self.stage, "message": self.message, "filename": self.filename,
             "source_url": self.source_url, "error": self.error, "set_id": self.set_id,
             "quality": self.quality, "created_at": self.created_at,
-            "finished_at": self.finished_at,
+            "finished_at": self.finished_at, "job": self.job,
         }
 
     @property
@@ -96,10 +100,30 @@ class TaskManager:
         )
 
     def get(self, task_id: str) -> Optional[Task]:
+        """Return a task, preferring whichever copy is actually authoritative.
+
+        In-memory is right only for work this process is running. Everything
+        else is executed by the worker container, which writes its progress to
+        the shared file — so for those, memory holds whatever was true at
+        creation and nothing since. Returning it made every queued analysis
+        look stuck at "pending 0%".
+        """
         task = self._tasks.get(task_id)
+        if task is not None and task._handle is not None:
+            return task                 # we are running it; memory is the truth
+
+        stored = self._load(task_id)
+        if stored is None:
+            return task                 # never persisted yet, memory is all we have
         if task is not None:
+            # Keep the same object so subscribers and the handle survive.
+            task.__dict__.update(
+                {k: v for k, v in stored.__dict__.items()
+                 if not k.startswith("_")}
+            )
             return task
-        return self._load(task_id)
+        self._tasks[task_id] = stored
+        return stored
 
     def _evict(self) -> None:
         """Drop the oldest terminal tasks once over the cap."""
@@ -150,6 +174,14 @@ class TaskManager:
             setattr(task, key, value)
 
         snapshot = task.snapshot()
+
+        # Persisted on every update, not only at phase transitions. The worker
+        # and the API run in separate containers sharing this directory, so the
+        # file *is* the channel between them — an update kept in memory is
+        # invisible to whoever is streaming it. Each write is a few hundred
+        # bytes replaced atomically, a couple of hundred times per analysis.
+        self.persist(task)
+
         for queue in list(task._queues):
             try:
                 queue.put_nowait(snapshot)
@@ -205,14 +237,90 @@ class TaskManager:
         task.set_id = data.get("set_id")
         task.created_at = data.get("created_at", _now())
         task.finished_at = data.get("finished_at")
+        task.job = data.get("job")
         return task
 
-    def mark_interrupted(self) -> int:
+    async def watch(self, task_id: str, poll: float = 0.5
+                    ) -> "AsyncIterator[Dict[str, Any]]":
+        """Yield a task's state each time it changes on disk.
+
+        Used when the task belongs to another process — the worker container —
+        where there is no in-memory queue to subscribe to. The file is the
+        shared channel, so this watches the file.
+
+        Server-side polling of a small local file is cheap and the client still
+        gets a pushed stream; the alternative, a second Redis connection per
+        open tab purely to relay progress, buys nothing here.
+
+        Ends once the task reaches a terminal state.
+        """
+        last: Optional[str] = None
+        missing_for = 0.0
+        while True:
+            snapshot = self._read(task_id)
+            if snapshot is None:
+                # A task enqueued a moment ago may not have been written yet.
+                missing_for += poll
+                if missing_for > 10:
+                    return
+                await asyncio.sleep(poll)
+                continue
+            missing_for = 0.0
+
+            encoded = json.dumps(snapshot, sort_keys=True)
+            if encoded != last:
+                last = encoded
+                yield snapshot
+            if snapshot.get("status") in ("completed", "error", "cancelled"):
+                return
+            await asyncio.sleep(poll)
+
+    def interrupted_jobs(self) -> List[Dict[str, Any]]:
+        """Task snapshots that were mid-flight and know how to restart.
+
+        Used by the worker to reclaim work after a crash. Tasks with no job
+        spec were run in-process by the API and cannot be handed to a queue.
+        """
+        return [s for s in self.active_on_disk() if s.get("job")]
+
+    def active_on_disk(self) -> List[Dict[str, Any]]:
+        """Non-terminal tasks according to the shared directory.
+
+        The in-memory view only knows about work this process started, which
+        since the queue exists is usually none of it.
+        """
+        out: List[Dict[str, Any]] = []
+        for path in self.dir.glob("*.json"):
+            try:
+                with open(path) as fh:
+                    snapshot = json.load(fh)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if snapshot.get("status") in NON_TERMINAL:
+                out.append(snapshot)
+        out.sort(key=lambda s: s.get("created_at", ""), reverse=True)
+        return out
+
+    def _read(self, task_id: str) -> Optional[Dict[str, Any]]:
+        path = self._path(task_id)
+        try:
+            with open(path) as fh:
+                return json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def mark_interrupted(self, requeued: bool = False) -> int:
         """Flag tasks left mid-flight by a restart.
 
         Without this the frontend sees a task that never advances and reports
-        "connection lost", which points the user at their network instead of
-        at the redeploy or OOM that actually happened.
+        "connection lost", pointing the user at their network instead of at the
+        redeploy or OOM that actually happened.
+
+        `requeued` changes what the interruption *means*. With a job queue the
+        work is not lost — the queue hands it back and it starts again — so
+        calling it an error would be false, and the UI would stop watching a
+        run that is about to resume. Without a queue the work really is gone
+        and the user has to start it themselves.
         """
         count = 0
         for path in self.dir.glob("*.json"):
@@ -222,12 +330,19 @@ class TaskManager:
             except (json.JSONDecodeError, OSError):
                 continue
             if data.get("status") in NON_TERMINAL:
-                data.update({
-                    "status": "error", "stage": "error", "progress": 0,
-                    "message": "Analysis interrupted",
-                    "error": "The server restarted while this set was being "
-                             "analysed. Start it again — nothing was lost.",
-                })
+                if requeued:
+                    data.update({
+                        "status": "pending", "stage": "pending", "progress": 0,
+                        "message": "Interrupted — picking up again...",
+                        "error": None,
+                    })
+                else:
+                    data.update({
+                        "status": "error", "stage": "error", "progress": 0,
+                        "message": "Analysis interrupted",
+                        "error": "The server restarted while this set was being "
+                                 "analysed. Start it again — nothing was lost.",
+                    })
                 try:
                     with open(path, "w") as fh:
                         json.dump(data, fh, default=str)

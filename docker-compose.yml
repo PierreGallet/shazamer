@@ -1,25 +1,55 @@
-version: "3.8"
-
-# Base compose for local development only
-# Production runs as a Swarm service (docker-stack.yml), routed by the
-# Traefik edge in the genius infra repo via its deploy.labels.
+# Local development. Production runs as a Swarm stack (docker-stack.yml)
+# behind the Traefik edge in the genius infra repo.
+#
+# Mirrors production's shape — API, worker, broker — so a problem that only
+# appears once analyses run in a separate process shows up here rather than
+# after a deploy.
 
 services:
-  shazamer:
+  app:
     build: .
-    container_name: shazamer_app
     restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
-      - ./outputs:/app/outputs
+      - ./data:/app/data
+      - ./media:/app/media
       - ./uploads:/app/uploads
       - ./tmp:/app/tmp
     environment:
       - PYTHONUNBUFFERED=1
+      - REDIS_URL=redis://redis:6379
+      - ALLOWED_ORIGINS=http://localhost:5173,http://localhost:8000
+    depends_on:
+      - redis
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      test: ["CMD", "python", "-S", "/app/healthcheck.py"]
       interval: 30s
-      timeout: 10s
-      retries: 3
+      timeout: 20s
+      retries: 5
       start_period: 40s
+
+  worker:
+    build: .
+    command: ["arq", "src.jobs.worker.WorkerSettings"]
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./media:/app/media
+      - ./uploads:/app/uploads
+      - ./tmp:/app/tmp
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", ""]
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:
