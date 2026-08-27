@@ -119,13 +119,20 @@ class Library:
     async def save_set(self, set_id: str, title: str, result: Dict[str, Any],
                        *, source_url: str = "", source_kind: str = "upload",
                        uploader: str = "", audio_path: str = "",
-                       quality: str = "") -> None:
+                       quality: str = "", created_at: Optional[str] = None) -> None:
+        """Store a set and its tracks, replacing any set with the same id.
+
+        `created_at` defaults to now. It is overridable so an import can keep
+        the date the analysis actually happened rather than the date it was
+        migrated — a library sorted by import time tells you nothing.
+        """
         async with self._lock:
             await self._run(self._save_set_sync, set_id, title, result,
-                            source_url, source_kind, uploader, audio_path, quality)
+                            source_url, source_kind, uploader, audio_path,
+                            quality, created_at)
 
     def _save_set_sync(self, set_id, title, result, source_url, source_kind,
-                       uploader, audio_path, quality) -> None:
+                       uploader, audio_path, quality, created_at=None) -> None:
         with closing(self._connect()) as conn:
             conn.execute("DELETE FROM sets WHERE id = ?", (set_id,))
             conn.execute(
@@ -135,7 +142,7 @@ class Library:
                 (set_id, title, source_url, source_kind, uploader, audio_path,
                  quality, result.get("duration", 0),
                  json.dumps(result.get("waveform", [])),
-                 json.dumps(result.get("stats", {})), _now()),
+                 json.dumps(result.get("stats", {})), created_at or _now()),
             )
             conn.executemany(
                 "INSERT INTO tracks (set_id, position, start, end, identified,"
