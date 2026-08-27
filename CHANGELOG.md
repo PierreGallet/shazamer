@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1](https://github.com/PierreGallet/shazamer/compare/v1.5.0...v1.5.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **identify:** one retry budget, and a ceiling no probe can exceed ([00e910c](https://github.com/PierreGallet/shazamer/commit/00e910c8f9e1ac3f98daa42709fdbf0b9356aed8))
+
 ## [1.5.0](https://github.com/PierreGallet/shazamer/compare/v1.4.1...v1.5.0) (2026-08-27)
 
 
