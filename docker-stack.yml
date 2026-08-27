@@ -12,12 +12,19 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHON_ENV=Production
-      - MAX_AUDIO_DURATION_SECONDS=7200
       - SENTRY_DSN=${SENTRY_DSN:-}
+      - SHAZAM_CONCURRENCY=${SHAZAM_CONCURRENCY:-8}
+      - KEEP_AUDIO_DAYS=${KEEP_AUDIO_DAYS:-14}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-https://shazamer.pierregallet.com}
+      - SLSKD_URL=${SLSKD_URL:-}
+      - SLSKD_API_KEY=${SLSKD_API_KEY:-}
     volumes:
       - type: bind
-        source: /home/sharon/shazamer/outputs
-        target: /app/outputs
+        source: /home/sharon/shazamer/data
+        target: /app/data
+      - type: bind
+        source: /home/sharon/shazamer/media
+        target: /app/media
       - type: bind
         source: /home/sharon/shazamer/uploads
         target: /app/uploads
@@ -27,7 +34,7 @@ services:
     networks:
       - traefik
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/').read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -41,9 +48,12 @@ services:
         - "traefik.http.services.shazamer.loadbalancer.server.port=8000"
       resources:
         limits:
-          memory: 6G
-          # CPU cap: very light (peak ~0.1 core); 2.0 is ample headroom.
-          cpus: "2.0"
+          # Was 6G to survive one-shot STFT of a whole set. The pipeline now
+          # streams: peak was measured at 24 MB and is flat with duration, so
+          # 1G is generous. The duration cap is gone with it.
+          memory: 1G
+          # Eight parallel probes plus BPM/key detection actually use CPU now.
+          cpus: "3.0"
       update_config:
         order: start-first
         failure_action: rollback

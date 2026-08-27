@@ -57,6 +57,26 @@ jobs:
       - name: Run tests
         run: uv run pytest -x -q -m "not integration" --ignore=tests/test_integration.py
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+
+      # Typecheck and build here rather than discovering a TypeScript
+      # regression during the production image build.
+      - name: Typecheck frontend
+        working-directory: web
+        run: npm run typecheck
+
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+
   release-please:
     name: "\U0001F4E6 Release Please"
     needs: [tests]
@@ -89,7 +109,9 @@ jobs:
         run: |
           VERSION="${{ steps.release.outputs.major }}.${{ steps.release.outputs.minor }}.${{ steps.release.outputs.patch }}"
           mkdir -p "shazamer-${VERSION}"
-          cp shazamer.py requirements.txt README.md LICENSE Makefile "shazamer-${VERSION}/" 2>/dev/null || true
+          cp -r src web/src web/package.json web/index.html web/vite.config.ts \
+                web/tsconfig.json requirements.txt README.md LICENSE Makefile \
+                Dockerfile "shazamer-${VERSION}/"
           tar -czf "shazamer-${VERSION}.tar.gz" "shazamer-${VERSION}"
           zip -r "shazamer-${VERSION}.zip" "shazamer-${VERSION}"
 
@@ -209,17 +231,27 @@ jobs:
           HOST=$(echo $SSH_HOST | cut -d':' -f1)
           PORT=$(echo $SSH_HOST | grep -o ':[0-9]*' | cut -d':' -f2 || echo "22")
 
-          echo "Running post-deploy verification..."
-          ACTIVE_ENV=$(ssh -p $PORT $SSH_USER@$HOST "cat $DEPLOY_PATH/.deploy-env | grep ACTIVE_ENV | cut -d= -f2")
-          echo "Active environment: $ACTIVE_ENV"
-
-          if ssh -p $PORT $SSH_USER@$HOST "docker exec shazamer_$ACTIVE_ENV python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/').read()\""; then
-            echo "Health check passed!"
-          else
-            echo "Health check failed!"
-            ssh -p $PORT $SSH_USER@$HOST "docker logs shazamer_$ACTIVE_ENV --tail 50"
+          # The service runs under Swarm now, not blue-green: there is no
+          # .deploy-env and no fixed container name, so resolve the running
+          # task and exec into that.
+          echo "Waiting for the new task to report healthy..."
+          ssh -p $PORT $SSH_USER@$HOST "
+            set -e
+            for attempt in \$(seq 1 30); do
+              CONTAINER=\$(docker ps --filter 'name=shazamer_app' --filter 'health=healthy' -q | head -1)
+              if [ -n \"\$CONTAINER\" ]; then
+                echo \"Healthy container: \$CONTAINER\"
+                docker exec \$CONTAINER python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()\"
+                exit 0
+              fi
+              sleep 10
+            done
+            echo 'No healthy task after 5 minutes.'
+            docker service ps shazamer_app --no-trunc | head -20
+            CONTAINER=\$(docker ps --filter 'name=shazamer_app' -q | head -1)
+            [ -n \"\$CONTAINER\" ] && docker logs \$CONTAINER --tail 50
             exit 1
-          fi
+          "
 
       - name: Notify deployment status
         if: always()

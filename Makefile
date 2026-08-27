@@ -1,114 +1,63 @@
-.PHONY: help install clean analyze web
+.PHONY: help install install-web dev web web-build build test test-integration clean lint
 
-# Default target
+VENV := venv/bin/python
+PORT ?= 8000
+
 help:
-	@echo "Shazamer - DJ Set & Playlist Analyzer"
+	@echo "Shazamer — DJ digging station"
 	@echo ""
-	@echo "Usage:"
-	@echo "  make install              - Install dependencies in virtual environment"
-	@echo "  make <audio_file>         - Analyze an audio file (e.g., make song.mp3)"
-	@echo "  make analyze FILE=<path>  - Alternative way to analyze a file"
-	@echo "  make web                  - Start the web interface"
-	@echo "  make clean                - Remove virtual environment and output files"
-	@echo ""
-	@echo "Examples:"
-	@echo "  make install"
-	@echo "  make ~/Music/dj_set.mp3"
-	@echo "  make analyze FILE=\"/path/to/my mix.mp3\""
-	@echo "  make web"
+	@echo "  make install        Install Python + frontend dependencies"
+	@echo "  make dev            Run API (:8000) and Vite dev server (:5173)"
+	@echo "  make web            Run the production server (built frontend)"
+	@echo "  make build          Build the frontend into web/dist"
+	@echo "  make test           Run the test suite"
+	@echo "  make analyze FILE=… Analyse a file from the command line"
+	@echo "  make clean          Remove venv, build output and caches"
 
-# Install dependencies
-install:
-	@echo "Checking system dependencies..."
-	@# Check and install Homebrew on macOS
-	@if [ "$$(uname)" = "Darwin" ]; then \
-		if ! command -v brew >/dev/null 2>&1; then \
-			echo "Homebrew not found. Installing Homebrew..."; \
-			/bin/bash -c "$$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; \
-			echo "Homebrew installed. You may need to add it to your PATH:"; \
-			echo "  echo 'eval \"$$($(brew --prefix)/bin/brew shellenv)\"' >> ~/.zprofile"; \
-			echo "  eval \"$$($(brew --prefix)/bin/brew shellenv)\""; \
-			eval "$$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"; \
-		fi; \
-	fi
-	@echo "Checking for Python 3.12..."
-	@if ! command -v python3.12 >/dev/null 2>&1; then \
-		echo "Python 3.12 not found. Installing..."; \
-		if [ "$$(uname)" = "Darwin" ]; then \
-			echo "Installing Python 3.12 via Homebrew..."; \
-			brew install python@3.12; \
-		elif command -v apt-get >/dev/null 2>&1; then \
-			echo "Installing Python 3.12 via apt..."; \
-			sudo apt-get update && sudo apt-get install -y python3.12 python3.12-venv python3.12-pip; \
-		elif command -v yum >/dev/null 2>&1; then \
-			echo "Installing Python 3.12 via yum..."; \
-			sudo yum install -y python3.12 python3.12-venv python3.12-pip; \
-		else \
-			echo "Error: Cannot automatically install Python 3.12. Please install manually."; \
-			echo "Visit https://www.python.org/downloads/ for installation instructions."; \
-			exit 1; \
-		fi; \
-	fi
-	@echo "Checking for uv package manager..."
-	@if ! command -v uv >/dev/null 2>&1; then \
-		echo "uv not found. Installing..."; \
-		if [ "$$(uname)" = "Darwin" ]; then \
-			echo "Installing uv via Homebrew..."; \
-			brew install uv; \
-		else \
-			echo "Installing uv via curl..."; \
-			curl -LsSf https://astral.sh/uv/install.sh | sh; \
-			export PATH="$$HOME/.cargo/bin:$$PATH"; \
-		fi; \
-	fi
-	@echo "Creating virtual environment with Python 3.12..."
+install: install-py install-web
+
+install-py:
+	@command -v ffmpeg >/dev/null 2>&1 || { \
+		echo "ffmpeg is required. Install it:"; \
+		echo "  macOS:  brew install ffmpeg"; \
+		echo "  Debian: sudo apt-get install ffmpeg"; \
+		exit 1; }
+	@command -v uv >/dev/null 2>&1 || pip install uv
 	@uv venv venv --python python3.12
-	@echo "Installing dependencies with uv..."
 	@uv pip install -r requirements.txt --python venv/bin/python
-	@echo "Installation complete!"
+	@echo "Python environment ready."
 
-# Clean up
-clean:
-	@echo "Cleaning up..."
-	@rm -rf venv
-	@rm -rf tmp
-	@echo "Clean complete!"
+install-web:
+	@cd web && npm install --no-audit --no-fund
+	@echo "Frontend dependencies ready."
 
-# Analyze with FILE variable
+build:
+	@cd web && npm run build
+
+# Two processes: the API, and Vite with hot reload proxying /api to it.
+dev:
+	@echo "API on http://localhost:$(PORT) · UI on http://localhost:5173"
+	@$(VENV) -m uvicorn src.web:app --reload --port $(PORT) & \
+	 cd web && npm run dev; \
+	 kill %1 2>/dev/null || true
+
+web: build
+	@$(VENV) -m uvicorn src.web:app --host 0.0.0.0 --port $(PORT)
+
 analyze:
-	@if [ -z "$(FILE)" ]; then \
-		echo "Error: Please specify a file to analyze"; \
-		echo "Usage: make analyze FILE=\"path/to/audio.mp3\""; \
-		exit 1; \
-	fi
-	@if [ ! -f "venv/bin/python" ]; then \
-		echo "Virtual environment not found. Running 'make install' first..."; \
-		$(MAKE) install; \
-	fi
-	@echo "Analyzing: $(FILE)"
-	@./venv/bin/python -m src.shazamer "$(FILE)"
+	@test -n "$(FILE)" || { echo 'Usage: make analyze FILE="path/to/mix.mp3"'; exit 1; }
+	@$(VENV) -m src.shazamer "$(FILE)"
 
-# Force rebuild for audio files
-.PHONY: %.mp3 %.wav %.flac %.m4a
+test:
+	@$(VENV) -m pytest -q -m "not integration"
 
-# Pattern rule for direct file analysis
-%.mp3 %.wav %.flac %.m4a:
-	@if [ ! -f "$@" ]; then \
-		echo "Error: File not found: $@"; \
-		exit 1; \
-	fi
-	@if [ ! -f "venv/bin/python" ]; then \
-		echo "Virtual environment not found. Running 'make install' first..."; \
-		$(MAKE) install; \
-	fi
-	@echo "Analyzing: $@"
-	@./venv/bin/python -m src.shazamer "$@"
+test-integration:
+	@$(VENV) -m pytest -q -m integration
 
-# Start web interface
-web:
-	@if [ ! -f "venv/bin/python" ]; then \
-		echo "Virtual environment not found. Running 'make install' first..."; \
-		$(MAKE) install; \
-	fi
-	@echo "Starting web interface at http://localhost:8000"
-	@./venv/bin/python -m src.web
+lint:
+	@cd web && npm run typecheck
+
+clean:
+	@rm -rf venv web/node_modules web/dist tmp .pytest_cache
+	@find . -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
+	@echo "Cleaned."
