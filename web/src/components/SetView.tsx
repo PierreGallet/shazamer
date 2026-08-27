@@ -13,6 +13,17 @@ interface Props {
   onReanalyse: (taskId: string) => void;
 }
 
+/** Stage names as a person would say them, not as the pipeline names them. */
+const STAGE_NAMES: Record<string, string> = {
+  probing: "Reading the file",
+  downloading: "Downloading",
+  decoding: "Analysing audio",
+  identifying: "Identifying tracks",
+  merging: "Merging results",
+  confirming: "Confirming weak matches",
+  features: "Detecting BPM and key",
+};
+
 const EXPORTS: { fmt: string; label: string; hint: string }[] = [
   { fmt: "rekordbox", label: "Rekordbox XML", hint: "Playlist with BPM and key filled in" },
   { fmt: "txt", label: "Text", hint: "The classic tracklist" },
@@ -30,6 +41,7 @@ export default function SetView(props: Props) {
   const [currentTime, setCurrentTime] = createSignal(initialStart);
   const [activeIndex, setActiveIndex] = createSignal<number | null>(null);
   const [playerError, setPlayerError] = createSignal("");
+  const [showTiming, setShowTiming] = createSignal(false);
   const [reanalyseUrl, setReanalyseUrl] = createSignal("");
   const [reanalyseError, setReanalyseError] = createSignal("");
   const [reanalysing, setReanalysing] = createSignal(false);
@@ -136,7 +148,13 @@ export default function SetView(props: Props) {
                   </Show>
                   <Show when={data().stats.elapsed_seconds}>
                     <span>·</span>
-                    <span>analysed in {formatTime(data().stats.elapsed_seconds!)}</span>
+                    <button
+                      class="timing-toggle"
+                      onClick={() => setShowTiming(!showTiming())}
+                      title="Where the time went"
+                    >
+                      analysed in {formatTime(data().stats.elapsed_seconds!)}
+                    </button>
                   </Show>
                 </div>
               </div>
@@ -156,6 +174,32 @@ export default function SetView(props: Props) {
                 </For>
               </div>
             </div>
+
+            <Show when={showTiming() && data().stats.stage_seconds}>
+              {/* The stages are wildly unequal and which one dominates moves
+                  with the set and with how the fingerprinting service is
+                  behaving. Finding that out used to mean reading logs. */}
+              <div class="timing">
+                <For each={Object.entries(data().stats.stage_seconds!)
+                                 .filter(([, s]) => s >= 0.05)}>
+                  {([stage, seconds]) => {
+                    const total = Object.values(
+                      data().stats.stage_seconds!).reduce((a, b) => a + b, 0);
+                    const share = total ? (seconds / total) * 100 : 0;
+                    return (
+                      <div class="timing-row">
+                        <span class="timing-stage">{STAGE_NAMES[stage] ?? stage}</span>
+                        <div class="timing-bar">
+                          <div class="timing-fill" style={{ width: `${share}%` }} />
+                        </div>
+                        <span class="tiny faint mono">{formatTime(seconds)}</span>
+                        <span class="tiny faint mono">{share.toFixed(0)}%</span>
+                      </div>
+                    );
+                  }}
+                </For>
+              </div>
+            </Show>
 
             <Show when={data().source_kind === "legacy"}>
               <div class="legacy-banner">

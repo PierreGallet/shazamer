@@ -43,6 +43,8 @@ export interface SetStats {
   unidentified?: number;
   coverage?: number;
   elapsed_seconds?: number;
+  /** Seconds per stage, in the order they ran. */
+  stage_seconds?: Record<string, number>;
   strategy?: string;
   concurrency?: number;
 }

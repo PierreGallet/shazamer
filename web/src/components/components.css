@@ -188,6 +188,35 @@
 }
 .running-pct { font-size: 0.72rem; flex: none; }
 
+.timing-toggle {
+  color: var(--text-dim);
+  border-bottom: 1px dotted var(--line);
+  font-size: inherit;
+}
+.timing-toggle:hover { color: var(--text); border-bottom-color: var(--text-faint); }
+
+.timing {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 0.7rem 0.9rem; margin-bottom: 1rem;
+}
+.timing-row {
+  display: grid;
+  grid-template-columns: 150px 1fr 48px 36px;
+  gap: 0.6rem; align-items: center;
+}
+.timing-stage { font-size: 0.8rem; color: var(--text-dim); }
+.timing-bar {
+  height: 5px; border-radius: 3px;
+  background: var(--surface-3); overflow: hidden;
+}
+.timing-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+
+@media (max-width: 640px) {
+  .timing-row { grid-template-columns: 110px 1fr 44px; }
+  .timing-row > :last-child { display: none; }
+}
+
 .candidate-picker {
   display: flex; flex-direction: column; gap: 0.25rem;
   background: var(--surface); border: 1px solid var(--line);

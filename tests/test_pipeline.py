@@ -401,3 +401,58 @@ async def test_votes_per_segment_of_one_skips_the_pass(synthetic_set,
 
     grid = len(grid_probes(result.duration, interval=20.0))
     assert stub_identifier.calls - before == grid, "extra probes were fired"
+
+
+async def test_the_analysis_reports_where_its_time_went(synthetic_set,
+                                                        stub_identifier):
+    """Stage timings, because the imbalance between stages is the diagnosis.
+
+    A run that spent two hours identifying and ninety seconds decoding looks
+    identical from outside to one that split the time evenly. Working that out
+    once meant reading container logs.
+    """
+    result = await Pipeline(
+        stub_identifier,
+        AnalyzeConfig(probe_interval=15.0, concurrency=4),
+    ).run(synthetic_set["path"])
+
+    timings = result.stats["stage_seconds"]
+    assert {"decoding", "identifying"} <= set(timings)
+    assert all(v >= 0 for v in timings.values())
+
+    # The parts should account for the whole, give or take rounding.
+    total = sum(timings.values())
+    assert abs(total - result.stats["elapsed_seconds"]) < 1.0, (
+        f"stages sum to {total:.1f}s but the run took "
+        f"{result.stats['elapsed_seconds']}s — time is unaccounted for"
+    )
+
+
+def test_a_stage_re_entered_is_summed_not_overwritten():
+    """Reporting a stage twice must not hide half its cost."""
+    import time
+
+    from src.core.pipeline import StageTimer
+
+    timer = StageTimer()
+    timer.enter("identifying")
+    time.sleep(0.05)
+    timer.enter("merging")
+    time.sleep(0.05)
+    timer.enter("identifying")      # back to it, as confirmation does
+    time.sleep(0.05)
+
+    timings = timer.finish()
+    assert timings["identifying"] > timings["merging"], (
+        "the second visit to a stage was dropped"
+    )
+
+
+def test_repeated_reports_of_the_same_stage_are_one_entry():
+    """Identification reports per probe; that must not fragment the timing."""
+    from src.core.pipeline import StageTimer
+
+    timer = StageTimer()
+    for _ in range(50):
+        timer.enter("identifying")
+    assert list(timer.finish()) == ["identifying"]

@@ -52,6 +52,42 @@ class AnalyzeConfig:
     peak_threshold: Optional[float] = None
 
 
+class StageTimer:
+    """How long each stage of an analysis took.
+
+    Worth having because the stages are wildly unequal and the imbalance moves.
+    A run that spent two hours identifying and ninety seconds decoding looks
+    identical, from the outside, to one that split the time evenly — and the
+    difference is the whole diagnosis. Finding that out once meant reading
+    container logs.
+
+    Fed from the progress callback, so a stage is timed by the same thing that
+    announces it and the two cannot drift apart.
+    """
+
+    def __init__(self) -> None:
+        self._started = time.monotonic()
+        self._marks: List[tuple] = []       # (stage, monotonic time)
+
+    def enter(self, stage: str) -> None:
+        if self._marks and self._marks[-1][0] == stage:
+            return                          # same stage reporting again
+        self._marks.append((stage, time.monotonic()))
+
+    def finish(self) -> Dict[str, float]:
+        """Seconds per stage, in the order they ran."""
+        if not self._marks:
+            return {}
+        end = time.monotonic()
+        out: Dict[str, float] = {}
+        for i, (stage, at) in enumerate(self._marks):
+            until = self._marks[i + 1][1] if i + 1 < len(self._marks) else end
+            # Summed rather than assigned: a stage can be re-entered, and
+            # reporting it twice would hide half its cost.
+            out[stage] = round(out.get(stage, 0.0) + (until - at), 1)
+        return out
+
+
 @dataclass
 class Track:
     """A segment as the API and UI consume it."""
@@ -115,7 +151,10 @@ class Pipeline:
                   ) -> AnalysisResult:
         started = time.monotonic()
 
+        timer = StageTimer()
+
         def report(stage: str, pct: int, message: str) -> None:
+            timer.enter(stage)
             if on_progress is not None:
                 try:
                     on_progress(stage, pct, message)
@@ -168,6 +207,9 @@ class Pipeline:
                     sum(t.duration for t in identified) / duration, 3
                 ) if duration else 0.0,
                 "elapsed_seconds": round(time.monotonic() - started, 1),
+                # Where the time actually went. The stages are wildly unequal
+                # and which one dominates moves with the set and the service.
+                "stage_seconds": timer.finish(),
                 "strategy": self.config.strategy,
                 "concurrency": self.config.concurrency,
             },
