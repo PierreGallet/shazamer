@@ -31,12 +31,47 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Quality score by container/bitrate. Deliberately steep: a lossless file is
-# worth waiting in a queue for, a 128 kbps file is barely worth downloading.
-_FORMAT_SCORE = {"flac": 100, "wav": 96, "aiff": 94, "aif": 94, "alac": 92,
-                 "m4a": 60, "ogg": 55, "opus": 55, "mp3": 50, "wma": 20}
-
 _LOSSLESS = {"flac", "wav", "aiff", "aif", "alac"}
+
+# What "best" means depends on where the file is going, so it is a choice
+# rather than a constant.
+#
+# `portable` is the default because it is right more often: FLAC does not
+# import into Apple Music at all — macOS reads ALAC, not FLAC — and it is
+# roughly three times the size, 40 MB against 14 for a six-minute track. A
+# 320 kbps MP3 plays in every DJ application and on every phone.
+#
+# `lossless` is the right answer if the destination is Rekordbox, Serato or
+# Traktor, all of which read FLAC natively and where the headroom matters.
+FORMAT_PROFILES = {
+    "portable": {"mp3": 100, "m4a": 95, "aac": 92, "flac": 70, "alac": 68,
+                 "wav": 55, "aiff": 52, "aif": 52, "ogg": 60, "opus": 60,
+                 "wma": 20},
+    "lossless": {"flac": 100, "wav": 96, "aiff": 94, "aif": 94, "alac": 92,
+                 "m4a": 60, "aac": 58, "ogg": 55, "opus": 55, "mp3": 50,
+                 "wma": 20},
+    # Everything Apple Music will actually import, FLAC last.
+    "apple": {"alac": 100, "m4a": 96, "aac": 94, "mp3": 90, "wav": 70,
+              "aiff": 68, "aif": 68, "ogg": 30, "opus": 30, "flac": 25,
+              "wma": 15},
+}
+
+FORMAT_PROFILE = os.environ.get("ACQUIRE_FORMAT_PROFILE", "portable").lower()
+_FORMAT_SCORE = FORMAT_PROFILES.get(FORMAT_PROFILE, FORMAT_PROFILES["portable"])
+
+# Duration bands, in seconds. A club record runs long; a radio edit is the
+# version you do not want and is usually the one named most cleanly.
+SHORT_EDIT_SECONDS = 240        # below this, probably a radio edit
+LONG_SET_SECONDS = 1200         # above this, probably a whole mix or album side
+
+# Filename hints. Weak on their own — anyone can type anything — but they
+# correlate well enough to break a tie between otherwise equal candidates.
+_EXTENDED_HINT = re.compile(
+    r"\b(extended|original\s*mix|club\s*mix|12[\s\"']*inch|maxi)\b",
+    re.IGNORECASE)
+_SHORT_HINT = re.compile(
+    r"\b(radio\s*(edit|mix|version)|short|snippet|preview|clip)\b",
+    re.IGNORECASE)
 
 # How long a transfer may sit at the same percentage before it is abandoned.
 # Soulseek queues are genuinely slow — being forty deep behind someone on ADSL
@@ -70,6 +105,13 @@ class Candidate:
         return self.filename.replace("\\", "/").rsplit("/", 1)[-1]
 
     @property
+    def duration_label(self) -> str:
+        """Length as a DJ reads it — the single most telling field here."""
+        if not self.length:
+            return "?"
+        return f"{self.length // 60}:{self.length % 60:02d}"
+
+    @property
     def quality_label(self) -> str:
         if self.extension in _LOSSLESS:
             bits = f"{self.bit_depth}-bit " if self.bit_depth else ""
@@ -84,7 +126,10 @@ class Candidate:
             "username": self.username, "filename": self.basename,
             "full_path": self.filename, "size": self.size,
             "extension": self.extension, "bitrate": self.bitrate,
-            "quality_label": self.quality_label, "lossless": self.extension in _LOSSLESS,
+            "length": self.length,
+            "quality_label": self.quality_label,
+            "duration_label": self.duration_label,
+            "lossless": self.extension in _LOSSLESS,
             "queue_length": self.queue_length, "free_slot": self.free_slot,
             "upload_speed": self.upload_speed, "score": round(self.score, 1),
         }
@@ -92,6 +137,49 @@ class Candidate:
 
 def _normalise(text: str) -> str:
     return _JUNK.sub(" ", (text or "").lower()).strip()
+
+
+def _length_score(length: Optional[int], basename: str) -> float:
+    """Reward the version a DJ would actually play.
+
+    The preference is absolute, not relative to any reference length, and that
+    distinction matters. Shazam identifies whichever recording it matched,
+    which for a lot of dance records is the radio edit — so treating the
+    identified track's duration as a target would systematically reject the
+    extended mix, the one thing worth having. Longer simply wins.
+
+    A radio edit is close to useless at the decks: no intro to beatmatch into,
+    no outro to mix out of. It is penalised hard rather than merely ranked
+    below, because a radio edit that arrives is worse than nothing arriving —
+    it looks like the job is done.
+
+    Past twenty minutes it stops being a track: a mix, an album side, or a
+    mislabelled set.
+
+    An unknown length is neither rewarded nor punished. Plenty of peers report
+    nothing, and refusing them would discard good files over a missing field.
+    """
+    score = 0.0
+
+    if length:
+        if length < 60:
+            score -= 60             # a snippet or a broken file
+        elif length < SHORT_EDIT_SECONDS:
+            # Steep and scaled: 3'30 is a plausible club record, 2'00 is not.
+            score -= 55 * (SHORT_EDIT_SECONDS - length) / SHORT_EDIT_SECONDS
+        elif length <= LONG_SET_SECONDS:
+            # Rises across the whole band, so nine minutes beats five outright
+            # rather than by a rounding error.
+            score += 15 + 35 * min(1.0, (length - SHORT_EDIT_SECONDS) / 360)
+        else:
+            score -= 30             # a whole mix, not a track
+
+    if _EXTENDED_HINT.search(basename):
+        score += 25
+    if _SHORT_HINT.search(basename):
+        score -= 45
+
+    return score
 
 
 def score_candidate(raw_file: Dict[str, Any], user: Dict[str, Any],
@@ -116,6 +204,12 @@ def score_candidate(raw_file: Dict[str, Any], user: Dict[str, Any],
     basename = _normalise(filename.replace("\\", "/").rsplit("/", 1)[-1])
     similarity = SequenceMatcher(None, _normalise(wanted), basename).ratio()
     score += similarity * 60
+
+    # Length. For a DJ this is not a detail: the extended mix is the record and
+    # the radio edit is the thing that ruins a transition. slskd reports the
+    # duration, so a two-minute cut can be turned down before it is downloaded
+    # rather than discovered at the decks.
+    score += _length_score(raw_file.get("length"), basename)
 
     # Availability: a perfect file behind a 40-deep queue is worse than a very
     # good one we can start now.

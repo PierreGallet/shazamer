@@ -26,12 +26,35 @@ REQUIRE_VERIFICATION = os.environ.get("ACQUIRE_REQUIRE_VERIFICATION",
                                       "true").lower() != "false"
 
 
+async def rank_candidates(artist: str, title: str, limit: int = 5,
+                          client: Optional[SlskdClient] = None
+                          ) -> Dict[str, Any]:
+    """Search Soulseek and return the best few, best first.
+
+    Separate from fetching so the choice can be shown before anything is
+    downloaded. That matters more here than in most places: filenames on
+    Soulseek are whatever the uploader typed, and the difference between the
+    extended mix and the radio edit is invisible until someone looks.
+    """
+    client = client or SlskdClient()
+    if not client.configured:
+        raise SlskdError("Soulseek is not configured on this server.")
+
+    candidates = await client.search(search_query(artist, title))
+    return {
+        "query": search_query(artist, title),
+        "candidates": [c.to_dict() for c in candidates[:limit]],
+        "total": len(candidates),
+    }
+
+
 async def acquire_track(library, destination: Path, track_key: str,
                         artist: str, title: str,
                         download_id: int,
                         meta: Optional[Dict[str, Any]] = None,
                         client: Optional[SlskdClient] = None,
-                        identifier=None) -> Dict[str, Any]:
+                        identifier=None,
+                        chosen: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Fetch one track and return the download row.
 
     Every failure is written to the row rather than raised at the caller: the
@@ -49,14 +72,29 @@ async def acquire_track(library, destination: Path, track_key: str,
             await note("failed", "Soulseek is not configured on this server.")
             return await library.get_download(download_id)
 
-        await note("queued", "Searching Soulseek...")
-        candidates = await client.search(search_query(artist, title))
-        if not candidates:
-            await note("failed", "No peer is sharing this one right now. The "
-                                 "pool changes constantly — worth retrying.")
-            return await library.get_download(download_id)
-
-        best = candidates[0]
+        if chosen:
+            # A candidate the user picked from the list. Trusted as their
+            # choice, still verified by fingerprint afterwards like any other.
+            best = Candidate(
+                username=chosen["username"], filename=chosen["full_path"],
+                size=int(chosen.get("size") or 0),
+                extension=(chosen.get("extension") or "").lower(),
+                bitrate=chosen.get("bitrate"), sample_rate=None,
+                bit_depth=None, length=chosen.get("length"),
+                queue_length=int(chosen.get("queue_length") or 0),
+                free_slot=bool(chosen.get("free_slot")),
+                upload_speed=int(chosen.get("upload_speed") or 0),
+                score=float(chosen.get("score") or 0),
+            )
+        else:
+            await note("queued", "Searching Soulseek...")
+            candidates = await client.search(search_query(artist, title))
+            if not candidates:
+                await note("failed",
+                           "No peer is sharing this one right now. The pool "
+                           "changes constantly — worth retrying.")
+                return await library.get_download(download_id)
+            best = candidates[0]
         logger.info("Best candidate for %s - %s: %s from %s",
                     artist, title, best.quality_label, best.username)
         await note("downloading", f"Downloading {best.quality_label}...",

@@ -66,9 +66,9 @@ trap _deploy_finish EXIT
 # stack now mounts a library database and a media store alongside uploads.
 echo ">> Ensuring host state directories"
 mkdir -p /home/sharon/shazamer/{data,media,uploads,tmp,redis,downloads}
-# slskd's own state. `shared` is what this server offers the Soulseek network
-# in return — it starts empty, and an empty share gets you throttled.
-mkdir -p /home/sharon/slskd/{config,downloads,shared}
+# slskd's own state. What it *shares* is shazamer's downloads directory, so
+# the server offers back the tracks it has taken.
+mkdir -p /home/sharon/slskd/{config,downloads}
 
 echo ">> Building shazamer image"
 docker build -t shazamer_app:latest .

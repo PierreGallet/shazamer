@@ -112,7 +112,10 @@ export interface SoulseekCandidate {
   size: number;
   extension: string;
   bitrate: number | null;
+  /** Seconds. The field that separates an extended mix from a radio edit. */
+  length: number | null;
   quality_label: string;
+  duration_label: string;
   lossless: boolean;
   queue_length: number;
   free_slot: boolean;
@@ -306,6 +309,16 @@ export const api = {
     ),
 
   /** Find the best Soulseek match for a track and fetch it. */
+  /** The best few matches, ranked, without downloading anything. */
+  acquireCandidates: (artist: string, title: string) => {
+    const query = new URLSearchParams({ artist, title });
+    return request<{
+      query: string;
+      candidates: SoulseekCandidate[];
+      total: number;
+    }>(`/api/acquire/candidates?${query.toString()}`);
+  },
+
   acquireTrack: (track: {
     key: string;
     artist: string;
@@ -314,6 +327,7 @@ export const api = {
     year?: string;
     album?: string;
     genre?: string;
+    chosen?: SoulseekCandidate;
   }) =>
     request<{ download_id: number; queued: boolean }>("/api/acquire/track", {
       method: "POST",

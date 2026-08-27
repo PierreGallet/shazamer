@@ -1,6 +1,6 @@
-import { Show, createSignal, onCleanup } from "solid-js";
-import type { Download, Track } from "../lib/api";
-import { api } from "../lib/api";
+import { For, Show, createSignal, onCleanup } from "solid-js";
+import type { Download, SoulseekCandidate, Track } from "../lib/api";
+import { api, formatBytes } from "../lib/api";
 
 /**
  * Fetch one track from Soulseek.
@@ -22,6 +22,7 @@ const POLL_MS = 3000;
 
 export default function GetTrack(props: Props) {
   const [download, setDownload] = createSignal<Download | null>(null);
+  const [candidates, setCandidates] = createSignal<SoulseekCandidate[] | null>(null);
   const [error, setError] = createSignal("");
   const [starting, setStarting] = createSignal(false);
   let timer: number | undefined;
@@ -44,8 +45,28 @@ export default function GetTrack(props: Props) {
     timer = window.setTimeout(tick, 500);
   }
 
-  async function start(event: MouseEvent) {
+  /** Search and show what is out there, rather than picking blind. */
+  async function look(event: MouseEvent) {
     event.stopPropagation();
+    setStarting(true);
+    setError("");
+    try {
+      const found = await api.acquireCandidates(
+        props.track.artist, props.track.title);
+      if (found.candidates.length === 0) {
+        setError("Nobody is sharing this right now. The pool changes "
+               + "constantly — worth trying again later.");
+        return;
+      }
+      setCandidates(found.candidates);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Search failed");
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function fetchOne(chosen?: SoulseekCandidate) {
     setStarting(true);
     setError("");
     try {
@@ -57,7 +78,9 @@ export default function GetTrack(props: Props) {
         year: props.track.year,
         album: props.track.album,
         genre: props.track.genre,
+        chosen,
       });
+      setCandidates(null);
       follow(download_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start the fetch");
@@ -87,9 +110,9 @@ export default function GetTrack(props: Props) {
         fallback={
           <button
             class="btn btn-ghost btn-sm"
-            onClick={start}
+            onClick={look}
             disabled={starting()}
-            title="Find the best Soulseek match and fetch it"
+            title="Search Soulseek and show what is out there"
           >
             <Show when={starting()}><span class="spinner" /></Show>
             Get
@@ -120,7 +143,7 @@ export default function GetTrack(props: Props) {
             </Show>
 
             <Show when={current().status === "failed"}>
-              <button class="btn btn-ghost btn-sm" onClick={start}>
+              <button class="btn btn-ghost btn-sm" onClick={look}>
                 Retry
               </button>
               <span class="tiny" style={{ color: "var(--warn)" }}
@@ -130,6 +153,53 @@ export default function GetTrack(props: Props) {
             </Show>
           </div>
         )}
+      </Show>
+
+      <Show when={candidates()}>
+        <div class="candidate-picker" onClick={(e) => e.stopPropagation()}>
+          <div class="row tiny faint">
+            <span>Best matches — the top one is what we would take</span>
+            <div class="spacer" />
+            <button class="btn-icon" onClick={() => setCandidates(null)}
+                    title="Close">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <For each={candidates()!}>
+            {(candidate, index) => (
+              <button
+                class="candidate-row"
+                classList={{ best: index() === 0 }}
+                onClick={() => fetchOne(candidate)}
+                disabled={starting()}
+              >
+                {/* Duration first: it is what separates the extended mix from
+                    the radio edit, and it is the thing most worth checking. */}
+                <span class="chip mono"
+                      classList={{ "chip-accent": (candidate.length ?? 0) > 360 }}>
+                  {candidate.duration_label}
+                </span>
+                <span class="chip"
+                      classList={{ "chip-key": candidate.lossless }}>
+                  {candidate.quality_label}
+                </span>
+                <span class="candidate-name" title={candidate.full_path}>
+                  {candidate.filename}
+                </span>
+                <span class="tiny faint mono">{formatBytes(candidate.size)}</span>
+                <span class="tiny"
+                      classList={{ faint: !candidate.free_slot,
+                                   muted: candidate.free_slot }}>
+                  {candidate.free_slot ? "free" : `queue ${candidate.queue_length}`}
+                </span>
+              </button>
+            )}
+          </For>
+        </div>
       </Show>
 
       <Show when={error()}>

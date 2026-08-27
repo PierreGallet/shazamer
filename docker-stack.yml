@@ -209,10 +209,14 @@ services:
       - type: bind
         source: /home/sharon/slskd/downloads
         target: /downloads
-      # What the server offers back. Read-only: sharing does not mean letting
-      # the network write here.
+      # What the server offers back: the tracks it has fetched. You share what
+      # you take, and it grows with use rather than needing to be curated.
+      # Read-only — sharing does not mean letting the network write here.
+      #
+      # This is why downloads have their own, much longer retention: on the
+      # fortnightly schedule that set audio uses, the share would empty itself.
       - type: bind
-        source: /home/sharon/slskd/shared
+        source: /home/sharon/shazamer/downloads
         target: /shared
         read_only: true
     networks:

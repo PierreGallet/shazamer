@@ -18,21 +18,82 @@ from src.store.library import Library
 pytestmark = pytest.mark.anyio
 
 
-def _file(name, ext="mp3", bitrate=320, size=8_000_000, **user):
+def _file(name, ext="mp3", bitrate=320, size=8_000_000, length=360, **user):
     raw = {"filename": f"@@abc\\Music\\{name}.{ext}", "extension": ext,
-           "size": size, "bitRate": bitrate}
+           "size": size, "bitRate": bitrate, "length": length}
     who = {"username": "peer", "hasFreeUploadSlot": True, "queueLength": 0,
            "uploadSpeed": 500_000, **user}
     return raw, who
 
 
-def test_lossless_beats_a_high_bitrate_mp3():
-    flac, who = _file("Skee Mask - Rev8617", "flac", bitrate=None)
-    mp3, who2 = _file("Skee Mask - Rev8617", "mp3", bitrate=320)
-    a = score_candidate(flac, who, "Skee Mask Rev8617")
-    b = score_candidate(mp3, who2, "Skee Mask Rev8617")
-    assert a.score > b.score
-    assert a.lossless if hasattr(a, "lossless") else a.extension == "flac"
+def _score(name, **kwargs):
+    raw, who = _file(name, **kwargs)
+    candidate = score_candidate(raw, who, "Skee Mask Rev8617")
+    return candidate.score if candidate else None
+
+
+def test_the_default_profile_prefers_what_plays_everywhere():
+    """FLAC does not import into Apple Music and is three times the size.
+
+    The default is `portable` for that reason: a 320 kbps MP3 opens in every
+    DJ application and on every phone. `lossless` is there for anyone pointing
+    this at Rekordbox or Serato.
+    """
+    assert _score("Skee Mask - Rev8617", ext="mp3") > \
+           _score("Skee Mask - Rev8617", ext="flac", bitrate=None)
+
+
+def test_the_lossless_profile_reverses_that(monkeypatch):
+    from src.acquire import slskd
+
+    monkeypatch.setattr(slskd, "_FORMAT_SCORE",
+                        slskd.FORMAT_PROFILES["lossless"])
+    assert _score("Skee Mask - Rev8617", ext="flac", bitrate=None) > \
+           _score("Skee Mask - Rev8617", ext="mp3")
+
+
+def test_the_apple_profile_puts_flac_last(monkeypatch):
+    from src.acquire import slskd
+
+    monkeypatch.setattr(slskd, "_FORMAT_SCORE", slskd.FORMAT_PROFILES["apple"])
+    assert _score("Skee Mask - Rev8617", ext="alac", bitrate=None) > \
+           _score("Skee Mask - Rev8617", ext="flac", bitrate=None)
+    assert _score("Skee Mask - Rev8617", ext="mp3") > \
+           _score("Skee Mask - Rev8617", ext="flac", bitrate=None)
+
+
+def test_an_extended_mix_beats_a_radio_edit_even_in_a_better_format():
+    """The version matters more than the codec.
+
+    A radio edit has no intro to beatmatch into and no outro to mix out of, so
+    it is close to useless at the decks — worse than nothing arriving, because
+    it looks like the job is done.
+    """
+    extended = _score("Skee Mask - Rev8617 (Extended Mix)", ext="mp3", length=480)
+    radio = _score("Skee Mask - Rev8617 (Radio Edit)", ext="flac",
+                   bitrate=None, length=195)
+    assert extended > radio * 1.5, "a radio edit came close to an extended mix"
+
+
+def test_longer_wins_outright_rather_than_by_a_hair():
+    """Shazam often identifies the radio edit, so length cannot be matched
+    against the identified track — it has to be preferred absolutely."""
+    long_version = _score("Skee Mask - Rev8617", length=540)
+    short_version = _score("Skee Mask - Rev8617", length=330)
+    assert long_version - short_version > 15
+
+
+def test_a_whole_mix_is_not_a_track():
+    assert _score("Skee Mask - Rev8617", length=2100) < \
+           _score("Skee Mask - Rev8617", length=420)
+
+
+def test_a_missing_length_is_not_held_against_a_peer():
+    """Plenty of peers report nothing; refusing them discards good files."""
+    unknown = _score("Skee Mask - Rev8617", length=None)
+    known_good = _score("Skee Mask - Rev8617", length=420)
+    known_bad = _score("Skee Mask - Rev8617", length=150)
+    assert known_bad < unknown < known_good
 
 
 def test_a_matching_filename_beats_a_stranger():

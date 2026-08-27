@@ -188,6 +188,29 @@
 }
 .running-pct { font-size: 0.72rem; flex: none; }
 
+.candidate-picker {
+  display: flex; flex-direction: column; gap: 0.25rem;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.6rem; margin-top: 0.4rem;
+}
+.candidate-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto;
+  gap: 0.5rem; align-items: center;
+  padding: 0.35rem 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s;
+}
+.candidate-row:hover:not(:disabled) { background: var(--surface-2); }
+.candidate-row.best { border-color: var(--accent-line); background: var(--accent-soft); }
+.candidate-name {
+  font-size: 0.8rem; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 .get-state {
   display: flex; align-items: center; gap: 0.45rem;
   min-width: 0;

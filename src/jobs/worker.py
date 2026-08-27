@@ -54,7 +54,8 @@ async def enrich_set_job(ctx: Dict[str, Any], set_id: str) -> Dict[str, int]:
 
 async def acquire_track_job(ctx: Dict[str, Any], download_id: int,
                             track_key: str, artist: str, title: str,
-                            meta: Optional[Dict[str, Any]] = None) -> None:
+                            meta: Optional[Dict[str, Any]] = None,
+                            chosen: Optional[Dict[str, Any]] = None) -> None:
     """Fetch one track from Soulseek.
 
     A job because a Soulseek transfer can take an hour: a peer may queue you
@@ -67,7 +68,7 @@ async def acquire_track_job(ctx: Dict[str, Any], download_id: int,
 
     await acquire_track(
         web.library, web.DOWNLOAD_DIR, track_key, artist, title,
-        download_id=download_id, meta=meta,
+        download_id=download_id, meta=meta, chosen=chosen,
         # The same fingerprinter that found the track checks what arrived.
         identifier=ShazamIdentifier(concurrency=1),
     )

@@ -83,6 +83,12 @@ ALLOWED_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".opus", ".aac",
                       ".wma", ".aiff", ".aif", ".webm"}
 CONCURRENCY = int(os.environ.get("SHAZAM_CONCURRENCY", "8"))
 KEEP_AUDIO_DAYS = int(os.environ.get("KEEP_AUDIO_DAYS", "14"))
+# Downloads are kept far longer than set audio, and for a different reason.
+# Set audio is a byproduct — it exists so the waveform can be scrubbed. A
+# downloaded track is a record you went looking for, and on this server it is
+# also what gets shared back to Soulseek in return for what you take. Sweeping
+# it on the same short schedule would empty the share every fortnight.
+KEEP_DOWNLOADS_DAYS = int(os.environ.get("KEEP_DOWNLOADS_DAYS", "180"))
 ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
     "ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8000").split(",")
     if o.strip()]
@@ -91,16 +97,31 @@ library = Library(DATA_DIR / "library.db")
 tasks = TaskManager(TMP_DIR / "tasks")
 
 
-def sweep_media(max_age_days: int) -> int:
-    """Drop set audio older than the retention window.
+def sweep_media(max_age_days: int, downloads_days: Optional[int] = None) -> int:
+    """Drop files past their retention window.
 
-    The audio is kept so the waveform player can seek into it; it is not kept
-    forever. Deleting it leaves the tracklist intact — only playback goes away.
+    Two windows, because two kinds of file. Set audio and uploads are
+    byproducts: they exist so the waveform can be scrubbed, and deleting them
+    leaves the tracklist intact — only playback goes away. A downloaded track
+    is the thing you were after, and here it is also the Soulseek share, so it
+    lives far longer.
     """
-    cutoff = datetime.now().timestamp() - max_age_days * 86400
+    now = datetime.now().timestamp()
+    cutoffs = {
+        MEDIA_DIR: now - max_age_days * 86400,
+        UPLOAD_DIR: now - max_age_days * 86400,
+        DOWNLOAD_DIR: now - (downloads_days if downloads_days is not None
+                             else KEEP_DOWNLOADS_DAYS) * 86400,
+    }
     removed = 0
-    folders = (MEDIA_DIR, UPLOAD_DIR, DOWNLOAD_DIR)
-    for path in [p for folder in folders for p in folder.iterdir()]:
+    for folder, cutoff in cutoffs.items():
+        removed += _sweep_folder(folder, cutoff)
+    return removed
+
+
+def _sweep_folder(folder: Path, cutoff: float) -> int:
+    removed = 0
+    for path in folder.iterdir():
         try:
             if path.is_file() and path.stat().st_mtime < cutoff:
                 path.unlink()
@@ -177,7 +198,7 @@ class SoulseekDownloadRequest(BaseModel):
 
 
 class AcquireRequest(BaseModel):
-    """Fetch a track by name — the app picks the best candidate itself."""
+    """Fetch a track. With no `chosen`, the best-ranked candidate is taken."""
     key: str
     artist: str
     title: str
@@ -185,6 +206,9 @@ class AcquireRequest(BaseModel):
     year: str = ""
     album: str = ""
     genre: str = ""
+    # A candidate the user picked from the ranked list, as returned by
+    # /api/acquire/candidates.
+    chosen: Optional[dict] = None
 
 
 # ── Analysis ─────────────────────────────────────────────────────────────
@@ -773,6 +797,25 @@ async def soulseek_download(request: SoulseekDownloadRequest):
         raise HTTPException(status_code=503, detail=str(exc))
 
 
+@app.get("/api/acquire/candidates")
+async def acquire_candidates(artist: str, title: str,
+                             limit: int = Query(5, ge=1, le=20)):
+    """The best few Soulseek matches, ranked, without downloading anything.
+
+    Shown before fetching because the difference that matters most — extended
+    mix against radio edit — is invisible until someone looks, and a filename
+    on Soulseek is whatever the uploader typed.
+    """
+    from src.acquire.runner import rank_candidates
+
+    if not (artist and title):
+        raise HTTPException(status_code=400, detail="Artist and title required")
+    try:
+        return await rank_candidates(artist, title, limit=limit)
+    except SlskdError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
 @app.post("/api/acquire/track")
 async def acquire_track_endpoint(request: AcquireRequest):
     """Find the best Soulseek match for a track and fetch it.
@@ -797,6 +840,7 @@ async def acquire_track_endpoint(request: AcquireRequest):
             "album": request.album, "genre": request.genre}
     queued = await jobs.enqueue("acquire_track_job", download_id, request.key,
                                 request.artist, request.title, meta,
+                                request.chosen,
                                 job_id=f"acquire:{download_id}")
     if not queued:
         # No queue: do it here rather than refuse. It will not survive a
@@ -806,7 +850,7 @@ async def acquire_track_endpoint(request: AcquireRequest):
 
         asyncio.create_task(acquire_track(
             library, DOWNLOAD_DIR, request.key, request.artist, request.title,
-            download_id=download_id, meta=meta,
+            download_id=download_id, meta=meta, chosen=request.chosen,
             identifier=ShazamIdentifier(concurrency=1)))
 
     return {"download_id": download_id, "queued": queued}
@@ -849,7 +893,7 @@ async def serve_download(download_id: int):
     if not path.exists():
         raise HTTPException(
             status_code=410,
-            detail=f"The file was removed after {KEEP_AUDIO_DAYS} days. "
+            detail=f"The file was removed after {KEEP_DOWNLOADS_DAYS} days. "
                    "Fetch it again if you still want it.")
 
     return FileResponse(path, filename=path.name,
