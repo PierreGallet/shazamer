@@ -117,7 +117,9 @@ services:
       - type: bind
         source: /home/sharon/shazamer/downloads
         target: /app/downloads
-      # Read-only: slskd owns what it writes here, this only collects from it.
+      # Where slskd drops finished transfers. Read-only: slskd owns what it
+      # writes, this only collects from it. The path must match
+      # SLSKD_DOWNLOADS_DIR or the file is fetched and then lost.
       - type: bind
         source: /home/sharon/slskd/downloads
         target: /slskd-downloads
@@ -170,6 +172,60 @@ services:
       restart_policy:
         condition: any
         delay: 5s
+
+  # The Soulseek client. A separate daemon holding the network connection,
+  # driven over its REST API — this app never speaks the protocol itself.
+  #
+  # Off unless SLSKD_SLSK_USERNAME is set: the service starts either way, but
+  # without credentials it cannot log in, and the app hides the feature when
+  # SLSKD_URL is unset.
+  #
+  # Two things about Soulseek that are not optional:
+  #
+  #   * The network refuses two sessions on one account. Running this while a
+  #     desktop client is logged in with the same credentials makes the two
+  #     evict each other in a loop. Give the server its own account.
+  #   * It must share something. A client that only takes is throttled and
+  #     eventually banned — peers check. `shared` below is what it offers, and
+  #     it starts empty, so seed it.
+  slskd:
+    image: slskd/slskd:latest
+    environment:
+      - SLSKD_REMOTE_CONFIGURATION=false
+      - SLSKD_NO_AUTH=false
+      - SLSKD_API_KEYS__shazamer__key=${SLSKD_API_KEY:-}
+      - SLSKD_API_KEYS__shazamer__role=readwrite
+      # The API is reachable from the internal overlay only, so anything on it
+      # is already inside the trust boundary.
+      - SLSKD_API_KEYS__shazamer__cidr=0.0.0.0/0,::/0
+      - SLSKD_SLSK_USERNAME=${SLSKD_SLSK_USERNAME:-}
+      - SLSKD_SLSK_PASSWORD=${SLSKD_SLSK_PASSWORD:-}
+      - SLSKD_SHARED_DIR=/shared
+      - SLSKD_DOWNLOADS_DIR=/downloads
+    volumes:
+      - type: bind
+        source: /home/sharon/slskd/config
+        target: /app
+      - type: bind
+        source: /home/sharon/slskd/downloads
+        target: /downloads
+      # What the server offers back. Read-only: sharing does not mean letting
+      # the network write here.
+      - type: bind
+        source: /home/sharon/slskd/shared
+        target: /shared
+        read_only: true
+    networks:
+      - internal
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+      restart_policy:
+        condition: any
+        delay: 10s
 
 networks:
   traefik:
