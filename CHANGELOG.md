@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0](https://github.com/PierreGallet/shazamer/compare/v0.6.3...v1.0.0) (2026-08-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **api:** endpoints moved. /api/upload and /api/download-url become /api/analyze/upload and /api/analyze/url; polling /api/status/{id} becomes /api/tasks/{id}/events over SSE; /api/recent and /api/view are replaced by /api/sets. Results live in SQLite rather than loose files in outputs/, so tracklists produced before this change do not appear in the library.
+* **core:** MAX_AUDIO_DURATION_SECONDS is gone — there is no duration a set can exceed. DJSetAnalyzer is replaced by core.pipeline.Pipeline.
+
+### Features
+
+* add a track library, acquisition links and DJ exports ([f46deef](https://github.com/PierreGallet/shazamer/commit/f46deef0a431a7682684f20cc873bac5539084e7))
+* **api:** rewrite the API around the streaming pipeline ([a85a6c1](https://github.com/PierreGallet/shazamer/commit/a85a6c1aa4e0a1a7dfd9661847831c7c9c46fe75))
+* **core:** stream audio instead of loading whole sets into memory ([145faac](https://github.com/PierreGallet/shazamer/commit/145faacfa3891991dc352a5e64e066a6d10225f2))
+* **web:** rebuild the interface in TypeScript and SolidJS ([b7439ba](https://github.com/PierreGallet/shazamer/commit/b7439ba4aac7db45762bd2f41ece3a382fe253e1))
+
+
+### Bug Fixes
+
+* **ci:** stop the root-route test depending on a built frontend ([ba771bc](https://github.com/PierreGallet/shazamer/commit/ba771bc958380becfbf48dac2722723a82fc3e53))
+* **core:** reap ffmpeg on EOF instead of killing it ([88d763e](https://github.com/PierreGallet/shazamer/commit/88d763ec203de521da50a002afa5e103d8669e28))
+
+
+### Documentation
+
+* record the memory measurements and the design decisions ([8043f2a](https://github.com/PierreGallet/shazamer/commit/8043f2a7a0bf8264ae6041c58277427e07fdd615))
+
 ## [0.6.3](https://github.com/PierreGallet/shazamer/compare/v0.6.2...v0.6.3) (2026-07-09)
 
 
