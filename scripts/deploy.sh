@@ -70,6 +70,16 @@ mkdir -p /home/sharon/shazamer/{data,media,uploads,tmp,redis,downloads}
 # the server offers back the tracks it has taken.
 mkdir -p /home/sharon/slskd/{config,downloads}
 
+echo ">> Building shazamer image"
+docker build -t shazamer_app:latest .
+
+echo ">> Deploying swarm stack (host/secrets from .env)"
+set -a; . ./.env; set +a
+
+# Written here, after the .env is loaded — not before it. The first version of
+# this sat above the load, read an unset SLSKD_API_KEY, skipped its own
+# condition and wrote nothing, while reporting success. slskd then rejected a
+# key that was never registered.
 # slskd's API key has to be written into its config file. Its environment
 # mapping does not reach dictionary entries, so SLSKD_API_KEYS__name__key
 # looks plausible, is accepted silently, and registers nothing — every request
@@ -99,11 +109,6 @@ if [ -n "${SLSKD_API_KEY:-}" ]; then
   echo ">> slskd API key written to its config"
 fi
 
-echo ">> Building shazamer image"
-docker build -t shazamer_app:latest .
-
-echo ">> Deploying swarm stack (host/secrets from .env)"
-set -a; . ./.env; set +a
 docker stack deploy -c docker-stack.yml shazamer
 
 # `docker stack deploy` exits 0 even when the rebuilt
@@ -124,6 +129,15 @@ for svc in shazamer_app shazamer_worker; do
   echo "   $svc"
   docker service update --force --image shazamer_app:latest "$svc"
 done
+
+# slskd reads its config once, at startup. Writing the API key above changes
+# nothing until it restarts — which `docker stack deploy` will not do, because
+# neither its image nor its service definition changed. The key was correct,
+# written correctly, and still rejected on every call.
+if docker service ls --filter name=shazamer_slskd --format '{{.Name}}' | grep -q .; then
+  echo ">> Restarting slskd so it picks up its config"
+  docker service update --force shazamer_slskd
+fi
 
 echo ">> Done. Current service:"
 docker service ls --filter name=shazamer_app
