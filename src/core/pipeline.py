@@ -107,7 +107,8 @@ class Track:
     genre: str = ""
     isrc: str = ""
     key: str = ""
-    confidence: float = 0.0
+    confidence: float = 0.0         # share of all probes that named this
+    agreement: float = 0.0          # share of *speaking* probes that agreed
     strength: str = "none"          # strong | medium | weak — see Segment
     votes: int = 0
     probes: int = 0
@@ -419,6 +420,7 @@ class Pipeline:
                 isrc=payload.get("isrc", ""),
                 key=seg.key or "",
                 confidence=seg.confidence,
+                agreement=seg.agreement,
                 strength=seg.strength,
                 votes=seg.votes,
                 probes=seg.probes,

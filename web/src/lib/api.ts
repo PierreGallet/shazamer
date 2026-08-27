@@ -25,6 +25,9 @@ export interface Track {
   mbid: string;
   key: string;
   confidence: number;
+  /** Share of the probes that named *something* which agreed. Silence is not
+   *  dissent — fingerprinting fails on breakdowns and unreleased passages. */
+  agreement: number;
   /** How much evidence backs the match, not just how much of it agreed. */
   strength: "strong" | "medium" | "weak" | "none" | "";
   votes: number;

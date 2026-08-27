@@ -169,9 +169,12 @@ export default function TrackList(props: Props) {
                     }}
                     title={
                       track.strength === "weak"
-                        ? `Thin evidence: ${track.votes} of ${track.probes} probes. ` +
-                          "Often a short track, or one sitting across a transition."
-                        : `${track.votes} of ${track.probes} probes agreed`
+                        ? `Thin evidence: ${track.votes} probe(s) named this, ` +
+                          `out of ${track.probes} across the segment. Often a ` +
+                          "short track, or one sitting across a transition."
+                        : `${track.votes} probes named this. Probes that came ` +
+                          "back empty are not counted against it — fingerprinting " +
+                          "fails on breakdowns and unreleased passages."
                     }
                   >
                     {track.strength === "weak" ? "unsure" : "likely"}

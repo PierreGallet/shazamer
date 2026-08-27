@@ -456,3 +456,100 @@ def test_repeated_reports_of_the_same_stage_are_one_entry():
     for _ in range(50):
         timer.enter("identifying")
     assert list(timer.finish()) == ["identifying"]
+
+
+def test_a_gap_between_two_plays_of_the_same_track_is_bridged():
+    """Fingerprinting a mix fails constantly and unevenly.
+
+    A breakdown, a filter sweep, two records overlapping, a passage the
+    database does not have — on a set where a quarter of probes match, that
+    shreds a track into pieces. One Axwell record came back as three
+    thirty-second segments separated by gaps, reading as three separate plays.
+    """
+    key = "axwell::feel the vibe"
+    payload = {"title": "Feel the Vibe", "artist": "Axwell"}
+    probes = [
+        ProbeResult(700, key, payload),
+        ProbeResult(760, None),
+        ProbeResult(820, None),
+        ProbeResult(880, key, payload),
+    ]
+    segments = merge_probes(probes, duration=1000)
+
+    identified = [s for s in segments if s.identified]
+    assert len(identified) == 1, (
+        f"one track came out as {len(identified)} plays: "
+        f"{[(s.start, s.end) for s in identified]}"
+    )
+    assert identified[0].end - identified[0].start > 200
+
+
+def test_a_different_track_in_between_is_not_bridged():
+    """The record really did change; merging would invent a play."""
+    a, b = "a::one", "b::two"
+    probes = [
+        ProbeResult(0, a, {"title": "One", "artist": "A"}),
+        ProbeResult(120, b, {"title": "Two", "artist": "B"}),
+        ProbeResult(240, a, {"title": "One", "artist": "A"}),
+    ]
+    keys = [s.key for s in merge_probes(probes, duration=400)]
+    assert keys == [a, b, a]
+
+
+def test_a_long_silence_is_not_bridged():
+    """Past a few minutes, the same title twice is two plays, not one.
+
+    The cap is on the gap rather than the total span: a segment starts where
+    the previous track ended, which for the first track is the start of the
+    file — so a span-based cap rejects ordinary bridges for reasons that have
+    nothing to do with the music.
+    """
+    key = "a::one"
+    payload = {"title": "One", "artist": "A"}
+    probes = [ProbeResult(600, key, payload)]
+    probes += [ProbeResult(t, None) for t in range(660, 1500, 60)]
+    probes.append(ProbeResult(1560, key, payload))
+
+    identified = [s for s in merge_probes(probes, duration=1700) if s.identified]
+    assert len(identified) == 2, "a fifteen-minute silence was bridged"
+
+
+def test_a_bridge_is_not_refused_just_for_starting_at_the_beginning():
+    """Regression: the first track of a set was never bridged.
+
+    Its segment starts at zero, so any cap measured from the segment start
+    counted the whole file rather than the silence being crossed.
+    """
+    key = "a::one"
+    payload = {"title": "One", "artist": "A"}
+    probes = [ProbeResult(20, key, payload), ProbeResult(80, None),
+              ProbeResult(140, key, payload)]
+
+    identified = [s for s in merge_probes(probes, duration=900) if s.identified]
+    assert len(identified) == 1
+
+
+def test_silence_is_not_dissent():
+    """A probe that came back empty says nothing about whether a track is right.
+
+    Counting it as disagreement makes a track established across seven minutes
+    look contested, when the silence is just fingerprinting failing on a
+    breakdown.
+    """
+    established = Segment(start=0, end=600, key="a::b", payload={},
+                          votes=3, probes=10, matched=3)
+    assert established.agreement == 1.0
+    assert established.strength == "strong"
+
+    contested = Segment(start=0, end=600, key="a::b", payload={},
+                        votes=1, probes=3, matched=3)
+    assert contested.agreement < 0.5
+    assert contested.strength == "weak"
+
+
+def test_confidence_still_reports_how_much_was_recognised():
+    """The two numbers answer different questions and both are worth keeping."""
+    segment = Segment(start=0, end=600, key="a::b", payload={},
+                      votes=3, probes=10, matched=3)
+    assert segment.confidence == 0.3, "confidence should be share of all probes"
+    assert segment.agreement == 1.0, "agreement should be share of those that spoke"

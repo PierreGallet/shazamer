@@ -48,8 +48,9 @@ class Segment:
     end: float
     key: Optional[str] = None
     payload: Optional[dict] = None
-    votes: int = 0
-    probes: int = 0
+    votes: int = 0          # probes that named this track
+    probes: int = 0         # probes attempted anywhere in the segment
+    matched: int = 0        # probes that named *something*
 
     @property
     def duration(self) -> float:
@@ -76,6 +77,24 @@ class Segment:
         return round(self.votes / self.probes, 3)
 
     @property
+    def agreement(self) -> float:
+        """Agreement among the probes that named anything at all.
+
+        Silence is not dissent. A probe that came back empty says nothing about
+        whether the track is right — fingerprinting a mix fails constantly, on
+        breakdowns, filter sweeps and passages the database does not have. So
+        the probes that did speak are what agreement is measured over.
+
+        The distinction matters most where the evidence is thinnest: a track
+        established by three probes across seven minutes, with silence in
+        between, is well established, not contested.
+        """
+        deciding = self.matched or self.votes
+        if deciding <= 0:
+            return 0.0
+        return round(self.votes / deciding, 3)
+
+    @property
     def strength(self) -> str:
         """How much evidence stands behind the match: strong, medium or weak.
 
@@ -86,10 +105,9 @@ class Segment:
         """
         if not self.identified or self.probes <= 0:
             return "none"
-        agreement = self.votes / self.probes
-        if self.votes >= 3 and agreement >= 0.99:
+        if self.votes >= 3 and self.agreement >= 0.99:
             return "strong"
-        if self.votes >= 2 and agreement >= 0.6:
+        if self.votes >= 2 and self.agreement >= 0.6:
             return "medium"
         return "weak"
 
@@ -155,6 +173,17 @@ def refine_boundary(features: FeatureSet, curve: np.ndarray,
     return round(peak / frames_per_second, 3)
 
 
+# The longest silence that may be crossed between two matches of the same
+# track. The measure is the *gap*, not the total span: a segment's start is
+# where the previous track ended, which for the first track is the start of the
+# file, so a span-based cap rejects perfectly ordinary bridges for a reason
+# that has nothing to do with the music.
+#
+# Four minutes covers a long breakdown or a passage the database does not have.
+# Past that, the same title twice is more plausibly two plays.
+MAX_BRIDGE_GAP = 240.0
+
+
 def merge_probes(probes: Sequence[ProbeResult], duration: float,
                  features: Optional[FeatureSet] = None,
                  min_segment: float = 20.0) -> List[Segment]:
@@ -202,9 +231,62 @@ def merge_probes(probes: Sequence[ProbeResult], duration: float,
             payload=payload,
             votes=sum(1 for p in group if p.key == group[0].key),
             probes=len(group),
+            matched=sum(1 for p in group if p.key),
         ))
 
-    return _absorb_slivers(segments, min_segment)
+    return _absorb_slivers(_bridge_gaps(segments), min_segment)
+
+
+def _bridge_gaps(segments: List[Segment]) -> List[Segment]:
+    """Close an unidentified gap when the same track sits on both sides.
+
+    Fingerprinting a mix fails constantly and unevenly: a breakdown, a filter
+    sweep, two records overlapping, a passage the database simply does not
+    have. On a set where only a quarter of probes match, that shreds a track
+    into pieces — one Axwell record came back as three thirty-second segments
+    separated by gaps of one and three minutes, and read as three plays.
+
+    A track heard before a silence and again after it is almost always the same
+    track still playing. Bridging is capped at twelve minutes, past which two
+    matches are more plausibly two separate plays.
+
+    Only *unidentified* gaps are crossed. A different track in between means
+    the record really did change, and merging across that would invent a play
+    that never happened.
+    """
+    if len(segments) < 3:
+        return segments
+
+    out: List[Segment] = [segments[0]]
+    i = 1
+    while i < len(segments):
+        current = segments[i]
+        following = segments[i + 1] if i + 1 < len(segments) else None
+        previous = out[-1]
+
+        bridgeable = (
+            following is not None
+            and not current.identified              # the gap
+            and previous.identified
+            and previous.key == following.key       # same record either side
+            and current.duration <= MAX_BRIDGE_GAP
+        )
+        if bridgeable:
+            previous.end = following.end
+            previous.votes += following.votes
+            # The gap's probes were attempts that found nothing: they count as
+            # attempted, so `confidence` still reports what share of the segment
+            # was actually recognised — but not as disagreement, which is what
+            # `agreement` and `strength` are measured over.
+            previous.probes += current.probes + following.probes
+            previous.matched += following.matched
+            i += 2
+            continue
+
+        out.append(current)
+        i += 1
+
+    return out
 
 
 def _absorb_slivers(segments: List[Segment], min_segment: float) -> List[Segment]:
@@ -261,6 +343,7 @@ def _absorb_slivers(segments: List[Segment], min_segment: float) -> List[Segment
             out[-1].end = seg.end
             out[-1].votes += seg.votes
             out[-1].probes += seg.probes
+            out[-1].matched += seg.matched
             continue
         out.append(seg)
     return out
