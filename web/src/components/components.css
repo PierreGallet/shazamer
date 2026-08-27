@@ -1,0 +1,322 @@
+/* Component styles. Kept together so the cascade is legible in one place:
+   every rule here is class-scoped and none of them fight the tokens. */
+
+/* ── Analyse ────────────────────────────────────────────────────────── */
+.analyze { max-width: 620px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.1rem; }
+.analyze-hero { text-align: center; margin: 2rem 0 0.75rem; }
+.analyze-hero h1 { font-size: 1.9rem; margin-bottom: 0.5rem; }
+.analyze-hero p { margin: 0; font-size: 0.95rem; }
+
+.url-form { display: flex; gap: 0.55rem; }
+.url-form .input { flex: 1; }
+
+.or-line {
+  display: flex; align-items: center; gap: 0.85rem;
+  color: var(--text-faint); font-size: 0.72rem;
+  text-transform: uppercase; letter-spacing: 0.12em;
+}
+.or-line::before, .or-line::after {
+  content: ""; flex: 1; height: 1px; background: var(--line);
+}
+
+.drop {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 2rem 1.25rem;
+  text-align: center;
+  color: var(--text-faint);
+  cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 0.4rem;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.drop:hover, .drop.over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.drop-title { font-weight: 700; font-size: 0.92rem; color: var(--text-dim); }
+.drop:hover .drop-title, .drop.over .drop-title { color: var(--text); }
+
+/* ── Progress ───────────────────────────────────────────────────────── */
+.progress {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.95rem 1.1rem 1rem;
+  display: flex; flex-direction: column; gap: 0.6rem;
+}
+.progress-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 0.85rem; font-weight: 600;
+}
+.progress-track {
+  height: 4px; background: var(--surface-3);
+  border-radius: 2px; overflow: hidden;
+}
+.progress-fill {
+  height: 100%; background: var(--accent); border-radius: 2px;
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.progress-fill.failed { background: var(--crit); }
+.progress-foot { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+
+.stage-track {
+  display: flex; gap: 0.35rem; flex-wrap: wrap;
+  padding-top: 0.5rem; border-top: 1px solid var(--line-soft);
+}
+.stage-dot {
+  font-family: var(--mono); font-size: 0.66rem;
+  padding: 0.16em 0.45em; border-radius: 3px;
+  background: var(--surface-2); color: var(--text-faint);
+}
+.stage-dot.done { color: var(--text-dim); }
+.stage-dot.now { background: var(--accent-soft); color: var(--accent); }
+
+/* ── Waveform ───────────────────────────────────────────────────────── */
+.waveform { position: relative; padding: 0.85rem 0.9rem 0.4rem; }
+.waveform-canvas { display: block; width: 100%; touch-action: none; }
+
+.waveform-tip {
+  position: absolute; bottom: 0; transform: translateX(-50%);
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.55rem;
+  display: flex; flex-direction: column; gap: 0.1rem;
+  pointer-events: none; z-index: 5;
+  box-shadow: var(--shadow);
+  max-width: 280px;
+}
+.waveform-tip-time { font-size: 0.72rem; color: var(--accent); }
+.waveform-tip-track {
+  font-size: 0.74rem; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.waveform-hint {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.15rem 0.1rem 0.3rem;
+  min-height: 38px;
+}
+
+/* ── Player ─────────────────────────────────────────────────────────── */
+.player {
+  display: flex; align-items: center; gap: 0.55rem;
+  padding: 0.65rem 0.9rem;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.player-absent { justify-content: center; text-align: center; padding: 0.9rem; }
+
+.player-play {
+  width: 34px; height: 34px; flex: none;
+  border-radius: 50%;
+  background: var(--accent); color: #fff;
+  display: grid; place-items: center;
+  transition: background 0.14s, transform 0.08s;
+}
+.player-play:hover:not(:disabled) { background: var(--accent-lit); }
+.player-play:active:not(:disabled) { transform: scale(0.94); }
+
+.player-time { font-size: 0.78rem; margin-left: 0.3rem; }
+
+.player-speed {
+  background: var(--surface-3); border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.22rem 0.4rem; font-size: 0.74rem;
+  color: var(--text-dim); cursor: pointer;
+}
+
+.player-volume { display: flex; align-items: center; gap: 0.4rem; color: var(--text-faint); }
+.player-volume input {
+  width: 68px; height: 3px; appearance: none;
+  background: var(--surface-3); border-radius: 2px; cursor: pointer;
+}
+.player-volume input::-webkit-slider-thumb {
+  appearance: none; width: 11px; height: 11px;
+  border-radius: 50%; background: var(--text-dim); cursor: pointer;
+}
+.player-volume input::-moz-range-thumb {
+  width: 11px; height: 11px; border: none;
+  border-radius: 50%; background: var(--text-dim); cursor: pointer;
+}
+
+/* ── Set view ───────────────────────────────────────────────────────── */
+.set-head {
+  display: flex; align-items: flex-start; gap: 1rem;
+  margin-bottom: 1.15rem; flex-wrap: wrap;
+}
+.set-title-block { min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.set-title-block h1 { font-size: 1.35rem; }
+.export-menu { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.set-stage { margin-bottom: 0; }
+
+/* The waveform stays put while the tracklist scrolls under it, so the
+   playhead is always visible and auto-scroll can never hide it. */
+.set-stage-sticky {
+  position: sticky;
+  top: var(--header-h);
+  z-index: 20;
+  background: var(--ground);
+  padding: 0.5rem 0 1rem;
+  margin-top: -0.5rem;
+}
+.set-body { margin-top: 0.5rem; }
+
+/* ── Track list ─────────────────────────────────────────────────────── */
+.tracklist {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+.track-row {
+  display: grid;
+  grid-template-columns: 34px 62px 1fr auto auto;
+  gap: 0 0.85rem;
+  align-items: center;
+  padding: 0.62rem 0.9rem;
+  border-bottom: 1px solid var(--line-soft);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.track-row:last-child { border-bottom: none; }
+.track-row:hover { background: var(--surface-2); }
+.track-row.active {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.track-row.unidentified .track-title { color: var(--text-faint); }
+
+.track-index { font-size: 0.72rem; color: var(--text-faint); text-align: right; }
+.track-row.active .track-index { color: var(--accent); }
+.track-time { font-size: 0.75rem; color: var(--text-faint); }
+.track-row.active .track-time { color: var(--accent-lit); }
+
+.track-body { min-width: 0; }
+.track-title {
+  font-weight: 700; font-size: 0.9rem; line-height: 1.25;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.track-unknown { font-style: italic; font-weight: 600; }
+.track-artist {
+  color: var(--text-dim); margin-top: 0.05rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.track-meta { display: flex; gap: 0.3rem; align-items: center; }
+.track-actions { display: flex; gap: 0.1rem; align-items: center; }
+
+/* ── Acquire ────────────────────────────────────────────────────────── */
+.acquire {
+  padding: 0.9rem 1rem 1rem;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line-soft);
+  display: flex; flex-direction: column; gap: 0.7rem;
+}
+.acquire-head { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+.acquire-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  gap: 0.5rem;
+}
+.acquire-card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 0.6rem 0.7rem;
+  display: flex; flex-direction: column; gap: 0.2rem;
+  text-decoration: none; color: inherit;
+  transition: border-color 0.14s, background 0.14s;
+}
+.acquire-card:hover {
+  border-color: var(--accent-line); background: var(--surface-3);
+  text-decoration: none;
+}
+.acquire-card-top { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; }
+.acquire-name { font-weight: 700; font-size: 0.84rem; }
+
+.acquire-p2p {
+  display: flex; flex-direction: column; gap: 0.55rem;
+  padding-top: 0.6rem; border-top: 1px solid var(--line);
+}
+.candidates { display: flex; flex-direction: column; gap: 0.3rem; }
+.candidate {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto auto;
+  gap: 0.6rem; align-items: center;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+}
+.candidate-file {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-dim);
+}
+
+/* ── Library ────────────────────────────────────────────────────────── */
+.set-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.set-card {
+  display: flex; align-items: center; gap: 1rem;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 0.8rem 1rem;
+  cursor: pointer; transition: border-color 0.14s, background 0.14s;
+}
+.set-card:hover { border-color: var(--accent-line); background: var(--surface-2); }
+.set-card-body { min-width: 0; flex: 1; }
+.set-card-title {
+  font-weight: 700; font-size: 0.92rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-bottom: 0.15rem;
+}
+.set-card-meta { display: flex; align-items: center; gap: 0.7rem; flex: none; }
+
+.coverage {
+  width: 64px; height: 4px; border-radius: 2px;
+  background: var(--surface-3); overflow: hidden;
+}
+.coverage-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+
+.recurring-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.5rem;
+}
+.recurring-card {
+  display: flex; gap: 0.7rem; align-items: flex-start;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 0.7rem 0.8rem;
+}
+.recurring-count {
+  font-size: 1.1rem; font-weight: 700; color: var(--accent);
+  flex: none; line-height: 1.2;
+}
+.recurring-body { min-width: 0; }
+.recurring-title {
+  font-weight: 700; font-size: 0.86rem; line-height: 1.25;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── Crate ──────────────────────────────────────────────────────────── */
+.crate-filters {
+  display: grid;
+  grid-template-columns: minmax(160px, 2fr) repeat(3, minmax(84px, 1fr)) auto;
+  gap: 0.5rem; align-items: center;
+}
+
+/* ── Watches ────────────────────────────────────────────────────────── */
+.watch-entry {
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.4rem 0.55rem;
+  background: var(--surface-2); border-radius: var(--radius-sm);
+  font-size: 0.84rem;
+}
+.watch-entry-title {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .track-row { grid-template-columns: 26px 54px 1fr auto; row-gap: 0.3rem; }
+  .track-actions { grid-column: 4; }
+  .track-meta { grid-column: 3; }
+  .crate-filters { grid-template-columns: 1fr 1fr; }
+  .set-card-meta .coverage { display: none; }
+  .candidate { grid-template-columns: auto 1fr auto; }
+}
