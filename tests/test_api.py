@@ -60,8 +60,27 @@ async def test_health(client):
 
 
 async def test_head_on_root_is_not_a_405(client):
-    """Uptime monitors send HEAD; a 405 there reads as 'site down'."""
-    assert (await client.head("/")).status_code == 200
+    """Uptime monitors send HEAD; a 405 there reads as 'site down'.
+
+    Both outcomes are checked rather than assuming a built frontend: this test
+    must not depend on whether `web/dist` happens to exist, or it passes
+    locally after a build and fails in CI before one.
+    """
+    response = await client.head("/")
+    assert response.status_code != 405, "HEAD must be routed, not rejected"
+
+    if (client.web.FRONTEND_DIST / "index.html").exists():
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 503, "unbuilt frontend should say so"
+
+
+async def test_root_explains_itself_when_the_frontend_is_not_built(client, tmp_path):
+    """A 503 here should tell you what to run, not just fail."""
+    client.web.FRONTEND_DIST = tmp_path / "absent"
+    response = await client.get("/")
+    assert response.status_code == 503
+    assert "npm run build" in response.json()["detail"]
 
 
 @pytest.mark.parametrize("url,detail", [
