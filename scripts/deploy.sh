@@ -7,6 +7,11 @@ set -e
 # one is healthy, then switches; failure_action=rollback reverts a bad build.
 cd "$(dirname "$0")/.."
 
+# Bind mounts fail the whole service if the host path is missing, and the
+# stack now mounts a library database and a media store alongside uploads.
+echo ">> Ensuring host state directories"
+mkdir -p /home/sharon/shazamer/{data,media,uploads,tmp}
+
 echo ">> Building shazamer image"
 docker build -t shazamer_app:latest .
 
