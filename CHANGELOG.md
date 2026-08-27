@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1](https://github.com/PierreGallet/shazamer/compare/v1.3.0...v1.3.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **core:** bound probe extraction, not just identification ([e74f12a](https://github.com/PierreGallet/shazamer/commit/e74f12a15bcae86d58c6db0af2ef1a579c9d8eaa))
+
 ## [1.3.0](https://github.com/PierreGallet/shazamer/compare/v1.2.0...v1.3.0) (2026-08-27)
 
 
