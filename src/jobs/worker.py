@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
+from arq import cron
+
 from .queue import JOB_TIMEOUT, MAX_TRIES, QUEUE_NAME, _redis_settings
 
 logging.basicConfig(level=logging.INFO,
@@ -74,6 +76,27 @@ async def acquire_track_job(ctx: Dict[str, Any], download_id: int,
     )
 
 
+async def check_watches_job(ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Look for new uploads on followed channels, on a schedule.
+
+    Following was a bookmark before this: you had to open the page and press a
+    button, which is the thing following was supposed to save you.
+    """
+    import uuid as _uuid
+
+    from src import web
+    from src.jobs.watches import check_watches
+
+    async def enqueue(url: str) -> bool:
+        task_id = str(_uuid.uuid4())
+        task = web.tasks.create(task_id, filename="From a followed channel",
+                                source_url=url)
+        await web.dispatch(task, "analyze_url_job", task_id, url, None)
+        return True
+
+    return await check_watches(web.library, enqueue)
+
+
 async def startup(ctx: Dict[str, Any]) -> None:
     """Reclaim whatever the previous worker was doing when it died.
 
@@ -116,7 +139,13 @@ async def startup(ctx: Dict[str, Any]) -> None:
 
 class WorkerSettings:
     functions = [analyze_upload_job, analyze_url_job, enrich_set_job,
-                 acquire_track_job]
+                 acquire_track_job, check_watches_job]
+    # Every six hours, offset off the hour so it does not land with everything
+    # else on the machine. `unique` means one worker runs it even if there were
+    # ever several.
+    cron_jobs = [
+        cron(check_watches_job, hour={2, 8, 14, 20}, minute=17, unique=True),
+    ]
     on_startup = startup
     queue_name = QUEUE_NAME
     job_timeout = JOB_TIMEOUT

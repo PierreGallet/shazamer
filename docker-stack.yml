@@ -148,7 +148,9 @@ services:
           # a measurement, not over an estimate — an earlier limit set from a
           # tracemalloc figure was an order of magnitude too low.
           memory: 2G
-          # Where the work actually happens. 4 of the host's 8 cores.
+          # Where the work actually happens. 4 of the host's 8 cores — which
+          # is a ceiling, not a reservation: this box runs several projects and
+          # the analysis gets what is left. Under load it simply takes longer.
           cpus: "4.0"
       restart_policy:
         condition: any
@@ -235,7 +237,11 @@ services:
       resources:
         limits:
           memory: 512M
-          cpus: "1.0"
+          # Deliberately fractional. A client that cannot log in retries in a
+          # tight loop, and on a shared box that loop took a whole core away
+          # from the analysis worker while accomplishing nothing. Capped, the
+          # same failure is merely slow instead of expensive.
+          cpus: "0.5"
       restart_policy:
         condition: any
         delay: 10s
