@@ -1,322 +1,152 @@
 #!/usr/bin/env python3
-import asyncio
+"""Command-line entry point.
+
+Thin wrapper over `core.pipeline` — the CLI and the web API now run exactly the
+same code. The previous version had the web path re-implement boundary
+detection to emit progress, and the copy silently dropped the parameters that
+halved STFT memory, so the deployed path used twice the RAM of the one the
+comments described. A progress callback removes the need for the duplicate.
+"""
+from __future__ import annotations
+
 import argparse
+import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
-import numpy as np
-import librosa
-import soundfile as sf
-from scipy.signal import find_peaks
-from pydub import AudioSegment
-from shazamio import Shazam
-from asyncio_throttle import Throttler
-import logging
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+from src.core.pipeline import AnalyzeConfig, Pipeline
+from src.export import formats as export_formats
+from src.identify.shazam import ShazamIdentifier
+
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-class DJSetAnalyzer:
-    def __init__(self, input_file: str, min_song_duration: int = None,
-                 peak_threshold: float = None, throttle_rate: float = 0.5,
-                 debug: bool = False, target_sr: int = 22050):
-        self.input_file = Path(input_file)
-        self.throttler = Throttler(rate_limit=throttle_rate)
-        self.shazam = Shazam()
-        self.debug = debug
-        self.target_sr = target_sr
 
-        # Store parameters for later auto-adjustment
-        self._min_song_duration_manual = min_song_duration
-        self._peak_threshold_manual = peak_threshold
-        
-    def _auto_adjust_min_duration(self, duration: float) -> int:
-        """Auto-adjust minimum song duration based on audio length"""
-        hours = duration / 3600
-        if hours < 1:
-            return 30
-        elif hours < 2:
-            return 45
-        elif hours < 3:
-            return 60
-        else:
-            return 90
-    
-    def _auto_adjust_threshold(self, duration: float) -> float:
-        """Auto-adjust peak detection threshold based on audio length"""
-        hours = duration / 3600
-        if hours < 1:
-            return 0.30
-        elif hours < 2:
-            return 0.25
-        elif hours < 3:
-            return 0.20
-        else:
-            return 0.15
-        
-    def load_audio(self) -> Tuple[np.ndarray, int]:
-        logger.info(f"Loading audio file: {self.input_file} (target sr={self.target_sr}Hz)")
-        audio_data, sample_rate = librosa.load(
-            str(self.input_file), sr=self.target_sr, mono=True, res_type="soxr_hq"
-        )
-        duration = len(audio_data) / sample_rate
-        logger.info(f"Audio loaded. Duration: {duration:.1f} seconds, Sample rate: {sample_rate}Hz")
-        
-        # Auto-adjust parameters if not manually set
-        self.min_song_duration = self._min_song_duration_manual or self._auto_adjust_min_duration(duration)
-        self.peak_threshold = self._peak_threshold_manual or self._auto_adjust_threshold(duration)
-        
-        logger.info(f"Using parameters: threshold={self.peak_threshold}, min_song_duration={self.min_song_duration}s")
-        
-        return audio_data, sample_rate
-    
-    def detect_song_boundaries(self, audio_data: np.ndarray, sample_rate: int) -> List[int]:
-        logger.info("Detecting song boundaries using spectral analysis...")
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Identify the tracks in a DJ set or long mix.")
+    parser.add_argument("input_file", help="Audio file to analyse")
+    parser.add_argument("-o", "--output",
+                        help="Output path (default: outputs/<name>_tracklist.json)")
+    parser.add_argument("--strategy", choices=["grid", "spectral"], default="grid",
+                        help="grid: probe on a fixed cadence and merge (default, "
+                             "better on beatmatched sets). spectral: detect "
+                             "boundaries first (better on hard-cut compilations).")
+    parser.add_argument("--interval", type=float,
+                        help="Seconds between probes (default: from set length)")
+    parser.add_argument("--concurrency", type=int, default=8,
+                        help="Parallel identification requests (default: 8)")
+    parser.add_argument("--probe-duration", type=float, default=12.0,
+                        help="Seconds per probe; Shazam uses a centred 10s of it")
+    parser.add_argument("--no-musical-features", action="store_true",
+                        help="Skip BPM and key detection (faster)")
+    parser.add_argument("--formats", default="json,txt",
+                        help="Comma-separated: "
+                             + ",".join(export_formats.EXPORTERS))
+    parser.add_argument("--min-song-duration", type=float,
+                        help="[spectral strategy] minimum song length in seconds")
+    parser.add_argument("--threshold", type=float,
+                        help="[spectral strategy] peak sensitivity, 0-1")
+    parser.add_argument("--quiet", action="store_true", help="Suppress progress")
+    return parser
 
-        # n_fft=1024 (default 2048) halves the STFT memory footprint. With sr=22050
-        # the upper freq bin is still ~10 kHz which is plenty for centroid-based
-        # transition detection. Saves ~750 MB peak on a 1h+ audio.
-        spectral_centroid = librosa.feature.spectral_centroid(
-            y=audio_data, sr=sample_rate, n_fft=1024, hop_length=512
-        )[0]
 
-        # Calculate RMS energy
-        rms_energy = librosa.feature.rms(y=audio_data, hop_length=512)[0]
-        
-        # Combine features with normalization
-        spectral_centroid_norm = (spectral_centroid - np.mean(spectral_centroid)) / np.std(spectral_centroid)
-        rms_energy_norm = (rms_energy - np.mean(rms_energy)) / np.std(rms_energy)
-        
-        # Calculate derivative to find rapid changes
-        combined_feature = np.abs(np.gradient(spectral_centroid_norm)) + np.abs(np.gradient(rms_energy_norm))
-        
-        # Smooth the signal
-        from scipy.ndimage import gaussian_filter1d
-        combined_feature_smooth = gaussian_filter1d(combined_feature, sigma=10)
-        
-        # Find peaks (potential song boundaries)
-        # Convert threshold (0-1) to percentile (0-100)
-        percentile_threshold = (1 - self.peak_threshold) * 100
-        peaks, properties = find_peaks(combined_feature_smooth, 
-                                     height=np.percentile(combined_feature_smooth, percentile_threshold),
-                                     distance=int(self.min_song_duration * sample_rate / 512))  # 512 is hop_length default
-        
-        # Convert frame indices to sample indices
-        hop_length = 512
-        boundaries = [0]  # Start of audio
-        for peak in peaks:
-            sample_idx = peak * hop_length
-            boundaries.append(sample_idx)
-        boundaries.append(len(audio_data))  # End of audio
-        
-        # Filter out segments that are too short
-        filtered_boundaries = [boundaries[0]]
-        for i in range(1, len(boundaries)):
-            if (boundaries[i] - filtered_boundaries[-1]) / sample_rate >= self.min_song_duration:
-                filtered_boundaries.append(boundaries[i])
-        
-        # Ensure last boundary is included
-        if filtered_boundaries[-1] != boundaries[-1]:
-            filtered_boundaries[-1] = boundaries[-1]
-        
-        logger.info(f"Detected {len(filtered_boundaries) - 1} potential songs")
-        return filtered_boundaries
-    
-    def save_audio_segment(self, audio_data: np.ndarray, sample_rate: int, 
-                          start_sample: int, end_sample: int, index: int) -> str:
-        # Create tmp directory if it doesn't exist
-        Path("tmp").mkdir(exist_ok=True)
-        
-        segment = audio_data[start_sample:end_sample]
-        output_path = f"tmp/temp_segment_{index}.wav"
-        sf.write(output_path, segment, sample_rate)
-        return output_path
-    
-    async def recognize_segment(self, audio_path: str, start_time: float) -> Optional[Dict]:
-        try:
-            async with self.throttler:
-                logger.info(f"Recognizing segment at {start_time:.1f}s...")
-                result = await self.shazam.recognize(audio_path)
-                
-                # Debug mode: log full response
-                if self.debug and result:
-                    logger.debug(f"Full Shazam response: {json.dumps(result, indent=2)}")
-                    if 'matches' in result:
-                        match_ids = [m.get('id') for m in result.get('matches', []) if m.get('id')]
-                        unique_ids = set(match_ids)
-                        logger.debug(f"Match analysis: {len(match_ids)} total matches, {len(unique_ids)} unique IDs")
-                        if len(match_ids) > len(unique_ids):
-                            logger.debug(f"Found {len(match_ids) - len(unique_ids)} duplicate match IDs")
-                
-                if result and 'track' in result:
-                    # Convert start_time to hh:mm:ss format
-                    hours = int(start_time // 3600)
-                    minutes = int((start_time % 3600) // 60)
-                    seconds = int(start_time % 60)
-                    time_formatted = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-                    
-                    # Check matches array for confidence info
-                    # Count unique match IDs to avoid counting duplicates
-                    matches = result.get('matches', [])
-                    unique_match_ids = set(match.get('id') for match in matches if match.get('id'))
-                    match_count = len(unique_match_ids)
-                    
-                    track_info = {
-                        'title': result['track'].get('title', 'Unknown'),
-                        'artist': result['track'].get('subtitle', 'Unknown'),
-                        'start_time': time_formatted,
-                        'start_time_seconds': start_time,
-                        'shazam_url': result['track'].get('url', ''),
-                        'match_count': match_count
-                    }
-                    
-                    # Log with confidence indicator based on match count
-                    if match_count <= 5:
-                        confidence = "high confidence"
-                    elif match_count <= 15:
-                        confidence = "medium confidence"
-                    else:
-                        confidence = "low confidence"
-                    
-                    logger.info(f"Found: {track_info['artist']} - {track_info['title']} ({match_count} matches, {confidence})")
-                    
-                    return track_info
-                else:
-                    logger.warning(f"No match found for segment at {start_time:.1f}s")
-                    return None
-        except Exception as e:
-            logger.error(f"Error recognizing segment at {start_time:.1f}s: {e}")
-            return None
-    
-    async def analyze(self) -> List[Dict]:
-        loop = asyncio.get_running_loop()
+async def main() -> int:
+    args = build_parser().parse_args()
 
-        # Load audio (CPU-bound, offload to thread so we don't block FastAPI)
-        audio_data, sample_rate = await loop.run_in_executor(None, self.load_audio)
+    source = Path(args.input_file)
+    if not source.exists():
+        logger.error("File not found: %s", source)
+        return 1
 
-        # Detect song boundaries (CPU-bound: STFT + peak detection)
-        boundaries = await loop.run_in_executor(
-            None, self.detect_song_boundaries, audio_data, sample_rate
-        )
-
-        # Process each segment
-        results = []
-        temp_files = []
-
-        try:
-            logger.info(f"Processing {len(boundaries) - 1} segments...")
-
-            for i in range(len(boundaries) - 1):
-                start_sample = boundaries[i]
-                end_sample = boundaries[i + 1]
-                start_time = start_sample / sample_rate
-
-                # Save segment to temporary file (disk I/O, offload)
-                temp_file = await loop.run_in_executor(
-                    None, self.save_audio_segment,
-                    audio_data, sample_rate, start_sample, end_sample, i,
-                )
-                temp_files.append(temp_file)
-
-                # Recognize the segment
-                track_info = await self.recognize_segment(temp_file, start_time)
-                if track_info:
-                    results.append(track_info)
-
-                # Progress update
-                if (i + 1) % 10 == 0:
-                    logger.info(f"Progress: {i + 1}/{len(boundaries) - 1} segments processed")
-
-        finally:
-            # Clean up temporary files even if an error occurs
-            logger.info("Cleaning up temporary files...")
-            for temp_file in temp_files:
-                Path(temp_file).unlink(missing_ok=True)
-
-        return results
-
-async def main():
-    parser = argparse.ArgumentParser(description='Analyze DJ sets and identify tracks using Shazam')
-    parser.add_argument('input_file', help='Path to the audio file (DJ set or playlist)')
-    parser.add_argument('-o', '--output', help='Output file for the tracklist (default: outputs/<input_filename>_tracklist.json)')
-    parser.add_argument('--min-song-duration', type=int, 
-                       help='Minimum song duration in seconds (default: auto-adjusted based on audio length)')
-    parser.add_argument('--threshold', type=float,
-                       help='Peak detection threshold (0-1, default: auto-adjusted based on audio length)')
-    parser.add_argument('--debug', action='store_true',
-                       help='Enable debug mode to see full Shazam responses')
-    
-    args = parser.parse_args()
-    
-    if not Path(args.input_file).exists():
-        logger.error(f"Input file not found: {args.input_file}")
-        sys.exit(1)
-    
-    analyzer = DJSetAnalyzer(
-        args.input_file,
+    config = AnalyzeConfig(
+        strategy=args.strategy,
+        probe_interval=args.interval,
+        probe_duration=args.probe_duration,
+        concurrency=args.concurrency,
+        compute_musical_features=not args.no_musical_features,
         min_song_duration=args.min_song_duration,
         peak_threshold=args.threshold,
-        debug=args.debug
     )
-    
-    try:
-        logger.info("Starting analysis...")
-        results = await analyzer.analyze()
-        
-        # Deduplicate tracks based on title and artist
-        seen_tracks = set()
-        deduplicated_results = []
-        for track in results:
-            track_key = f"{track['artist'].lower()}_{track['title'].lower()}"
-            if track_key not in seen_tracks:
-                seen_tracks.add(track_key)
-                deduplicated_results.append(track)
-        
-        logger.info(f"Deduplication: {len(results)} tracks reduced to {len(deduplicated_results)} unique tracks")
-        
-        # Determine output path
-        if args.output:
-            output_path = Path(args.output)
+    pipeline = Pipeline(ShazamIdentifier(concurrency=args.concurrency), config)
+
+    last = [-1]
+
+    def on_progress(stage: str, pct: int, message: str) -> None:
+        if args.quiet or pct == last[0]:
+            return
+        last[0] = pct
+        sys.stderr.write(f"\r\033[K[{pct:3d}%] {message}")
+        sys.stderr.flush()
+
+    result = await pipeline.run(str(source), on_progress=on_progress)
+    if not args.quiet:
+        sys.stderr.write("\n")
+
+    payload = result.to_dict()
+    base = Path(args.output).with_suffix("") if args.output else \
+        _unique_base(Path("outputs") / f"{source.stem}_tracklist")
+
+    written = []
+    for fmt in [f.strip() for f in args.formats.split(",") if f.strip()]:
+        if fmt not in export_formats.EXPORTERS:
+            logger.warning("Unknown format %r, skipping", fmt)
+            continue
+        fn, _, ext = export_formats.EXPORTERS[fmt]
+        if fmt == "rekordbox":
+            body = fn(payload, source.stem, audio_path=str(source.resolve()))
+        elif fmt == "m3u":
+            body = fn(payload, source.stem)
         else:
-            # Use input filename as base for output
-            input_basename = Path(args.input_file).stem
-            base_output_path = Path(f"outputs/{input_basename}_tracklist.json")
-            
-            # Check if file exists and add suffix if needed
-            output_path = base_output_path
-            counter = 1
-            while output_path.exists():
-                output_path = Path(f"outputs/{input_basename}_tracklist({counter}).json")
-                counter += 1
-        
-        # Create output directory if it doesn't exist
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Save results in JSON format
-        with open(output_path, 'w') as f:
-            json.dump(deduplicated_results, f, indent=2)
-        
-        # Save results in TXT format
-        txt_output = str(output_path).replace('.json', '.txt')
-        with open(txt_output, 'w') as f:
-            for track in deduplicated_results:
-                confidence = f" [{track['match_count']} matches]" if 'match_count' in track else ""
-                f.write(f"{track['start_time']} - {track['title']} - {track['artist']}{confidence}\n")
-        
-        # Print summary
-        print(f"\nAnalysis complete! Found {len(deduplicated_results)} unique tracks:")
-        print("-" * 80)
-        for track in deduplicated_results:
-            print(f"[{track['start_time']}] {track['artist']} - {track['title']}")
-        print("-" * 80)
-        print(f"\nFull tracklist saved to:")
-        print(f"  JSON: {output_path}")
-        print(f"  TXT: {txt_output}")
-        
-    except Exception as e:
-        logger.error(f"Analysis failed: {e}")
-        sys.exit(1)
+            body = fn(payload)
+        path = base.with_suffix(f".{ext}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        written.append(path)
+
+    _print_summary(result, written)
+    return 0
+
+
+def _unique_base(base: Path) -> Path:
+    if not any(base.with_suffix(f".{e}").exists()
+               for _, _, e in export_formats.EXPORTERS.values()):
+        return base
+    counter = 1
+    while True:
+        candidate = base.with_name(f"{base.name}({counter})")
+        if not any(candidate.with_suffix(f".{e}").exists()
+                   for _, _, e in export_formats.EXPORTERS.values()):
+            return candidate
+        counter += 1
+
+
+def _print_summary(result, written) -> None:
+    stats = result.stats
+    print(f"\n{stats['identified']} tracks identified "
+          f"({stats['unidentified']} unidentified) across "
+          f"{stats['segments']} segments — "
+          f"{stats['coverage'] * 100:.0f}% of the set covered, "
+          f"in {stats['elapsed_seconds']:.0f}s")
+    print("-" * 78)
+    for track in result.tracks:
+        if not track.identified:
+            print(f"[{track.start_label}] ID ?")
+            continue
+        extras = []
+        if track.bpm:
+            extras.append(f"{track.bpm:.0f}")
+        if track.camelot:
+            extras.append(track.camelot)
+        tail = f"  ({' · '.join(extras)})" if extras else ""
+        print(f"[{track.start_label}] {track.artist} — {track.title}{tail}")
+    print("-" * 78)
+    for path in written:
+        print(f"  {path}")
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))
