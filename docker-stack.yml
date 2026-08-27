@@ -48,10 +48,19 @@ services:
         - "traefik.http.services.shazamer.loadbalancer.server.port=8000"
       resources:
         limits:
-          # Was 6G to survive one-shot STFT of a whole set. The pipeline now
-          # streams: peak was measured at 24 MB and is flat with duration, so
-          # 1G is generous. The duration cap is gone with it.
-          memory: 1G
+          # Was 6G to survive the one-shot STFT of a whole set. The pipeline
+          # streams now — feature extraction was measured at 24 MB, flat with
+          # duration — so this was cut to 1G. That proved too tight: the
+          # measurement covered decoding only, and probe extraction was
+          # spawning one ffmpeg per probe with no bound, which scales with set
+          # length. A long set opened hundreds at once and the container was
+          # OOM-killed.
+          #
+          # Extraction is bounded now, so the ceiling is roughly the Python
+          # process plus `concurrency` ffmpeg processes — a few hundred MB.
+          # 2G is deliberate headroom over that estimate rather than a measured
+          # peak; the estimate has been wrong once already.
+          memory: 2G
           # Eight parallel probes plus BPM/key detection actually use CPU now.
           cpus: "3.0"
       update_config:

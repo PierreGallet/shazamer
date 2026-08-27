@@ -197,20 +197,31 @@ class Pipeline:
 
     async def _run_probes(self, path: str, times: List[float],
                           report: ProgressFn) -> List[ProbeResult]:
-        """Fingerprint every probe position concurrently.
+        """Fingerprint every probe position, a bounded number at a time.
 
-        Concurrency lives in the identifier's semaphore; this gathers, tracks
-        completion and reports progress as results land.
+        The bound covers **extraction as well as identification**, which is the
+        whole point. The identifier has its own semaphore, but it only guards
+        the HTTP call — so gathering over every probe spawned one ffmpeg per
+        probe up front, all of them alive at once while they queued for a slot.
+
+        That scales with set length, which is exactly the wrong thing: a 30
+        minute set opens ~95 processes and survives, a three hour set opens
+        ~430 and the container is killed. Bounding here keeps the process count
+        flat regardless of duration, matching what the streaming decode already
+        does for memory.
         """
         total = len(times) or 1
         done = 0
         lock = asyncio.Lock()
+        slots = asyncio.Semaphore(self.config.concurrency)
 
         async def one(t: float) -> ProbeResult:
             nonlocal done
             try:
-                wav = await audio_io.extract_probe(path, t, self.config.probe_duration)
-                match = await self.identifier.identify(wav)
+                async with slots:
+                    wav = await audio_io.extract_probe(
+                        path, t, self.config.probe_duration)
+                    match = await self.identifier.identify(wav)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

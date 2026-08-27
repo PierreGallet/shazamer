@@ -1,4 +1,6 @@
 """Segmentation, merging and the parallelism that makes analysis fast."""
+import asyncio
+
 import pytest
 
 from src.core.pipeline import AnalyzeConfig, Pipeline, format_timestamp
@@ -168,3 +170,81 @@ def test_merge_keeps_a_genuine_short_interlude():
     ]
     segments = merge_probes(probes, duration=100, min_segment=25)
     assert [s.key for s in segments] == ["a::x", "i::interlude", "b::y"]
+
+
+async def test_probe_extraction_is_bounded_not_just_identification(
+    synthetic_set, stub_identifier, monkeypatch,
+):
+    """Regression: ffmpeg processes must not scale with set length.
+
+    The identifier's semaphore only guards its HTTP call, so gathering over
+    every probe used to spawn one ffmpeg per probe immediately — all alive at
+    once while they queued for a slot. A 30 minute set opened ~95 processes
+    and survived; a three hour set opened ~430 and the container was
+    OOM-killed in production.
+
+    What matters is the count of *concurrent extractions*, so that is what is
+    measured here rather than the identifier's own concurrency.
+    """
+    import src.core.audio as audio_io
+
+    concurrent = 0
+    peak = 0
+
+    async def counting_probe(path, start, duration=12.0):
+        nonlocal concurrent, peak
+        concurrent += 1
+        peak = max(peak, concurrent)
+        try:
+            await asyncio.sleep(0.02)
+            return f"T={start:<28.3f}".encode()[:30]
+        finally:
+            concurrent -= 1
+
+    monkeypatch.setattr(audio_io, "extract_probe", counting_probe)
+
+    limit = 4
+    await Pipeline(
+        stub_identifier,
+        AnalyzeConfig(probe_interval=4.0, concurrency=limit,
+                      compute_musical_features=False),
+    ).run(synthetic_set["path"])
+
+    assert stub_identifier.calls > limit, "not enough probes to prove anything"
+    assert peak <= limit, (
+        f"{peak} extractions ran at once with concurrency={limit} — "
+        "ffmpeg spawning is unbounded again"
+    )
+
+
+async def test_musical_feature_extraction_is_bounded_too(synthetic_set,
+                                                         stub_identifier,
+                                                         monkeypatch):
+    """The BPM/key pass opens its own ffmpeg per track; bound that as well."""
+    import src.core.audio as audio_io
+
+    concurrent = 0
+    peak = 0
+    real = audio_io.extract_pcm
+
+    async def counting_pcm(path, start, duration, sample_rate=22050):
+        nonlocal concurrent, peak
+        concurrent += 1
+        peak = max(peak, concurrent)
+        try:
+            return await real(path, start, duration, sample_rate)
+        finally:
+            concurrent -= 1
+
+    monkeypatch.setattr(audio_io, "extract_pcm", counting_pcm)
+
+    limit = 4
+    await Pipeline(
+        stub_identifier,
+        AnalyzeConfig(probe_interval=10.0, concurrency=limit,
+                      compute_musical_features=True),
+    ).run(synthetic_set["path"])
+
+    assert peak <= max(2, limit // 2), (
+        f"{peak} PCM extractions ran at once — the BPM/key pass is unbounded"
+    )
