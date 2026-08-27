@@ -131,6 +131,11 @@ async def main() -> int:
     parser.add_argument("--db", default="data/library.db", help="Library path")
     parser.add_argument("--dry-run", action="store_true",
                         help="Report what would be imported, write nothing")
+    parser.add_argument("--min-tracks", type=int, default=1, metavar="N",
+                        help="Skip sets with fewer than N tracks. Directories "
+                             "that doubled as a scratchpad accumulate one-track "
+                             "results from testing; raising this keeps them out "
+                             "of the library (default: 1, import everything)")
     args = parser.parse_args()
 
     source = Path(args.source)
@@ -147,12 +152,16 @@ async def main() -> int:
     library = None if args.dry_run else Library(Path(args.db))
 
     imported = tracks_total = 0
+    too_small: List[str] = []
     for path in files:
         payload = convert(path)
         if payload is None:
             continue
         title = title_for(path)
         count = len(payload["tracks"])
+        if count < args.min_tracks:
+            too_small.append(f"{title[:50]} ({count})")
+            continue
         stamp = datetime.fromtimestamp(
             path.stat().st_mtime, tz=timezone.utc).isoformat(timespec="seconds")
 
@@ -166,6 +175,13 @@ async def main() -> int:
             )
         imported += 1
         tracks_total += count
+
+    if too_small:
+        print(f"\n{len(too_small)} set(s) below --min-tracks {args.min_tracks}, "
+              f"left out:")
+        for item in too_small:
+            print(f"  · {item}")
+        print("  Re-run with --min-tracks 1 to bring them in.")
 
     print(f"\n{imported} set(s), {tracks_total} tracks "
           f"{'would be imported' if args.dry_run else 'imported'}")
