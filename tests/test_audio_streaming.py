@@ -112,3 +112,26 @@ async def test_waveform_peaks_are_normalised(synthetic_set):
     assert len(peaks) == 400
     assert all(0.0 <= p <= 1.0 for p in peaks)
     assert max(peaks) == pytest.approx(1.0)
+
+
+async def test_stream_survives_a_slow_consumer(synthetic_set):
+    """ffmpeg must be reaped, not killed, once stdout reaches EOF.
+
+    Regression: the generator killed the process whenever `returncode` was
+    still None at the end of the read loop. On a fast machine ffmpeg had
+    already exited and nothing happened; on a slower one it had not, so a
+    successful decode was killed and its 255 reported as a decoding failure.
+    """
+    blocks = 0
+    async for _ in stream_blocks(synthetic_set["path"]):
+        blocks += 1
+        await asyncio.sleep(0.05)   # let ffmpeg finish well before we do
+    assert blocks > 1
+
+
+async def test_abandoning_the_stream_early_does_not_raise(synthetic_set):
+    """Walking away mid-decode is a legitimate thing for a caller to do."""
+    generator = stream_blocks(synthetic_set["path"])
+    first = await generator.__anext__()
+    assert first.size > 0
+    await generator.aclose()        # must not surface a kill as an error

@@ -121,6 +121,12 @@ async def stream_blocks(
             stderr_chunks.append(chunk)
 
     drainer = asyncio.create_task(drain_stderr())
+
+    # Whether stdout reached EOF, as opposed to the consumer walking away.
+    # The distinction decides both how the process is reaped and whether a
+    # non-zero exit means anything: killing ffmpeg because the caller stopped
+    # reading is not a decoding failure.
+    drained_to_eof = False
     try:
         while True:
             # readexactly raises IncompleteReadError on the final short block,
@@ -129,20 +135,26 @@ async def stream_blocks(
                 raw = await proc.stdout.readexactly(block_bytes)
             except asyncio.IncompleteReadError as exc:
                 raw = exc.partial
+                drained_to_eof = True
                 if raw:
                     yield np.frombuffer(raw, dtype=np.float32)
                 break
             yield np.frombuffer(raw, dtype=np.float32)
     finally:
-        if proc.returncode is None:
+        if not drained_to_eof and proc.returncode is None:
+            # Abandoned early — stop ffmpeg rather than leave it writing into
+            # a pipe nobody reads.
             try:
                 proc.kill()
             except ProcessLookupError:
                 pass
+        # On EOF, wait rather than kill. ffmpeg has closed stdout but may not
+        # have exited yet; killing it here raced the normal exit and turned a
+        # successful decode into a 255 on slower machines.
         await proc.wait()
         await drainer
 
-    if proc.returncode not in (0, None):
+    if drained_to_eof and proc.returncode != 0:
         tail = b"".join(stderr_chunks).decode(errors="replace").strip()
         raise FFmpegError(f"ffmpeg failed decoding {path}: {tail[-500:]}")
 
