@@ -34,10 +34,19 @@ services:
     networks:
       - traefik
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()"]
+      # See scripts/healthcheck.py: a raw socket under `python -S`, kept in a
+      # file so no CRLF has to survive YAML and a shell. It costs a third of
+      # the urllib version it replaced, which timed out under normal load and
+      # had Swarm killing healthy containers mid-analysis.
+      #
+      # The tolerance matches what this service actually does. Analysis is
+      # CPU-bound by design, so a probe that is merely slow is not evidence of
+      # a sick process — only sustained silence is. 20s x 5 means roughly two
+      # minutes of genuine unresponsiveness before the container is replaced.
+      test: ["CMD", "python", "-S", "/app/healthcheck.py"]
       interval: 30s
-      timeout: 10s
-      retries: 3
+      timeout: 20s
+      retries: 5
       start_period: 120s
     deploy:
       replicas: 1
@@ -62,7 +71,8 @@ services:
           # peak; the estimate has been wrong once already.
           memory: 2G
           # Eight parallel probes plus BPM/key detection actually use CPU now.
-          cpus: "3.0"
+          # 4 of the host's 8, leaving half for the other services on the box.
+          cpus: "4.0"
       update_config:
         order: start-first
         failure_action: rollback

@@ -34,6 +34,7 @@ RUN uv pip install --system -r requirements.txt
 COPY src/ ./src/
 # Read at runtime by /api/health, so the deployed version is knowable.
 COPY .release-please-manifest.json ./
+COPY scripts/healthcheck.py ./
 COPY --from=web /web/dist ./web/dist
 
 # uploads/media hold audio; data holds the SQLite library; tmp holds task state.
@@ -41,7 +42,10 @@ RUN mkdir -p uploads media data tmp
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD python -c "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health').read()"
+# Cheap probe: a raw socket under `python -S` skips urllib and site imports,
+# which cost more than the request itself and are paid from the same CPU quota
+# the analysis is using. Tolerances match docker-stack.yml.
+HEALTHCHECK --interval=30s --timeout=20s --start-period=40s --retries=5 \
+  CMD ["python", "-S", "/app/healthcheck.py"]
 
 CMD ["python", "-m", "uvicorn", "src.web:app", "--host", "0.0.0.0", "--port", "8000"]
