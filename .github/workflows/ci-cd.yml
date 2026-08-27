@@ -199,6 +199,12 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          # Soulseek. Optional — absent secrets write empty values, which is
+          # exactly how the feature stays switched off.
+          SLSKD_URL: ${{ secrets.SLSKD_URL }}
+          SLSKD_API_KEY: ${{ secrets.SLSKD_API_KEY }}
+          SLSKD_SLSK_USERNAME: ${{ secrets.SLSKD_SLSK_USERNAME }}
+          SLSKD_SLSK_PASSWORD: ${{ secrets.SLSKD_SLSK_PASSWORD }}
         run: |
           HOST=$(echo $SSH_HOST | cut -d':' -f1)
           PORT=$(echo $SSH_HOST | grep -o ':[0-9]*' | cut -d':' -f2 || echo "22")
@@ -218,7 +224,17 @@ jobs:
           # key — was silently wiped by the next deploy. Anything CI does not
           # manage is now left alone, so the server .env is a place secrets can
           # actually live.
-          printf 'PYTHON_ENV=Production\nSENTRY_DSN=%s\n' "$SENTRY_DSN" \
+          # Only non-empty secrets are written, so an unset one leaves whatever
+          # is already on the server rather than blanking it.
+          {
+            printf 'PYTHON_ENV=Production\n'
+            printf 'SENTRY_DSN=%s\n' "$SENTRY_DSN"
+            [ -n "$SLSKD_URL" ] && printf 'SLSKD_URL=%s\n' "$SLSKD_URL"
+            [ -n "$SLSKD_API_KEY" ] && printf 'SLSKD_API_KEY=%s\n' "$SLSKD_API_KEY"
+            [ -n "$SLSKD_SLSK_USERNAME" ] && printf 'SLSKD_SLSK_USERNAME=%s\n' "$SLSKD_SLSK_USERNAME"
+            [ -n "$SLSKD_SLSK_PASSWORD" ] && printf 'SLSKD_SLSK_PASSWORD=%s\n' "$SLSKD_SLSK_PASSWORD"
+            true
+          } \
             | ssh -p $PORT $SSH_USER@$HOST "
               set -e
               cd $DEPLOY_PATH
