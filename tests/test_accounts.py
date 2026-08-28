@@ -1,0 +1,326 @@
+"""Accounts, sessions, and the compartmentalisation they exist for.
+
+The tests that matter here are the ones about *not* seeing things: a bug in
+scoping does not crash, it quietly shows one person another person's library.
+"""
+import pytest
+
+from src.store.accounts import (Accounts, MAX_CODE_ATTEMPTS, looks_like_email,
+                                normalise_email)
+from src.store.library import Library
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture
+def accounts(tmp_path):
+    return Accounts(tmp_path / "accounts.db")
+
+
+@pytest.fixture
+def library(tmp_path):
+    return Library(tmp_path / "library.db")
+
+
+def _set(title="Set"):
+    return {"duration": 60.0, "waveform": [], "stats": {},
+            "tracks": [{"index": 1, "start": 0, "end": 60, "identified": True,
+                        "key": "a::x", "title": "X", "artist": "A"}]}
+
+
+# ── Codes ────────────────────────────────────────────────────────────────
+
+async def test_a_correct_code_creates_the_account(accounts):
+    code = await accounts.start_login("Pierre@Example.COM ")
+    user = await accounts.verify_login("pierre@example.com", code)
+    assert user is not None
+    assert user["email"] == "pierre@example.com", "address should be normalised"
+
+
+async def test_a_code_works_once(accounts):
+    code = await accounts.start_login("a@b.com")
+    assert await accounts.verify_login("a@b.com", code) is not None
+    assert await accounts.verify_login("a@b.com", code) is None, (
+        "a code that still works after use is a code someone can replay")
+
+
+async def test_a_wrong_code_is_refused_and_counted(accounts):
+    await accounts.start_login("a@b.com")
+    for _ in range(MAX_CODE_ATTEMPTS):
+        assert await accounts.verify_login("a@b.com", "000000") is None
+
+    # The real code must now be dead too: otherwise the attempt limit only
+    # slows guessing down rather than stopping it.
+    assert await accounts.verify_login("a@b.com", "111111") is None
+
+
+async def test_asking_twice_in_a_row_does_not_send_a_second_code(accounts):
+    """Otherwise a mistyped address is a way to flood someone's inbox."""
+    first = await accounts.start_login("a@b.com")
+    assert first is not None
+    assert await accounts.start_login("a@b.com") is None
+
+
+async def test_verifying_without_asking_fails(accounts):
+    assert await accounts.verify_login("nobody@b.com", "123456") is None
+
+
+def test_email_normalisation_does_not_merge_distinct_people():
+    """No Gmail-specific folding: elsewhere those are different mailboxes."""
+    assert normalise_email("  A.B+tag@Example.com ") == "a.b+tag@example.com"
+    assert normalise_email("a.b@example.com") != normalise_email("ab@example.com")
+
+
+def test_obviously_bad_addresses_are_rejected():
+    for bad in ("", "nope", "a@b", "a b@c.com", "@b.com", "a@.com"):
+        assert not looks_like_email(bad), bad
+    assert looks_like_email("a@b.com")
+
+
+# ── Sessions ─────────────────────────────────────────────────────────────
+
+async def test_a_session_identifies_its_user(accounts):
+    code = await accounts.start_login("a@b.com")
+    user = await accounts.verify_login("a@b.com", code)
+    token = await accounts.create_session(user["id"])
+
+    seen = await accounts.user_for_session(token)
+    assert seen is not None and seen["id"] == user["id"]
+
+
+async def test_a_forged_or_ended_session_identifies_nobody(accounts):
+    code = await accounts.start_login("a@b.com")
+    user = await accounts.verify_login("a@b.com", code)
+    token = await accounts.create_session(user["id"])
+
+    assert await accounts.user_for_session("not-a-real-token") is None
+    assert await accounts.user_for_session("") is None
+
+    await accounts.end_session(token)
+    assert await accounts.user_for_session(token) is None
+
+
+async def test_the_token_is_not_stored(accounts, tmp_path):
+    """Read access to the database must not be enough to mint a session."""
+    import sqlite3
+
+    code = await accounts.start_login("a@b.com")
+    user = await accounts.verify_login("a@b.com", code)
+    token = await accounts.create_session(user["id"])
+
+    rows = sqlite3.connect(tmp_path / "accounts.db").execute(
+        "SELECT token_hash FROM sessions").fetchall()
+    assert rows and all(token not in str(r) for r in rows)
+
+
+async def test_signing_out_everywhere_ends_every_session(accounts):
+    code = await accounts.start_login("a@b.com")
+    user = await accounts.verify_login("a@b.com", code)
+    tokens = [await accounts.create_session(user["id"]) for _ in range(3)]
+
+    assert await accounts.end_all_sessions(user["id"]) == 3
+    for token in tokens:
+        assert await accounts.user_for_session(token) is None
+
+
+# ── Compartmentalisation ─────────────────────────────────────────────────
+
+async def test_one_account_does_not_see_another_s_sets(library):
+    await library.save_set("s1", "Mine", _set(), user_id="alice")
+    await library.save_set("s2", "Theirs", _set(), user_id="bob")
+
+    mine = await library.list_sets(user_id="alice")
+    assert [s["id"] for s in mine] == ["s1"]
+    assert await library.get_set("s2", user_id="alice") is None, (
+        "one account could read another's set by knowing its id")
+
+
+async def test_a_set_cannot_be_deleted_by_someone_else(library):
+    await library.save_set("s1", "Theirs", _set(), user_id="bob")
+    assert await library.delete_set("s1", user_id="alice") is False
+    assert await library.get_set("s1", user_id="bob") is not None
+
+
+async def test_two_accounts_can_star_the_same_track(library):
+    """The crate keyed on track alone, so the second star was a conflict."""
+    assert await library.toggle_star("a::x", "X", "A", user_id="alice") is True
+    assert await library.toggle_star("a::x", "X", "A", user_id="bob") is True
+
+    assert [t["key"] for t in await library.crate(user_id="alice")] == ["a::x"]
+    assert [t["key"] for t in await library.crate(user_id="bob")] == ["a::x"]
+
+    # And unstarring is not shared either.
+    await library.toggle_star("a::x", user_id="alice")
+    assert await library.crate(user_id="alice") == []
+    assert len(await library.crate(user_id="bob")) == 1
+
+
+async def test_two_accounts_can_follow_the_same_channel(library):
+    """watches.url was UNIQUE, so the second follow was silently dropped."""
+    await library.add_watch("w1", "https://x/chan", "Chan", user_id="alice")
+    await library.add_watch("w2", "https://x/chan", "Chan", user_id="bob")
+
+    assert len(await library.list_watches(user_id="alice")) == 1
+    assert len(await library.list_watches(user_id="bob")) == 1
+    assert len(await library.list_watches(user_id=None)) == 2, (
+        "the scheduled check must still see everybody's")
+
+
+async def test_a_download_cannot_be_read_by_id_from_another_account(library):
+    """Download ids are small integers, so unscoped means walkable."""
+    download_id = await library.start_download("a::x", "A", "X",
+                                               user_id="bob")
+    assert await library.get_download(download_id, user_id="alice") is None
+    assert await library.download_path(download_id, user_id="alice") is None
+    assert await library.get_download(download_id, user_id="bob") is not None
+
+
+async def test_digging_only_counts_your_own_sets(library):
+    """A track heard across sets is a signal about *your* listening."""
+    for i in range(3):
+        await library.save_set(f"b{i}", "Theirs", _set(), user_id="bob")
+    await library.save_set("a1", "Mine", _set(), user_id="alice")
+
+    assert await library.recurring_tracks(min_sets=2, user_id="alice") == []
+    assert len(await library.recurring_tracks(min_sets=2, user_id="bob")) == 1
+
+    found = await library.search_tracks("X", user_id="alice")
+    assert {t["set_title"] for t in found} == {"Mine"}
+
+
+async def test_the_first_account_adopts_what_came_before_it(library):
+    """An existing library must not vanish behind a new login screen."""
+    await library.save_set("old", "From before", _set(), user_id="")
+    await library.toggle_star("a::x", "X", "A", user_id="")
+
+    assert await library.list_sets(user_id="alice") == []
+    adopted = await library.adopt_orphans("alice")
+
+    assert adopted >= 2
+    assert [s["id"] for s in await library.list_sets(user_id="alice")] == ["old"]
+    assert len(await library.crate(user_id="alice")) == 1
+
+
+# ── Through the API ──────────────────────────────────────────────────────
+
+@pytest.fixture
+async def auth_client(tmp_path, monkeypatch):
+    """An app instance with accounts switched on and mail captured."""
+    import importlib
+
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    # Before web is imported: it builds the accounts store at import time and
+    # binds the request dependencies to that instance, so reassigning the
+    # attribute afterwards would leave the endpoints on the old one — pointed
+    # at the working copy's real database.
+    monkeypatch.setenv("SHAZAMER_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SLSKD_URL", "")
+    # Cookies would otherwise be Secure-only, and the test transport is http.
+    monkeypatch.setenv("COOKIE_SECURE", "0")
+
+    import src.auth as auth_mod
+    importlib.reload(auth_mod)
+    import src.mail as mail_mod
+    importlib.reload(mail_mod)
+    import src.web as web
+    importlib.reload(web)
+
+    # The limiters hold state at module level and every test here uses the
+    # same handful of addresses, so without this the fifth test in a run is
+    # rate-limited by the first four and fails for a reason that has nothing
+    # to do with what it is testing.
+    for limiter in (auth_mod.email_limiter, auth_mod.ip_limiter,
+                    auth_mod.verify_limiter):
+        limiter._hits.clear()
+
+    sent = []
+
+    async def capture(to, code, minutes=10):
+        sent.append({"to": to, "code": code})
+
+    monkeypatch.setattr(web.mail, "send_login_code", capture)
+    monkeypatch.setattr(web.mail, "configured", lambda: True)
+
+    for name in ("uploads", "media"):
+        (tmp_path / name).mkdir(exist_ok=True)
+    web.UPLOAD_DIR = tmp_path / "uploads"
+    web.MEDIA_DIR = tmp_path / "media"
+    web.library = web.Library(tmp_path / "library.db")
+    web.tasks = web.TaskManager(tmp_path / "tasks")
+
+    from httpx import ASGITransport, AsyncClient
+    transport = ASGITransport(app=web.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        c.web = web            # type: ignore[attr-defined]
+        c.sent = sent          # type: ignore[attr-defined]
+        yield c
+
+    monkeypatch.undo()
+    importlib.reload(auth_mod)
+    importlib.reload(web)
+
+
+async def test_a_signed_out_caller_is_refused(auth_client):
+    assert (await auth_client.get("/api/sets")).status_code == 401
+    me = await auth_client.get("/api/auth/me")
+    assert me.status_code == 200, "checking who you are must not itself 401"
+    assert me.json()["authenticated"] is False
+
+
+async def test_signing_in_end_to_end(auth_client):
+    r = await auth_client.post("/api/auth/request-code",
+                               json={"email": "a@b.com"})
+    assert r.status_code == 200
+    code = auth_client.sent[-1]["code"]
+
+    r = await auth_client.post("/api/auth/verify",
+                               json={"email": "a@b.com", "code": code})
+    assert r.status_code == 200
+
+    assert (await auth_client.get("/api/sets")).status_code == 200
+    assert (await auth_client.get("/api/auth/me")).json()["email"] == "a@b.com"
+
+
+async def test_the_session_cookie_is_not_readable_by_scripts(auth_client):
+    await auth_client.post("/api/auth/request-code", json={"email": "a@b.com"})
+    r = await auth_client.post(
+        "/api/auth/verify",
+        json={"email": "a@b.com", "code": auth_client.sent[-1]["code"]})
+
+    header = r.headers.get("set-cookie", "")
+    assert "httponly" in header.lower(), "a readable session cookie is an XSS away"
+    # A year, so ordinary use never asks again.
+    assert "max-age=31536000" in header.lower().replace(" ", "")
+
+
+async def test_signing_out_ends_the_session(auth_client):
+    await auth_client.post("/api/auth/request-code", json={"email": "a@b.com"})
+    await auth_client.post(
+        "/api/auth/verify",
+        json={"email": "a@b.com", "code": auth_client.sent[-1]["code"]})
+    assert (await auth_client.get("/api/sets")).status_code == 200
+
+    await auth_client.post("/api/auth/logout")
+    assert (await auth_client.get("/api/sets")).status_code == 401
+
+
+async def test_requesting_a_code_says_nothing_about_the_address(auth_client):
+    """Same answer for a known and an unknown address, or this is a directory."""
+    first = await auth_client.post("/api/auth/request-code",
+                                   json={"email": "known@b.com"})
+    await auth_client.post(
+        "/api/auth/verify",
+        json={"email": "known@b.com", "code": auth_client.sent[-1]["code"]})
+
+    second = await auth_client.post("/api/auth/request-code",
+                                    json={"email": "nobody@b.com"})
+    assert first.status_code == second.status_code
+    assert first.json() == second.json()
+
+
+async def test_a_wrong_code_is_refused_through_the_api(auth_client):
+    await auth_client.post("/api/auth/request-code", json={"email": "a@b.com"})
+    r = await auth_client.post("/api/auth/verify",
+                               json={"email": "a@b.com", "code": "000000"})
+    assert r.status_code == 400
+    assert (await auth_client.get("/api/sets")).status_code == 401

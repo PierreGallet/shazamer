@@ -18,6 +18,17 @@ from src.identify.base import TrackMatch
 
 SOURCE_SR = 44100
 
+# Every library call is scoped to an account now. The tests seed data directly
+# and read it back through the API, so the two must agree on who owns it.
+#
+# Taken from `auth` rather than written out, because the API runs as this
+# identity whenever accounts are switched off — which is the default, and what
+# the rest of the suite is exercising. A literal here would pass today and
+# start failing silently the day that id changes.
+from src.auth import SOLO_USER
+
+TEST_USER = SOLO_USER["id"]
+
 
 @pytest.fixture
 def anyio_backend():

@@ -278,3 +278,66 @@ h3 { font-size: 0.95rem; font-weight: 700; }
   .wrap { padding: 1.25rem 0.9rem 4rem; }
   .nav-item { padding: 0.35rem 0.5rem; font-size: 0.8rem; }
 }
+
+/* ── Sign-in ────────────────────────────────────────────────────────────
+   Its own screen rather than a modal: there is nothing behind it to return
+   to, and a dimmed library you cannot read is a worse first impression than
+   a page that simply asks. */
+.boot { min-height: 100vh; background: var(--bg); }
+
+.signin-wrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+.signin {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.signin-mark { width: 34px; height: 34px; margin-bottom: 0.4rem; }
+.signin-title {
+  font-size: 1.45rem; font-weight: 800; font-stretch: 88%;
+  letter-spacing: -0.02em; margin: 0;
+}
+.signin-sub {
+  color: var(--text-dim); font-size: 0.9rem; line-height: 1.5; margin: 0;
+}
+.signin-sub strong { color: var(--text); font-weight: 600; }
+
+.signin form { display: flex; flex-direction: column; gap: 0.6rem; }
+.signin-input {
+  width: 100%;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.95rem;
+}
+.signin-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface);
+}
+/* Wide tracking so six digits read as six digits and a transposition is
+   visible before it is submitted. */
+.signin-code {
+  font-size: 1.5rem; letter-spacing: 0.4em; text-align: center;
+  padding-left: 0.4em;             /* re-centres against the trailing space */
+}
+.signin-btn { width: 100%; justify-content: center; padding: 0.7rem; }
+
+.signin-back {
+  background: none; border: none; padding: 0;
+  color: var(--text-faint); font-size: 0.82rem; text-align: left;
+  cursor: pointer;
+}
+.signin-back:hover { color: var(--text-dim); text-decoration: underline; }
+
+.signin-error {
+  color: #ff6b5a; font-size: 0.85rem; margin: 0;
+}

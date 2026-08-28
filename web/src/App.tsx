@@ -5,6 +5,7 @@ import Crate from "./components/Crate";
 import Library from "./components/Library";
 import SetView from "./components/SetView";
 import Watches from "./components/Watches";
+import { SignIn } from "./components/SignIn";
 import { api } from "./lib/api";
 
 /**
@@ -26,6 +27,7 @@ const NAV: { href: string; label: string }[] = [
 
 function Shell(props: ParentProps) {
   const [sets] = createResource(() => api.sets(60));
+  const [me] = createResource(() => api.me());
   const location = useLocation();
 
   /**
@@ -93,6 +95,22 @@ function Shell(props: ParentProps) {
             click — it intercepts every same-origin anchor otherwise, and a
             plain <a> lands on the app's own "Nothing here". */}
         <a class="nav-item nav-docs" href="/docs/" rel="external">Docs</a>
+
+        {/* Only when there is a session to end. With accounts off the server
+            says so and this never appears. */}
+        <Show when={me()?.auth_required && me()?.authenticated}>
+          <button class="nav-item nav-docs" type="button"
+                  title={me()!.email}
+                  onClick={async () => {
+                    await api.logout();
+                    // window.location, not the router's: `location` here is
+                    // useLocation()'s, and a full reload is what clears every
+                    // cached resource holding the signed-out account's data.
+                    window.location.href = "/";
+                  }}>
+            Sign out
+          </button>
+        </Show>
 
         <Show when={running().length > 0 && !onItsPage()}>
           <For each={running().slice(0, 2)}>
@@ -166,6 +184,28 @@ function NotFound() {
 }
 
 export default function App() {
+  /**
+   * The gate.
+   *
+   * Asked once, before anything renders. Rendering the app first and reacting
+   * to a 401 would show the library shell, then empty it — which looks like
+   * the data was lost rather than like a session that expired.
+   *
+   * When accounts are switched off the server answers `authenticated: true`
+   * and nothing below ever knows this existed.
+   */
+  const [auth, { refetch }] = createResource(() => api.me());
+
+  return (
+    <Show when={auth()} fallback={<div class="boot" />}>
+      <Show when={auth()!.authenticated} fallback={<SignIn onSignedIn={refetch} />}>
+        <AppRoutes />
+      </Show>
+    </Show>
+  );
+}
+
+function AppRoutes() {
   return (
     <Router root={Shell}>
       <Route path="/" component={AnalyzeRoute} />

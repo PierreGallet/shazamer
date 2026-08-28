@@ -169,6 +169,13 @@ export interface ChannelEntry {
   thumbnail: string;
 }
 
+export interface AuthState {
+  authenticated: boolean;
+  auth_required: boolean;
+  email: string;
+  can_send_mail: boolean;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -194,6 +201,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  /** Who is signed in. Answers 200 either way — not being signed in is not an
+   *  error, and treating it as one puts a red banner on every first load. */
+  me: () => request<AuthState>("/api/auth/me"),
+
+  requestCode: (email: string) =>
+    request<{ sent: boolean; expires_in: number }>("/api/auth/request-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    }),
+
+  verifyCode: (email: string, code: string) =>
+    request<{ authenticated: boolean; email: string }>("/api/auth/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, code }),
+    }),
+
+  logout: () => request<{ authenticated: boolean }>("/api/auth/logout",
+    { method: "POST" }),
+
   /**
    * Start an analysis from a URL.
    *

@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from tests.conftest import TEST_USER
+
 pytestmark = pytest.mark.anyio
 
 RESULT = {
@@ -92,7 +94,7 @@ async def test_unknown_task_is_a_404(client):
 
 async def test_set_lifecycle(client):
     await client.web.library.save_set("s1", "My Set", RESULT, source_url="u",
-                                      uploader="Someone", quality="opus 160")
+                                      uploader="Someone", quality="opus 160", user_id=TEST_USER)
 
     listing = (await client.get("/api/sets")).json()
     assert len(listing) == 1
@@ -112,7 +114,7 @@ async def test_set_lifecycle(client):
 async def test_server_paths_never_reach_the_client(client):
     """`audio_path` is a filesystem path — it has no business in a response."""
     await client.web.library.save_set("s1", "My Set", RESULT,
-                                      audio_path="/srv/secret/audio.mp3")
+                                      audio_path="/srv/secret/audio.mp3", user_id=TEST_USER)
     assert "audio_path" not in (await client.get("/api/sets")).text
     assert "audio_path" not in (await client.get("/api/sets/s1")).text
 
@@ -122,7 +124,7 @@ async def test_server_paths_never_reach_the_client(client):
     ("m3u", "#EXTM3U"), ("rekordbox", "DJ_PLAYLISTS"),
 ])
 async def test_exports(client, fmt, marker):
-    await client.web.library.save_set("s1", "My Set", RESULT)
+    await client.web.library.save_set("s1", "My Set", RESULT, user_id=TEST_USER)
     response = await client.get(f"/api/sets/s1/export/{fmt}")
     assert response.status_code == 200
     assert marker in response.text
@@ -130,13 +132,13 @@ async def test_exports(client, fmt, marker):
 
 
 async def test_unknown_export_format_is_rejected(client):
-    await client.web.library.save_set("s1", "My Set", RESULT)
+    await client.web.library.save_set("s1", "My Set", RESULT, user_id=TEST_USER)
     response = await client.get("/api/sets/s1/export/wav")
     assert response.status_code == 400
 
 
 async def test_audio_requires_a_kept_file(client):
-    await client.web.library.save_set("s1", "My Set", RESULT, audio_path="")
+    await client.web.library.save_set("s1", "My Set", RESULT, audio_path="", user_id=TEST_USER)
     assert (await client.get("/api/sets/s1/audio")).status_code == 404
 
 
@@ -145,7 +147,7 @@ async def test_audio_outside_the_media_directory_is_refused(client, tmp_path):
     outsider = tmp_path / "etc-passwd"
     outsider.write_bytes(b"root:x:0:0")
     await client.web.library.save_set("s1", "My Set", RESULT,
-                                      audio_path=str(outsider))
+                                      audio_path=str(outsider), user_id=TEST_USER)
     assert (await client.get("/api/sets/s1/audio")).status_code == 400
 
 
@@ -153,7 +155,7 @@ async def test_audio_range_requests(client):
     audio = client.web.MEDIA_DIR / "set.mp3"
     audio.write_bytes(bytes(range(256)) * 40)          # 10240 bytes
     await client.web.library.save_set("s1", "My Set", RESULT,
-                                      audio_path=str(audio))
+                                      audio_path=str(audio), user_id=TEST_USER)
 
     full = await client.get("/api/sets/s1/audio")
     assert full.status_code == 200
@@ -176,16 +178,15 @@ async def test_audio_range_requests(client):
 
 
 async def test_missing_audio_reports_why(client):
-    await client.web.library.save_set(
-        "s1", "My Set", RESULT,
-        audio_path=str(client.web.MEDIA_DIR / "gone.mp3"))
+    await client.web.library.save_set("s1", "My Set", RESULT,
+        audio_path=str(client.web.MEDIA_DIR / "gone.mp3"), user_id=TEST_USER)
     response = await client.get("/api/sets/s1/audio")
     assert response.status_code == 410
     assert "tracklist is still here" in response.json()["detail"]
 
 
 async def test_crate_round_trip(client):
-    await client.web.library.save_set("s1", "My Set", RESULT)
+    await client.web.library.save_set("s1", "My Set", RESULT, user_id=TEST_USER)
     key = RESULT["tracks"][0]["key"]
 
     assert (await client.post("/api/library/star", json={
@@ -204,10 +205,10 @@ async def test_starring_without_a_key_is_rejected(client):
 
 
 async def test_recurring_tracks_need_more_than_one_set(client):
-    await client.web.library.save_set("s1", "Set One", RESULT)
+    await client.web.library.save_set("s1", "Set One", RESULT, user_id=TEST_USER)
     assert (await client.get("/api/library/recurring")).json() == []
 
-    await client.web.library.save_set("s2", "Set Two", RESULT)
+    await client.web.library.save_set("s2", "Set Two", RESULT, user_id=TEST_USER)
     recurring = (await client.get("/api/library/recurring")).json()
     assert len(recurring) == 1
     assert recurring[0]["set_count"] == 2
@@ -215,7 +216,7 @@ async def test_recurring_tracks_need_more_than_one_set(client):
 
 
 async def test_library_search_filters(client):
-    await client.web.library.save_set("s1", "My Set", RESULT)
+    await client.web.library.save_set("s1", "My Set", RESULT, user_id=TEST_USER)
 
     assert len((await client.get("/api/library/search?q=stussy")).json()) == 1
     assert len((await client.get("/api/library/search?q=nobody")).json()) == 0
@@ -255,7 +256,7 @@ async def test_a_set_read_back_has_the_same_shape_as_a_fresh_one(client):
     set out of SQLite, so every text-ish export of a stored set raised
     KeyError. The shapes must stay interchangeable.
     """
-    await client.web.library.save_set("s1", "My Set", RESULT)
+    await client.web.library.save_set("s1", "My Set", RESULT, user_id=TEST_USER)
     stored = (await client.get("/api/sets/s1")).json()["tracks"]
 
     for original, roundtripped in zip(RESULT["tracks"], stored):
@@ -324,7 +325,7 @@ async def test_reanalysing_replaces_the_set_in_place(client, monkeypatch):
     import asyncio
 
     await client.web.library.save_set("legacy-abc", "Old Set", RESULT,
-                                      source_kind="legacy")
+                                      source_kind="legacy", user_id=TEST_USER)
 
     captured = {}
 
@@ -401,11 +402,11 @@ async def test_successful_analysis_keeps_its_audio(client, monkeypatch):
 
     monkeypatch.setattr(client.web.Pipeline, "run", fake_run)
 
-    client.web.tasks.create("t-ok", filename="Keeper")
+    client.web.tasks.create("t-ok", filename="Keeper", user_id=TEST_USER)
     await client.web.run_analysis("t-ok", audio, "Keeper")
 
     assert audio.exists(), "audio for a saved set was discarded"
-    assert await client.web.library.get_set("t-ok") is not None
+    assert await client.web.library.get_set("t-ok", user_id=TEST_USER) is not None
 
 
 async def test_discard_refuses_paths_outside_the_media_directories(client, tmp_path):
@@ -461,14 +462,14 @@ async def test_an_existing_library_gains_new_columns(tmp_path):
         "PRAGMA table_info(tracks)")}
     assert "strength" in columns, "migration did not run"
 
-    stored = await library.get_set("s1")
+    stored = await library.get_set("s1", user_id=TEST_USER)
     assert stored["title"] == "Old Set", "existing data was lost"
     assert stored["tracks"][0]["strength"] == ""
 
 
 async def test_strength_survives_a_round_trip(client):
     payload = {**RESULT, "tracks": [{**RESULT["tracks"][0], "strength": "strong"}]}
-    await client.web.library.save_set("s1", "Set", payload)
+    await client.web.library.save_set("s1", "Set", payload, user_id=TEST_USER)
     stored = (await client.get("/api/sets/s1")).json()
     assert stored["tracks"][0]["strength"] == "strong"
 

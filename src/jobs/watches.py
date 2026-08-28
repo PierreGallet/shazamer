@@ -35,7 +35,9 @@ async def check_watches(library, enqueue, *, max_per_round: int = MAX_PER_ROUND
     """
     from src.sources import download as dl
 
-    watches = await library.list_watches()
+    # Every account's, deliberately: this runs on a schedule with no
+    # session behind it. Passing None is how that is said out loud.
+    watches = await library.list_watches(user_id=None)
     if not watches:
         return {"watches": 0, "found": 0, "queued": 0}
 

@@ -15,6 +15,8 @@ from src.acquire.slskd import Candidate, score_candidate, search_query
 from src.identify.base import TrackMatch, normalize_key
 from src.store.library import Library
 
+from tests.conftest import TEST_USER
+
 pytestmark = pytest.mark.anyio
 
 
@@ -242,15 +244,15 @@ def test_tagging_a_format_that_cannot_hold_tags_is_not_fatal(tmp_path):
 async def test_a_download_records_its_outcome(tmp_path):
     """"Nothing happened" and "the peer vanished" must look different."""
     library = Library(tmp_path / "lib.db")
-    download_id = await library.start_download("a::b", "Artist", "Track")
+    download_id = await library.start_download("a::b", "Artist", "Track", user_id=TEST_USER)
 
-    queued = await library.get_download(download_id)
+    queued = await library.get_download(download_id, user_id=TEST_USER)
     assert queued["status"] == "queued"
     assert queued["available"] is False
 
     await library.update_download(download_id, status="failed",
                                   message="The peer went offline at 60%")
-    failed = await library.get_download(download_id)
+    failed = await library.get_download(download_id, user_id=TEST_USER)
     assert failed["status"] == "failed"
     assert "60%" in failed["message"]
 
@@ -258,11 +260,11 @@ async def test_a_download_records_its_outcome(tmp_path):
 async def test_a_served_path_is_kept_off_the_wire(tmp_path):
     """The row goes to the browser; a server filesystem path does not."""
     library = Library(tmp_path / "lib.db")
-    download_id = await library.start_download("a::b", "Artist", "Track")
+    download_id = await library.start_download("a::b", "Artist", "Track", user_id=TEST_USER)
     await library.update_download(download_id, status="ready",
                                   local_path="/srv/downloads/x.flac")
 
-    row = await library.get_download(download_id)
+    row = await library.get_download(download_id, user_id=TEST_USER)
     assert "local_path" not in row
     assert row["filename"] == "x.flac"
-    assert await library.download_path(download_id) == "/srv/downloads/x.flac"
+    assert await library.download_path(download_id, user_id=TEST_USER) == "/srv/downloads/x.flac"

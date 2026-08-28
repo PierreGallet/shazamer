@@ -115,8 +115,13 @@ def _weighted(pct: float, confirm_cost: Optional[float] = None) -> float:
 
 
 class Task:
-    def __init__(self, task_id: str, filename: str = "", source_url: str = "") -> None:
+    def __init__(self, task_id: str, filename: str = "", source_url: str = "",
+                 user_id: str = "") -> None:
         self.id = task_id
+        # Who this belongs to. Carried on the task rather than looked up later
+        # because the analysis finishes in the worker, which has no session and
+        # no way to ask.
+        self.user_id = user_id
         self.status = "pending"
         self.progress = 0
         self.stage = "pending"
@@ -187,7 +192,8 @@ class Task:
 
     def snapshot(self) -> Dict[str, Any]:
         return {
-            "task_id": self.id, "status": self.status, "progress": self.progress,
+            "task_id": self.id, "user_id": self.user_id,
+            "status": self.status, "progress": self.progress,
             "stage": self.stage, "message": self.message, "filename": self.filename,
             "source_url": self.source_url, "error": self.error, "set_id": self.set_id,
             "quality": self.quality, "created_at": self.created_at,
@@ -209,8 +215,10 @@ class TaskManager:
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 
-    def create(self, task_id: str, filename: str = "", source_url: str = "") -> Task:
-        task = Task(task_id, filename=filename, source_url=source_url)
+    def create(self, task_id: str, filename: str = "", source_url: str = "",
+               user_id: str = "") -> Task:
+        task = Task(task_id, filename=filename, source_url=source_url,
+                    user_id=user_id)
         self._tasks[task_id] = task
         self._evict()
         self.persist(task)
@@ -360,7 +368,8 @@ class TaskManager:
         except (json.JSONDecodeError, OSError):
             return None
         task = Task(task_id, filename=data.get("filename", ""),
-                    source_url=data.get("source_url", ""))
+                    source_url=data.get("source_url", ""),
+                    user_id=data.get("user_id", ""))
         task.status = data.get("status", "unknown")
         task.progress = data.get("progress", 0)
         task.stage = data.get("stage", "")

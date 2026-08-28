@@ -19,6 +19,20 @@ services:
       - SLSKD_URL=${SLSKD_URL:-}
       - SLSKD_API_KEY=${SLSKD_API_KEY:-}
       - REDIS_URL=redis://redis:6379
+      # Accounts. The worker gets them too: it never serves a request, but it
+      # saves sets, and a set has an owner.
+      - AUTH_ENABLED=${AUTH_ENABLED:-0}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_SSL=${SMTP_SSL:-}
+      - SMTP_STARTTLS=${SMTP_STARTTLS:-1}
+      - MAIL_FROM=${MAIL_FROM:-}
+      - MAIL_FROM_NAME=${MAIL_FROM_NAME:-Shazamer}
+      - COOKIE_SECURE=${COOKIE_SECURE:-1}
+      - COOKIE_SAMESITE=${COOKIE_SAMESITE:-lax}
+      - COOKIE_DOMAIN=${COOKIE_DOMAIN:-}
     volumes:
       - type: bind
         source: /home/sharon/shazamer/data
@@ -101,6 +115,20 @@ services:
       - SLSKD_API_KEY=${SLSKD_API_KEY:-}
       - SLSKD_DOWNLOADS_DIR=/slskd-downloads
       - REDIS_URL=redis://redis:6379
+      # Accounts. The worker gets them too: it never serves a request, but it
+      # saves sets, and a set has an owner.
+      - AUTH_ENABLED=${AUTH_ENABLED:-0}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_SSL=${SMTP_SSL:-}
+      - SMTP_STARTTLS=${SMTP_STARTTLS:-1}
+      - MAIL_FROM=${MAIL_FROM:-}
+      - MAIL_FROM_NAME=${MAIL_FROM_NAME:-Shazamer}
+      - COOKIE_SECURE=${COOKIE_SECURE:-1}
+      - COOKIE_SAMESITE=${COOKIE_SAMESITE:-lax}
+      - COOKIE_DOMAIN=${COOKIE_DOMAIN:-}
     volumes:
       - type: bind
         source: /home/sharon/shazamer/data

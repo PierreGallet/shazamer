@@ -115,21 +115,25 @@ CREATE TABLE IF NOT EXISTS downloads (
 CREATE INDEX IF NOT EXISTS idx_downloads_key ON downloads(track_key);
 
 CREATE TABLE IF NOT EXISTS crate (
-    track_key    TEXT PRIMARY KEY,
+    track_key    TEXT NOT NULL,
+    user_id      TEXT NOT NULL DEFAULT '',
     title        TEXT DEFAULT '',
     artist       TEXT DEFAULT '',
     note         TEXT DEFAULT '',
-    starred_at   TEXT NOT NULL
+    starred_at   TEXT NOT NULL,
+    PRIMARY KEY (track_key, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS watches (
     id           TEXT PRIMARY KEY,
-    url          TEXT NOT NULL UNIQUE,
+    url          TEXT NOT NULL,
+    user_id      TEXT NOT NULL DEFAULT '',
     title        TEXT DEFAULT '',
     kind         TEXT DEFAULT 'channel',
     created_at   TEXT NOT NULL,
     last_checked TEXT,
-    seen_ids     TEXT DEFAULT '[]'
+    seen_ids     TEXT DEFAULT '[]',
+    UNIQUE (url, user_id)
 );
 """
 
@@ -148,6 +152,8 @@ class Library:
         with closing(self._connect()) as conn:
             conn.executescript(SCHEMA)
             self._migrate(conn)
+            # After the additive pass, which is what puts user_id there.
+            self._rebuild_for_ownership(conn)
             conn.commit()
 
     # Columns added after the first release, as (table, column, definition).
@@ -158,7 +164,108 @@ class Library:
         ("tracks", "strength", "TEXT DEFAULT ''"),
         ("tracks", "catalog_number", "TEXT DEFAULT ''"),
         ("tracks", "mbid", "TEXT DEFAULT ''"),
+        # Ownership, added when accounts arrived. Empty means "from before
+        # accounts existed" — those rows are adopted by the first account to
+        # sign in rather than deleted, because they are someone's work.
+        ("sets", "user_id", "TEXT DEFAULT ''"),
+        ("crate", "user_id", "TEXT DEFAULT ''"),
+        ("watches", "user_id", "TEXT DEFAULT ''"),
+        ("downloads", "user_id", "TEXT DEFAULT ''"),
     )
+
+    async def adopt_orphans(self, user_id: str) -> int:
+        """Give everything that predates accounts to `user_id`.
+
+        Called once, for the first account created. Without it the library
+        built before this feature would be invisible to everybody — present in
+        the database, owned by nobody, matching no query.
+        """
+        return await self._run(self._adopt_orphans_sync, user_id)
+
+    def _adopt_orphans_sync(self, user_id: str) -> int:
+        moved = 0
+        with closing(self._connect()) as conn:
+            for table in ("sets", "crate", "watches", "downloads"):
+                moved += conn.execute(
+                    f"UPDATE {table} SET user_id = ?"
+                    " WHERE user_id IS NULL OR user_id = ''",
+                    (user_id,)).rowcount
+            conn.commit()
+        if moved:
+            logger.info("Adopted %d row(s) predating accounts", moved)
+        return moved
+
+    def _rebuild_for_ownership(self, conn: sqlite3.Connection) -> None:
+        """Widen two keys that assumed a single user.
+
+        `crate.track_key` was the primary key and `watches.url` was UNIQUE.
+        Both are correct for one person and wrong the moment there are two:
+        they would stop a second account from starring a track the first had
+        starred, or following a channel the first follows — silently, as a
+        constraint violation on someone else's row.
+
+        Adding a column cannot fix a key, so these tables are rebuilt. This is
+        the hand-written migration the note below asks for, and it is written
+        to be safe to run twice: it checks the shape first and does nothing if
+        the shape is already right.
+        """
+        rebuilds = (
+            ("crate", "track_key",
+             """CREATE TABLE crate_new (
+                    track_key  TEXT NOT NULL,
+                    user_id    TEXT NOT NULL DEFAULT '',
+                    title      TEXT DEFAULT '',
+                    artist     TEXT DEFAULT '',
+                    note       TEXT DEFAULT '',
+                    starred_at TEXT NOT NULL,
+                    PRIMARY KEY (track_key, user_id)
+                )""",
+             "INSERT OR IGNORE INTO crate_new (track_key, user_id, title,"
+             " artist, note, starred_at) SELECT track_key,"
+             " COALESCE(user_id, ''), title, artist, note, starred_at FROM crate"),
+            ("watches", "url",
+             """CREATE TABLE watches_new (
+                    id           TEXT PRIMARY KEY,
+                    url          TEXT NOT NULL,
+                    user_id      TEXT NOT NULL DEFAULT '',
+                    title        TEXT DEFAULT '',
+                    kind         TEXT DEFAULT 'channel',
+                    created_at   TEXT NOT NULL,
+                    last_checked TEXT,
+                    seen_ids     TEXT DEFAULT '[]',
+                    UNIQUE (url, user_id)
+                )""",
+             "INSERT OR IGNORE INTO watches_new (id, url, user_id, title, kind,"
+             " created_at, last_checked, seen_ids) SELECT id, url,"
+             " COALESCE(user_id, ''), title, kind, created_at, last_checked,"
+             " seen_ids FROM watches"),
+        )
+
+        for table, column, create_sql, copy_sql in rebuilds:
+            info = list(conn.execute(f"PRAGMA table_info({table})"))
+            if not info:
+                continue                    # fresh database; SCHEMA is current
+            names = {row[1] for row in info}
+            if "user_id" not in names:
+                continue                    # the column migration runs first
+            # Already widened? The old shape has the column as a lone primary
+            # key (crate) or as a single-column unique index (watches).
+            single_pk = any(row[1] == column and row[5] == 1 for row in info)
+            lone_unique = any(
+                idx[2] and len(list(conn.execute(
+                    f"PRAGMA index_info({idx[1]})"))) == 1
+                and next(iter(conn.execute(
+                    f"PRAGMA index_info({idx[1]})")))[2] == column
+                for idx in conn.execute(f"PRAGMA index_list({table})"))
+            if not (single_pk or lone_unique):
+                continue                    # already the wide shape
+
+            logger.info("Rebuilding %s so two accounts can both use it", table)
+            conn.execute(f"DROP TABLE IF EXISTS {table}_new")
+            conn.execute(create_sql)
+            conn.execute(copy_sql)
+            conn.execute(f"DROP TABLE {table}")
+            conn.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         """Add any column missing from an existing database.
@@ -191,7 +298,8 @@ class Library:
     # ── Sets ──────────────────────────────────────────────────────────────
 
     async def save_set(self, set_id: str, title: str, result: Dict[str, Any],
-                       *, source_url: str = "", source_kind: str = "upload",
+                       *, user_id: str, source_url: str = "",
+                       source_kind: str = "upload",
                        uploader: str = "", audio_path: str = "",
                        quality: str = "", created_at: Optional[str] = None) -> None:
         """Store a set and its tracks, replacing any set with the same id.
@@ -203,20 +311,25 @@ class Library:
         async with self._lock:
             await self._run(self._save_set_sync, set_id, title, result,
                             source_url, source_kind, uploader, audio_path,
-                            quality, created_at)
+                            quality, created_at, user_id)
 
     def _save_set_sync(self, set_id, title, result, source_url, source_kind,
-                       uploader, audio_path, quality, created_at=None) -> None:
+                       uploader, audio_path, quality, created_at=None,
+                       user_id="") -> None:
         with closing(self._connect()) as conn:
-            conn.execute("DELETE FROM sets WHERE id = ?", (set_id,))
+            # Scoped, so re-analysing an id cannot overwrite another account's
+            # set of the same name — ids are ours, but an import supplies them.
+            conn.execute("DELETE FROM sets WHERE id = ? AND user_id = ?",
+                         (set_id, user_id))
             conn.execute(
                 "INSERT INTO sets (id, title, source_url, source_kind, uploader,"
-                " audio_path, quality, duration, waveform, stats, created_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                " audio_path, quality, duration, waveform, stats, created_at,"
+                " user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (set_id, title, source_url, source_kind, uploader, audio_path,
                  quality, result.get("duration", 0),
                  json.dumps(result.get("waveform", [])),
-                 json.dumps(result.get("stats", {})), created_at or _now()),
+                 json.dumps(result.get("stats", {})), created_at or _now(),
+                 user_id),
             )
             conn.executemany(
                 "INSERT INTO tracks (set_id, position, start, end, identified,"
@@ -236,10 +349,11 @@ class Library:
             )
             conn.commit()
 
-    async def list_sets(self, limit: int = 50) -> List[Dict[str, Any]]:
-        return await self._run(self._list_sets_sync, limit)
+    async def list_sets(self, *, user_id: str,
+                        limit: int = 50) -> List[Dict[str, Any]]:
+        return await self._run(self._list_sets_sync, limit, user_id)
 
-    def _list_sets_sync(self, limit: int) -> List[Dict[str, Any]]:
+    def _list_sets_sync(self, limit: int, user_id: str) -> List[Dict[str, Any]]:
         """Summaries for the library list.
 
         `audio_path` is deliberately dropped: it is a server filesystem path
@@ -252,8 +366,9 @@ class Library:
                 " (SELECT COUNT(*) FROM tracks t WHERE t.set_id = s.id) AS track_count,"
                 " (SELECT COUNT(*) FROM tracks t WHERE t.set_id = s.id"
                 "   AND t.identified = 1) AS identified_count"
-                " FROM sets s ORDER BY s.created_at DESC LIMIT ?",
-                (limit,),
+                " FROM sets s WHERE s.user_id = ?"
+                " ORDER BY s.created_at DESC LIMIT ?",
+                (user_id, limit),
             ).fetchall()
         summaries = []
         for row in rows:
@@ -262,53 +377,72 @@ class Library:
             summaries.append(item)
         return summaries
 
-    async def get_set(self, set_id: str) -> Optional[Dict[str, Any]]:
-        return await self._run(self._get_set_sync, set_id)
+    async def get_set(self, set_id: str, *,
+                      user_id: str) -> Optional[Dict[str, Any]]:
+        """A set, or None — including when it belongs to somebody else.
 
-    def _get_set_sync(self, set_id: str) -> Optional[Dict[str, Any]]:
+        Not 403: whether a set exists is itself information, and a tool that
+        answers "that is not yours" tells you what other people have.
+        """
+        return await self._run(self._get_set_sync, set_id, user_id)
+
+    def _get_set_sync(self, set_id: str,
+                      user_id: str) -> Optional[Dict[str, Any]]:
         with closing(self._connect()) as conn:
-            row = conn.execute("SELECT * FROM sets WHERE id = ?", (set_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM sets WHERE id = ? AND user_id = ?",
+                (set_id, user_id)).fetchone()
             if row is None:
                 return None
             tracks = conn.execute(
                 "SELECT * FROM tracks WHERE set_id = ? ORDER BY position", (set_id,)
             ).fetchall()
             starred = {r["track_key"] for r in conn.execute(
-                "SELECT track_key FROM crate").fetchall()}
+                "SELECT track_key FROM crate WHERE user_id = ?",
+                (user_id,)).fetchall()}
         data = _set_row(row)
         data["waveform"] = json.loads(row["waveform"] or "[]")
         data["tracks"] = [_track_row(t, starred) for t in tracks]
         return data
 
-    async def delete_set(self, set_id: str) -> bool:
+    async def delete_set(self, set_id: str, *, user_id: str) -> bool:
         async with self._lock:
-            return await self._run(self._delete_set_sync, set_id)
+            return await self._run(self._delete_set_sync, set_id, user_id)
 
-    def _delete_set_sync(self, set_id: str) -> bool:
+    def _delete_set_sync(self, set_id: str, user_id: str) -> bool:
         with closing(self._connect()) as conn:
-            cur = conn.execute("DELETE FROM sets WHERE id = ?", (set_id,))
+            cur = conn.execute(
+                "DELETE FROM sets WHERE id = ? AND user_id = ?",
+                (set_id, user_id))
             conn.commit()
             return cur.rowcount > 0
 
     # ── Cross-set digging ────────────────────────────────────────────────
 
-    async def recurring_tracks(self, min_sets: int = 2, limit: int = 100
-                               ) -> List[Dict[str, Any]]:
-        """Tracks appearing across several sets — the strongest digging signal."""
-        return await self._run(self._recurring_sync, min_sets, limit)
+    async def recurring_tracks(self, min_sets: int = 2, limit: int = 100,
+                               *, user_id: str) -> List[Dict[str, Any]]:
+        """Tracks appearing across several sets — the strongest digging signal.
 
-    def _recurring_sync(self, min_sets: int, limit: int) -> List[Dict[str, Any]]:
+        Across *your* sets. The whole value of the signal is that you keep
+        hearing something; counting other people's sets would be noise.
+        """
+        return await self._run(self._recurring_sync, min_sets, limit, user_id)
+
+    def _recurring_sync(self, min_sets: int, limit: int,
+                        user_id: str) -> List[Dict[str, Any]]:
         with closing(self._connect()) as conn:
             rows = conn.execute(
-                "SELECT track_key,"
-                "  MAX(title) AS title, MAX(artist) AS artist,"
-                "  MAX(url) AS url, MAX(cover_url) AS cover_url,"
-                "  MAX(label) AS label, AVG(bpm) AS bpm, MAX(camelot) AS camelot,"
-                "  COUNT(DISTINCT set_id) AS set_count"
-                " FROM tracks WHERE identified = 1 AND track_key != ''"
-                " GROUP BY track_key HAVING set_count >= ?"
+                "SELECT t.track_key,"
+                "  MAX(t.title) AS title, MAX(t.artist) AS artist,"
+                "  MAX(t.url) AS url, MAX(t.cover_url) AS cover_url,"
+                "  MAX(t.label) AS label, AVG(t.bpm) AS bpm,"
+                "  MAX(t.camelot) AS camelot,"
+                "  COUNT(DISTINCT t.set_id) AS set_count"
+                " FROM tracks t JOIN sets s ON s.id = t.set_id"
+                " WHERE t.identified = 1 AND t.track_key != '' AND s.user_id = ?"
+                " GROUP BY t.track_key HAVING set_count >= ?"
                 " ORDER BY set_count DESC, artist ASC LIMIT ?",
-                (min_sets, limit),
+                (user_id, min_sets, limit),
             ).fetchall()
         return [{
             "key": r["track_key"], "title": r["title"], "artist": r["artist"],
@@ -317,18 +451,21 @@ class Library:
             "camelot": r["camelot"], "set_count": r["set_count"],
         } for r in rows]
 
-    async def search_tracks(self, query: str = "", *, bpm_min: Optional[float] = None,
+    async def search_tracks(self, query: str = "", *, user_id: str,
+                            bpm_min: Optional[float] = None,
                             bpm_max: Optional[float] = None,
                             camelot: Optional[str] = None,
                             starred_only: bool = False,
                             limit: int = 200) -> List[Dict[str, Any]]:
         return await self._run(self._search_sync, query, bpm_min, bpm_max,
-                               camelot, starred_only, limit)
+                               camelot, starred_only, limit, user_id)
 
-    def _search_sync(self, query, bpm_min, bpm_max, camelot, starred_only, limit):
+    def _search_sync(self, query, bpm_min, bpm_max, camelot, starred_only,
+                     limit, user_id):
         sql = ["SELECT t.*, s.title AS set_title FROM tracks t"
-               " JOIN sets s ON s.id = t.set_id WHERE t.identified = 1"]
-        params: List[Any] = []
+               " JOIN sets s ON s.id = t.set_id"
+               " WHERE t.identified = 1 AND s.user_id = ?"]
+        params: List[Any] = [user_id]
         if query:
             sql.append(" AND (t.title LIKE ? OR t.artist LIKE ? OR t.label LIKE ?)")
             params += [f"%{query}%"] * 3
@@ -339,14 +476,17 @@ class Library:
         if camelot:
             sql.append(" AND t.camelot = ?"); params.append(camelot)
         if starred_only:
-            sql.append(" AND t.track_key IN (SELECT track_key FROM crate)")
+            sql.append(" AND t.track_key IN"
+                       " (SELECT track_key FROM crate WHERE user_id = ?)")
+            params.append(user_id)
         sql.append(" ORDER BY t.artist, t.title LIMIT ?")
         params.append(limit)
 
         with closing(self._connect()) as conn:
             rows = conn.execute("".join(sql), params).fetchall()
             starred = {r["track_key"] for r in conn.execute(
-                "SELECT track_key FROM crate").fetchall()}
+                "SELECT track_key FROM crate WHERE user_id = ?",
+                (user_id,)).fetchall()}
         out = []
         for r in rows:
             item = _track_row(r, starred)
@@ -358,21 +498,24 @@ class Library:
 
     async def start_download(self, track_key: str, artist: str, title: str,
                              username: str = "", remote_path: str = "",
-                             quality: str = "", size: int = 0) -> int:
+                             quality: str = "", size: int = 0, *,
+                             user_id: str) -> int:
         """Record an attempt and return its id."""
         async with self._lock:
             return await self._run(self._start_download_sync, track_key, artist,
-                                   title, username, remote_path, quality, size)
+                                   title, username, remote_path, quality, size,
+                                   user_id)
 
     def _start_download_sync(self, track_key, artist, title, username,
-                             remote_path, quality, size) -> int:
+                             remote_path, quality, size, user_id) -> int:
         with closing(self._connect()) as conn:
             cur = conn.execute(
                 "INSERT INTO downloads (track_key, artist, title, status,"
                 " message, quality, username, remote_path, size, created_at,"
-                " updated_at) VALUES (?,?,?,'queued','Queued',?,?,?,?,?,?)",
+                " updated_at, user_id)"
+                " VALUES (?,?,?,'queued','Queued',?,?,?,?,?,?,?)",
                 (track_key, artist, title, quality, username, remote_path,
-                 size, _now(), _now()),
+                 size, _now(), _now(), user_id),
             )
             conn.commit()
             return int(cur.lastrowid)
@@ -395,47 +538,64 @@ class Library:
                          (*writable.values(), download_id))
             conn.commit()
 
-    async def get_download(self, download_id: int) -> Optional[Dict[str, Any]]:
-        return await self._run(self._get_download_sync, download_id)
+    async def get_download(self, download_id: int, *, user_id: str
+                           ) -> Optional[Dict[str, Any]]:
+        """One download, scoped.
 
-    def _get_download_sync(self, download_id: int) -> Optional[Dict[str, Any]]:
+        Scoped because a download id is a small sequential integer. Unscoped,
+        anyone could walk the numbers and read what everybody else has been
+        fetching — and, through `download_path`, the files themselves.
+        """
+        return await self._run(self._get_download_sync, download_id, user_id)
+
+    def _get_download_sync(self, download_id: int,
+                           user_id: str) -> Optional[Dict[str, Any]]:
         with closing(self._connect()) as conn:
-            row = conn.execute("SELECT * FROM downloads WHERE id = ?",
-                               (download_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM downloads WHERE id = ? AND user_id = ?",
+                (download_id, user_id)).fetchone()
         return _download_row(row) if row else None
 
-    async def download_path(self, download_id: int) -> Optional[str]:
+    async def download_path(self, download_id: int, *,
+                            user_id: str) -> Optional[str]:
         """The file's location on disk, for serving it.
 
         Separate from `get_download` because that shape goes to the browser and
         a server filesystem path has no business there.
         """
-        return await self._run(self._download_path_sync, download_id)
+        return await self._run(self._download_path_sync, download_id, user_id)
 
-    def _download_path_sync(self, download_id: int) -> Optional[str]:
+    def _download_path_sync(self, download_id: int,
+                            user_id: str) -> Optional[str]:
         with closing(self._connect()) as conn:
-            row = conn.execute("SELECT local_path FROM downloads WHERE id = ?",
-                               (download_id,)).fetchone()
+            row = conn.execute(
+                "SELECT local_path FROM downloads WHERE id = ? AND user_id = ?",
+                (download_id, user_id)).fetchone()
         return (row["local_path"] or None) if row else None
 
-    async def downloads_for(self, track_key: str) -> List[Dict[str, Any]]:
-        return await self._run(self._downloads_for_sync, track_key)
+    async def downloads_for(self, track_key: str, *,
+                            user_id: str) -> List[Dict[str, Any]]:
+        return await self._run(self._downloads_for_sync, track_key, user_id)
 
-    def _downloads_for_sync(self, track_key: str) -> List[Dict[str, Any]]:
+    def _downloads_for_sync(self, track_key: str,
+                            user_id: str) -> List[Dict[str, Any]]:
         with closing(self._connect()) as conn:
             rows = conn.execute(
-                "SELECT * FROM downloads WHERE track_key = ?"
-                " ORDER BY created_at DESC", (track_key,)).fetchall()
+                "SELECT * FROM downloads WHERE track_key = ? AND user_id = ?"
+                " ORDER BY created_at DESC", (track_key, user_id)).fetchall()
         return [_download_row(r) for r in rows]
 
-    async def recent_downloads(self, limit: int = 50) -> List[Dict[str, Any]]:
-        return await self._run(self._recent_downloads_sync, limit)
+    async def recent_downloads(self, limit: int = 50, *,
+                               user_id: str) -> List[Dict[str, Any]]:
+        return await self._run(self._recent_downloads_sync, limit, user_id)
 
-    def _recent_downloads_sync(self, limit: int) -> List[Dict[str, Any]]:
+    def _recent_downloads_sync(self, limit: int,
+                               user_id: str) -> List[Dict[str, Any]]:
         with closing(self._connect()) as conn:
             rows = conn.execute(
-                "SELECT * FROM downloads ORDER BY created_at DESC LIMIT ?",
-                (limit,)).fetchall()
+                "SELECT * FROM downloads WHERE user_id = ?"
+                " ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit)).fetchall()
         return [_download_row(r) for r in rows]
 
     # ── Enrichment ───────────────────────────────────────────────────────
@@ -520,29 +680,34 @@ class Library:
     # ── Crate ────────────────────────────────────────────────────────────
 
     async def toggle_star(self, track_key: str, title: str = "",
-                          artist: str = "") -> bool:
+                          artist: str = "", *, user_id: str) -> bool:
         """Star or unstar. Returns the resulting state."""
         async with self._lock:
-            return await self._run(self._toggle_star_sync, track_key, title, artist)
+            return await self._run(self._toggle_star_sync, track_key, title,
+                                   artist, user_id)
 
-    def _toggle_star_sync(self, track_key: str, title: str, artist: str) -> bool:
+    def _toggle_star_sync(self, track_key: str, title: str, artist: str,
+                          user_id: str) -> bool:
         with closing(self._connect()) as conn:
             existing = conn.execute(
-                "SELECT 1 FROM crate WHERE track_key = ?", (track_key,)).fetchone()
+                "SELECT 1 FROM crate WHERE track_key = ? AND user_id = ?",
+                (track_key, user_id)).fetchone()
             if existing:
-                conn.execute("DELETE FROM crate WHERE track_key = ?", (track_key,))
+                conn.execute(
+                    "DELETE FROM crate WHERE track_key = ? AND user_id = ?",
+                    (track_key, user_id))
                 conn.commit()
                 return False
             conn.execute(
-                "INSERT INTO crate (track_key, title, artist, starred_at)"
-                " VALUES (?,?,?,?)", (track_key, title, artist, _now()))
+                "INSERT INTO crate (track_key, user_id, title, artist, starred_at)"
+                " VALUES (?,?,?,?,?)", (track_key, user_id, title, artist, _now()))
             conn.commit()
             return True
 
-    async def crate(self) -> List[Dict[str, Any]]:
-        return await self._run(self._crate_sync)
+    async def crate(self, *, user_id: str) -> List[Dict[str, Any]]:
+        return await self._run(self._crate_sync, user_id)
 
-    def _crate_sync(self) -> List[Dict[str, Any]]:
+    def _crate_sync(self, user_id: str) -> List[Dict[str, Any]]:
         with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT c.track_key, c.starred_at,"
@@ -551,7 +716,9 @@ class Library:
                 " MAX(t.label) AS label, AVG(t.bpm) AS bpm,"
                 " MAX(t.camelot) AS camelot, COUNT(DISTINCT t.set_id) AS set_count"
                 " FROM crate c LEFT JOIN tracks t ON t.track_key = c.track_key"
-                " GROUP BY c.track_key ORDER BY c.starred_at DESC"
+                " WHERE c.user_id = ?"
+                " GROUP BY c.track_key ORDER BY c.starred_at DESC",
+                (user_id,)
             ).fetchall()
         return [{
             "key": r["track_key"], "title": r["title"] or "", "artist": r["artist"] or "",
@@ -564,24 +731,39 @@ class Library:
     # ── Watches ──────────────────────────────────────────────────────────
 
     async def add_watch(self, watch_id: str, url: str, title: str,
-                        kind: str = "channel") -> None:
+                        kind: str = "channel", *, user_id: str) -> None:
         async with self._lock:
-            await self._run(self._add_watch_sync, watch_id, url, title, kind)
+            await self._run(self._add_watch_sync, watch_id, url, title, kind,
+                            user_id)
 
-    def _add_watch_sync(self, watch_id, url, title, kind) -> None:
+    def _add_watch_sync(self, watch_id, url, title, kind, user_id) -> None:
         with closing(self._connect()) as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO watches (id, url, title, kind, created_at)"
-                " VALUES (?,?,?,?,?)", (watch_id, url, title, kind, _now()))
+                "INSERT OR IGNORE INTO watches (id, url, user_id, title, kind,"
+                " created_at) VALUES (?,?,?,?,?,?)",
+                (watch_id, url, user_id, title, kind, _now()))
             conn.commit()
 
-    async def list_watches(self) -> List[Dict[str, Any]]:
-        return await self._run(self._list_watches_sync)
+    async def list_watches(self, *, user_id: Optional[str] = None
+                           ) -> List[Dict[str, Any]]:
+        """Watches for one account, or every account when user_id is None.
 
-    def _list_watches_sync(self) -> List[Dict[str, Any]]:
+        The scheduled check runs for everybody at once and has no session, so
+        it is the one caller allowed to ask unscoped — deliberately by passing
+        None rather than by omitting the argument, so it cannot happen by
+        accident in a request path.
+        """
+        return await self._run(self._list_watches_sync, user_id)
+
+    def _list_watches_sync(self, user_id: Optional[str]) -> List[Dict[str, Any]]:
         with closing(self._connect()) as conn:
-            rows = conn.execute(
-                "SELECT * FROM watches ORDER BY created_at DESC").fetchall()
+            if user_id is None:
+                rows = conn.execute(
+                    "SELECT * FROM watches ORDER BY created_at DESC").fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM watches WHERE user_id = ?"
+                    " ORDER BY created_at DESC", (user_id,)).fetchall()
         return [{
             "id": r["id"], "url": r["url"], "title": r["title"], "kind": r["kind"],
             "created_at": r["created_at"], "last_checked": r["last_checked"],
@@ -608,13 +790,15 @@ class Library:
                 "SELECT seen_ids FROM watches WHERE id = ?", (watch_id,)).fetchone()
         return json.loads(row["seen_ids"] or "[]") if row else []
 
-    async def delete_watch(self, watch_id: str) -> bool:
+    async def delete_watch(self, watch_id: str, *, user_id: str) -> bool:
         async with self._lock:
-            return await self._run(self._delete_watch_sync, watch_id)
+            return await self._run(self._delete_watch_sync, watch_id, user_id)
 
-    def _delete_watch_sync(self, watch_id: str) -> bool:
+    def _delete_watch_sync(self, watch_id: str, user_id: str) -> bool:
         with closing(self._connect()) as conn:
-            cur = conn.execute("DELETE FROM watches WHERE id = ?", (watch_id,))
+            cur = conn.execute(
+                "DELETE FROM watches WHERE id = ? AND user_id = ?",
+                (watch_id, user_id))
             conn.commit()
             return cur.rowcount > 0
 

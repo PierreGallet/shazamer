@@ -17,6 +17,8 @@ from src.enrich.runner import enrich_set
 from src.identify.base import normalize_key
 from src.store.library import Library
 
+from tests.conftest import TEST_USER
+
 pytestmark = pytest.mark.anyio
 
 
@@ -133,14 +135,14 @@ def _set_payload(tracks):
 
 async def test_enrichment_fills_in_missing_metadata(tmp_path):
     library = Library(tmp_path / "lib.db")
-    await library.save_set("s1", "Set", _set_payload([("Skee Mask", "Rev8617")]))
+    await library.save_set("s1", "Set", _set_payload([("Skee Mask", "Rev8617")]), user_id=TEST_USER)
 
     enricher = FakeEnricher({("Skee Mask", "Rev8617"): {
         "label": "Ilian Tape", "catalog_number": "ITLP04", "year": "2018"}})
     report = await enrich_set(library, enricher, "s1")
 
     assert report.found == 1
-    track = (await library.get_set("s1"))["tracks"][0]
+    track = (await library.get_set("s1", user_id=TEST_USER))["tracks"][0]
     assert track["label"] == "Ilian Tape"
     assert track["catalog_number"] == "ITLP04"
     assert track["year"] == "2018"
@@ -150,8 +152,8 @@ async def test_a_track_in_several_sets_is_looked_up_once(tmp_path):
     """One lookup, every set updated — the point of keying on the track."""
     library = Library(tmp_path / "lib.db")
     shared = ("Skee Mask", "Rev8617")
-    await library.save_set("s1", "One", _set_payload([shared, ("A", "B")]))
-    await library.save_set("s2", "Two", _set_payload([shared]))
+    await library.save_set("s1", "One", _set_payload([shared, ("A", "B")]), user_id=TEST_USER)
+    await library.save_set("s2", "Two", _set_payload([shared]), user_id=TEST_USER)
 
     enricher = FakeEnricher({shared: {"label": "Ilian Tape", "year": "2018"}})
     await enrich_set(library, enricher, "s1")
@@ -159,7 +161,7 @@ async def test_a_track_in_several_sets_is_looked_up_once(tmp_path):
     await enrich_set(library, enricher, "s2")
 
     assert enricher.calls == asked_first, "the second set asked again"
-    assert (await library.get_set("s2"))["tracks"][0]["label"] == "Ilian Tape"
+    assert (await library.get_set("s2", user_id=TEST_USER))["tracks"][0]["label"] == "Ilian Tape"
 
 
 async def test_a_miss_is_remembered_so_it_is_not_re_asked(tmp_path):
@@ -168,7 +170,7 @@ async def test_a_miss_is_remembered_so_it_is_not_re_asked(tmp_path):
     Re-asking on every run is how you get rate-limited for nothing.
     """
     library = Library(tmp_path / "lib.db")
-    await library.save_set("s1", "Set", _set_payload([("Unknown", "Dub Plate")]))
+    await library.save_set("s1", "Set", _set_payload([("Unknown", "Dub Plate")]), user_id=TEST_USER)
 
     enricher = FakeEnricher({})
     await enrich_set(library, enricher, "s1")
@@ -182,20 +184,20 @@ async def test_tracks_that_already_have_a_label_are_skipped(tmp_path):
     library = Library(tmp_path / "lib.db")
     payload = _set_payload([("Artist", "Track")])
     payload["tracks"][0]["label"] = "Already Known"
-    await library.save_set("s1", "Set", payload)
+    await library.save_set("s1", "Set", payload, user_id=TEST_USER)
 
     enricher = FakeEnricher({("Artist", "Track"): {"label": "Something Else"}})
     await enrich_set(library, enricher, "s1")
 
     assert enricher.calls == []
-    assert (await library.get_set("s1"))["tracks"][0]["label"] == "Already Known"
+    assert (await library.get_set("s1", user_id=TEST_USER))["tracks"][0]["label"] == "Already Known"
 
 
 async def test_unidentified_tracks_are_not_looked_up(tmp_path):
     library = Library(tmp_path / "lib.db")
     payload = _set_payload([("", "")])
     payload["tracks"][0].update({"identified": False, "key": ""})
-    await library.save_set("s1", "Set", payload)
+    await library.save_set("s1", "Set", payload, user_id=TEST_USER)
 
     enricher = FakeEnricher({})
     report = await enrich_set(library, enricher, "s1")

@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import TEST_USER
+
 _spec = importlib.util.spec_from_file_location(
     "import_legacy",
     Path(__file__).resolve().parent.parent / "scripts" / "import_legacy.py",
@@ -112,9 +114,9 @@ async def test_imported_set_reads_back_and_exports(legacy_file, tmp_path):
     payload = import_legacy.convert(legacy_file)
     await library.save_set(import_legacy.set_id_for(legacy_file), "My Set",
                            payload, source_kind="legacy",
-                           created_at="2025-12-29T02:42:13+00:00")
+                           created_at="2025-12-29T02:42:13+00:00", user_id=TEST_USER)
 
-    stored = await library.get_set(import_legacy.set_id_for(legacy_file))
+    stored = await library.get_set(import_legacy.set_id_for(legacy_file), user_id=TEST_USER)
     assert stored["created_at"].startswith("2025-12-29"), "original date lost"
     assert len(stored["tracks"]) == 3
     assert "Flim Flam" in formats.to_text(stored)

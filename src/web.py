@@ -27,7 +27,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import (Depends, FastAPI, File, HTTPException, Query, Request,
+                     Response, UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (FileResponse, JSONResponse, Response,
                                StreamingResponse)
@@ -43,6 +44,12 @@ from src.jobs import queue as jobs
 from src.sentry_setup import init_sentry
 from src.sources import download as dl
 from src.store.library import Library
+from src import auth, mail
+from src.auth import (clear_session_cookie, client_key, email_limiter,
+                      ip_limiter, make_dependencies, set_session_cookie,
+                      verify_limiter)
+from src.store.accounts import (Accounts, CODE_TTL, looks_like_email,
+                                normalise_email)
 from src.tasks import Task, TaskManager, confirm_weight
 
 logging.basicConfig(level=logging.INFO,
@@ -71,7 +78,10 @@ UPLOAD_DIR = BASE_DIR / "uploads"
 # Tracks fetched from Soulseek, served to the browser and swept with the rest.
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 MEDIA_DIR = BASE_DIR / "media"
-DATA_DIR = BASE_DIR / "data"
+# Overridable so a test can point the databases somewhere disposable, and
+# so a deployment can put them on a different volume from the code.
+# Without it the suite wrote real accounts into the working copy.
+DATA_DIR = Path(os.environ.get("SHAZAMER_DATA_DIR") or (BASE_DIR / "data"))
 TMP_DIR = BASE_DIR / "tmp"
 FRONTEND_DIST = BASE_DIR / "web" / "dist"
 # The Docusaurus build, served alongside the app rather than on GitHub
@@ -103,6 +113,12 @@ ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
     if o.strip()]
 
 library = Library(DATA_DIR / "library.db")
+# Its own file, not a table in the library. Sessions and login codes have a
+# different lifetime, a different backup story and a different blast radius
+# from a tracklist — losing accounts.db costs everyone a sign-in; losing
+# library.db costs them their work.
+accounts = Accounts(DATA_DIR / "accounts.db")
+current_user_optional, current_user = make_dependencies(accounts)
 tasks = TaskManager(TMP_DIR / "tasks")
 
 
@@ -148,6 +164,7 @@ async def lifespan(app: FastAPI):
     if interrupted:
         logger.info("Marked %d interrupted task(s) after restart", interrupted)
     tasks.sweep()
+    await accounts.sweep()
     swept = sweep_media(KEEP_AUDIO_DAYS)
     if swept:
         logger.info("Swept %d media file(s) past the %d-day window",
@@ -259,6 +276,9 @@ async def run_analysis(task_id: str, path: Path, title: str, *,
         set_id = set_id or task_id
         await library.save_set(
             set_id, title, result.to_dict(),
+            # Off the task, not off a session: this finishes in the worker,
+            # which has neither a request nor a cookie to ask.
+            user_id=task.user_id,
             source_url=source_url, source_kind=source_kind, uploader=uploader,
             audio_path=str(path), quality=quality,
         )
@@ -431,7 +451,8 @@ def _report(exc: Exception, **tags) -> None:
 
 
 @app.post("/api/analyze/upload")
-async def analyze_upload(file: UploadFile = File(...)):
+async def analyze_upload(file: UploadFile = File(...),
+                         user: Dict[str, Any] = Depends(current_user)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file selected")
 
@@ -467,13 +488,13 @@ async def analyze_upload(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Could not save upload: {exc}")
 
     title = Path(file.filename).stem
-    task = tasks.create(task_id, filename=title)
+    task = tasks.create(task_id, filename=title, user_id=user["id"])
     await dispatch(task, "analyze_upload_job", task_id, str(dest), title)
     return {"task_id": task_id, "filename": title}
 
 
 @app.post("/api/analyze/url")
-async def analyze_url(request: URLRequest):
+async def analyze_url(request: URLRequest, user: Dict[str, Any] = Depends(current_user)):
     url = (request.url or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
@@ -481,36 +502,59 @@ async def analyze_url(request: URLRequest):
         raise HTTPException(status_code=400, detail="URL must start with http(s)://")
 
     replaces = (request.replaces or "").strip() or None
-    if replaces is not None and await library.get_set(replaces) is None:
+    if replaces is not None and await library.get_set(
+            replaces, user_id=user["id"]) is None:
         raise HTTPException(status_code=404,
                             detail="The set to replace no longer exists")
 
     task_id = str(uuid.uuid4())
-    task = tasks.create(task_id, filename="Resolving...", source_url=url)
+    task = tasks.create(task_id, filename="Resolving...", source_url=url,
+                        user_id=user["id"])
     await dispatch(task, "analyze_url_job", task_id, url, replaces)
     return {"task_id": task_id, "url": url, "replaces": replaces}
 
 
+def _may_see(task, user) -> bool:
+    """Whether `user` may look at `task`.
+
+    An empty owner means the task predates accounts. Those stay visible rather
+    than becoming unreachable the moment this feature is switched on.
+    """
+    owner = getattr(task, "user_id", "") or ""
+    return owner in ("", user["id"])
+
+
 @app.get("/api/tasks")
-async def list_active_tasks():
+async def list_active_tasks(user: Dict[str, Any] = Depends(current_user)):
     """Analyses currently running, so the UI can offer a way back to them.
 
     Read from disk rather than memory: the work happens in the worker
     container, so the API has no in-process record of it.
+
+    Filtered here rather than in the store, because the task files are a
+    directory shared between two containers and not a queryable thing. Tasks
+    written before accounts existed carry no owner; they are shown, because
+    hiding somebody's running analysis behind an upgrade is worse than showing
+    it to the one person who was already using this.
     """
-    return tasks.active_on_disk()
+    mine = user["id"]
+    return [t for t in tasks.active_on_disk()
+            if t.get("user_id", "") in ("", mine)]
 
 
 @app.get("/api/tasks/{task_id}")
-async def get_task(task_id: str):
+async def get_task(task_id: str, user: Dict[str, Any] = Depends(current_user)):
     task = tasks.get(task_id)
-    if task is None:
+    if task is None or not _may_see(task, user):
         raise HTTPException(status_code=404, detail="Task not found")
     return task.snapshot()
 
 
 @app.post("/api/tasks/{task_id}/cancel")
-async def cancel_task(task_id: str):
+async def cancel_task(task_id: str, user: Dict[str, Any] = Depends(current_user)):
+    existing = tasks.get(task_id)
+    if existing is not None and not _may_see(existing, user):
+        raise HTTPException(status_code=404, detail="Task not found")
     # The job may be running in the worker, where there is no local handle to
     # cancel — ask the queue first, then fall back to the in-process case.
     if await jobs.abort(task_id) or await tasks.cancel(task_id):
@@ -519,7 +563,8 @@ async def cancel_task(task_id: str):
 
 
 @app.get("/api/tasks/{task_id}/events")
-async def task_events(task_id: str, request: Request):
+async def task_events(task_id: str, request: Request,
+                      user: Dict[str, Any] = Depends(current_user)):
     """Server-Sent Events stream of a task's progress.
 
     Replaces one-second polling. The client gets every state change the moment
@@ -527,7 +572,7 @@ async def task_events(task_id: str, request: Request):
     during the long identification phase.
     """
     task = tasks.get(task_id)
-    if task is None:
+    if task is None or not _may_see(task, user):
         raise HTTPException(status_code=404, detail="Task not found")
 
     async def stream():
@@ -591,16 +636,128 @@ def _sse(payload: Dict[str, Any]) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
+# ── Accounts ─────────────────────────────────────────────────────────────
+
+class EmailRequest(BaseModel):
+    email: str
+
+
+class VerifyRequest(BaseModel):
+    email: str
+    code: str
+
+
+@app.get("/api/auth/me")
+async def whoami(user: Optional[Dict[str, Any]] = Depends(current_user_optional)):
+    """Who is signed in, and whether signing in is required at all.
+
+    Answers 200 either way. The frontend needs to know it is *not* signed in
+    without treating that as an error, and a 401 here would be logged and
+    reported as one on every first page load.
+    """
+    return {
+        "authenticated": user is not None,
+        "auth_required": auth.AUTH_ENABLED,
+        "email": (user or {}).get("email", ""),
+        "can_send_mail": mail.configured(),
+    }
+
+
+@app.post("/api/auth/request-code")
+async def request_code(request: EmailRequest, http: Request):
+    """Send a one-time code.
+
+    Always answers the same way. Whether an address has an account, whether a
+    code was already in flight, whether the mail bounced — none of it is
+    reported, because all of it would answer "does this person use Shazamer?"
+    for anybody who asks.
+    """
+    email = normalise_email(request.email)
+    if not looks_like_email(email):
+        raise HTTPException(status_code=400, detail="That is not an email address")
+
+    if not mail.configured() and auth.AUTH_ENABLED:
+        # The one case worth reporting: the server cannot send at all, so
+        # waiting for a code would be waiting for ever. This says nothing
+        # about the address.
+        raise HTTPException(
+            status_code=503,
+            detail="This server cannot send email yet. Set SMTP_HOST, "
+                   "SMTP_USER, SMTP_PASSWORD and MAIL_FROM.")
+
+    quiet = {"sent": True, "expires_in": int(CODE_TTL.total_seconds())}
+    if not email_limiter.allow(email) or not ip_limiter.allow(client_key(http)):
+        logger.warning("Rate-limited a code request for %s", email)
+        return quiet
+
+    code = await accounts.start_login(email)
+    if code is None:
+        return quiet                # one already in flight; do not send twice
+
+    try:
+        await mail.send_login_code(email, code,
+                                   minutes=int(CODE_TTL.total_seconds() // 60))
+    except mail.MailError:
+        # Logged inside `mail`, without the code. Still answers `quiet`: a
+        # bounce tells the caller the address is real.
+        pass
+    return quiet
+
+
+@app.post("/api/auth/verify")
+async def verify_code(request: VerifyRequest, http: Request,
+                      response: Response):
+    email = normalise_email(request.email)
+    if not verify_limiter.allow(client_key(http)):
+        raise HTTPException(status_code=429,
+                            detail="Too many attempts. Try again later.")
+
+    user = await accounts.verify_login(email, request.code)
+    if user is None:
+        # One message for every failure — wrong, expired, used, never issued.
+        raise HTTPException(status_code=400,
+                            detail="That code is wrong or has expired.")
+
+    # The first account to exist adopts everything made before accounts did,
+    # so an existing library does not vanish behind a login screen.
+    if await accounts.count_users() == 1:
+        adopted = await library.adopt_orphans(user["id"])
+        if adopted:
+            logger.info("First account adopted %d pre-existing row(s)", adopted)
+
+    token = await accounts.create_session(
+        user["id"], http.headers.get("user-agent", ""))
+    set_session_cookie(response, token)
+    return {"authenticated": True, "email": user["email"]}
+
+
+@app.post("/api/auth/logout")
+async def logout(http: Request, response: Response):
+    await accounts.end_session(http.cookies.get(auth.COOKIE_NAME, ""))
+    clear_session_cookie(response)
+    return {"authenticated": False}
+
+
+@app.post("/api/auth/logout-everywhere")
+async def logout_everywhere(http: Request, response: Response,
+                            user: Dict[str, Any] = Depends(current_user)):
+    """Sign out of every device. The answer to a lost or stolen one."""
+    ended = await accounts.end_all_sessions(user["id"])
+    clear_session_cookie(response)
+    return {"authenticated": False, "sessions_ended": ended}
+
+
 # ── Sets ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/sets")
-async def list_sets(limit: int = Query(50, ge=1, le=200)):
-    return await library.list_sets(limit)
+async def list_sets(limit: int = Query(50, ge=1, le=200),
+                    user: Dict[str, Any] = Depends(current_user)):
+    return await library.list_sets(limit=limit, user_id=user["id"])
 
 
 @app.get("/api/sets/{set_id}")
-async def get_set(set_id: str):
-    data = await library.get_set(set_id)
+async def get_set(set_id: str, user: Dict[str, Any] = Depends(current_user)):
+    data = await library.get_set(set_id, user_id=user["id"])
     if data is None:
         raise HTTPException(status_code=404, detail="Set not found")
     data.pop("audio_path", None)
@@ -608,8 +765,8 @@ async def get_set(set_id: str):
 
 
 @app.delete("/api/sets/{set_id}")
-async def delete_set(set_id: str):
-    data = await library.get_set(set_id)
+async def delete_set(set_id: str, user: Dict[str, Any] = Depends(current_user)):
+    data = await library.get_set(set_id, user_id=user["id"])
     if data is None:
         raise HTTPException(status_code=404, detail="Set not found")
     audio = data.get("audio_path")
@@ -621,18 +778,19 @@ async def delete_set(set_id: str):
                 path.unlink(missing_ok=True)
         except OSError:
             pass
-    await library.delete_set(set_id)
+    await library.delete_set(set_id, user_id=user["id"])
     return {"deleted": True}
 
 
 @app.api_route("/api/sets/{set_id}/audio", methods=["GET", "HEAD"])
-async def stream_set_audio(set_id: str, request: Request):
+async def stream_set_audio(set_id: str, request: Request,
+                           user: Dict[str, Any] = Depends(current_user)):
     """Serve a set's audio with Range support, so the player can seek.
 
     Without ranges a browser downloads the whole mix before it can jump to
     01:12:00 — unusable for a three-hour set.
     """
-    data = await library.get_set(set_id)
+    data = await library.get_set(set_id, user_id=user["id"])
     if data is None:
         raise HTTPException(status_code=404, detail="Set not found")
 
@@ -714,8 +872,8 @@ def _media_type(suffix: str) -> str:
 
 
 @app.get("/api/sets/{set_id}/export/{fmt}")
-async def export_set(set_id: str, fmt: str):
-    data = await library.get_set(set_id)
+async def export_set(set_id: str, fmt: str, user: Dict[str, Any] = Depends(current_user)):
+    data = await library.get_set(set_id, user_id=user["id"])
     if data is None:
         raise HTTPException(status_code=404, detail="Set not found")
     if fmt not in export_formats.EXPORTERS:
@@ -745,8 +903,10 @@ async def export_set(set_id: str, fmt: str):
 
 @app.get("/api/library/recurring")
 async def recurring(min_sets: int = Query(2, ge=2, le=20),
-                    limit: int = Query(100, ge=1, le=500)):
-    return await library.recurring_tracks(min_sets=min_sets, limit=limit)
+                    limit: int = Query(100, ge=1, le=500),
+                    user: Dict[str, Any] = Depends(current_user)):
+    return await library.recurring_tracks(min_sets=min_sets, limit=limit,
+                                          user_id=user["id"])
 
 
 @app.get("/api/library/search")
@@ -754,22 +914,24 @@ async def search_library(q: str = "", bpm_min: Optional[float] = None,
                          bpm_max: Optional[float] = None,
                          camelot: Optional[str] = None,
                          starred: bool = False,
-                         limit: int = Query(200, ge=1, le=1000)):
+                         limit: int = Query(200, ge=1, le=1000),
+                         user: Dict[str, Any] = Depends(current_user)):
     return await library.search_tracks(q, bpm_min=bpm_min, bpm_max=bpm_max,
                                        camelot=camelot, starred_only=starred,
-                                       limit=limit)
+                                       limit=limit, user_id=user["id"])
 
 
 @app.get("/api/library/crate")
-async def get_crate():
-    return await library.crate()
+async def get_crate(user: Dict[str, Any] = Depends(current_user)):
+    return await library.crate(user_id=user["id"])
 
 
 @app.post("/api/library/star")
-async def star_track(request: StarRequest):
+async def star_track(request: StarRequest, user: Dict[str, Any] = Depends(current_user)):
     if not request.key:
         raise HTTPException(status_code=400, detail="Track key is required")
-    starred = await library.toggle_star(request.key, request.title, request.artist)
+    starred = await library.toggle_star(request.key, request.title,
+                                        request.artist, user_id=user["id"])
     return {"key": request.key, "starred": starred}
 
 
@@ -839,7 +1001,8 @@ async def acquire_candidates(artist: str, title: str,
 
 
 @app.post("/api/acquire/track")
-async def acquire_track_endpoint(request: AcquireRequest):
+async def acquire_track_endpoint(request: AcquireRequest,
+                                 user: Dict[str, Any] = Depends(current_user)):
     """Find the best Soulseek match for a track and fetch it.
 
     Returns immediately with a download id: a Soulseek transfer can take an
@@ -856,7 +1019,7 @@ async def acquire_track_endpoint(request: AcquireRequest):
                    "and SLSKD_API_KEY to enable it.")
 
     download_id = await library.start_download(
-        request.key, request.artist, request.title)
+        request.key, request.artist, request.title, user_id=user["id"])
 
     meta = {"label": request.label, "year": request.year,
             "album": request.album, "genre": request.genre}
@@ -880,29 +1043,30 @@ async def acquire_track_endpoint(request: AcquireRequest):
 
 @app.get("/api/acquire/downloads")
 async def list_downloads(key: Optional[str] = None,
-                         limit: int = Query(50, ge=1, le=200)):
+                         limit: int = Query(50, ge=1, le=200),
+                         user: Dict[str, Any] = Depends(current_user)):
     """Download attempts, for one track or the most recent overall."""
     if key:
-        return await library.downloads_for(key)
-    return await library.recent_downloads(limit)
+        return await library.downloads_for(key, user_id=user["id"])
+    return await library.recent_downloads(limit, user_id=user["id"])
 
 
 @app.get("/api/acquire/downloads/{download_id}")
-async def get_download(download_id: int):
-    row = await library.get_download(download_id)
+async def get_download(download_id: int, user: Dict[str, Any] = Depends(current_user)):
+    row = await library.get_download(download_id, user_id=user["id"])
     if row is None:
         raise HTTPException(status_code=404, detail="Download not found")
     return row
 
 
 @app.get("/api/acquire/downloads/{download_id}/file")
-async def serve_download(download_id: int):
+async def serve_download(download_id: int, user: Dict[str, Any] = Depends(current_user)):
     """Hand the file to the browser.
 
     The server is not storage: this is how a track reaches you, and the file is
     swept on the same schedule as set audio.
     """
-    stored = await library.download_path(download_id)
+    stored = await library.download_path(download_id, user_id=user["id"])
     if stored is None:
         raise HTTPException(
             status_code=404,
@@ -933,12 +1097,12 @@ async def soulseek_downloads():
 # ── Watches ──────────────────────────────────────────────────────────────
 
 @app.get("/api/watches")
-async def list_watches():
-    return await library.list_watches()
+async def list_watches(user: Dict[str, Any] = Depends(current_user)):
+    return await library.list_watches(user_id=user["id"])
 
 
 @app.post("/api/watches")
-async def add_watch(request: WatchRequest):
+async def add_watch(request: WatchRequest, user: Dict[str, Any] = Depends(current_user)):
     url = (request.url or "").strip()
     if not url.lower().startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="URL must start with http(s)://")
@@ -950,21 +1114,23 @@ async def add_watch(request: WatchRequest):
             title = info.get("title") or info.get("channel") or url
         except dl.DownloadError:
             title = url
-    await library.add_watch(watch_id, url, title)
+    await library.add_watch(watch_id, url, title, user_id=user["id"])
     return {"id": watch_id, "url": url, "title": title}
 
 
 @app.delete("/api/watches/{watch_id}")
-async def delete_watch(watch_id: str):
-    if not await library.delete_watch(watch_id):
+async def delete_watch(watch_id: str, user: Dict[str, Any] = Depends(current_user)):
+    if not await library.delete_watch(watch_id, user_id=user["id"]):
         raise HTTPException(status_code=404, detail="Watch not found")
     return {"deleted": True}
 
 
 @app.post("/api/watches/{watch_id}/check")
-async def check_watch(watch_id: str, limit: int = Query(20, ge=1, le=100)):
+async def check_watch(watch_id: str, limit: int = Query(20, ge=1, le=100),
+                      user: Dict[str, Any] = Depends(current_user)):
     """List what is new on a followed channel since the last check."""
-    watches = {w["id"]: w for w in await library.list_watches()}
+    watches = {w["id"]: w for w in await library.list_watches(
+        user_id=user["id"])}
     watch = watches.get(watch_id)
     if watch is None:
         raise HTTPException(status_code=404, detail="Watch not found")
