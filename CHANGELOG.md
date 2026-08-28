@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.3](https://github.com/PierreGallet/shazamer/compare/v1.7.2...v1.7.3) (2026-08-28)
+
+
+### Performance Improvements
+
+* **identify:** drop probe concurrency from eight to four ([c6cb64e](https://github.com/PierreGallet/shazamer/commit/c6cb64e970182d2fec698e7bac3f7dcaf0c23400))
+
 ## [1.7.2](https://github.com/PierreGallet/shazamer/compare/v1.7.1...v1.7.2) (2026-08-28)
 
 
