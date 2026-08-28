@@ -45,6 +45,10 @@ RUN uv pip install --system -r requirements.txt
 COPY src/ ./src/
 # Read at runtime by /api/health, so the deployed version is knowable.
 COPY .release-please-manifest.json ./
+# The whole directory, not just the health check: admin scripts are only
+# useful if they are present when they are needed, and copying one in by
+# hand mid-incident is how a step gets skipped.
+COPY scripts/ ./scripts/
 COPY scripts/healthcheck.py ./
 COPY --from=web /web/dist ./web/dist
 # Mounted at /docs by the app, so the docs ship with the version they

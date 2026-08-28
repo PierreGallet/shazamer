@@ -59,6 +59,9 @@ async def main() -> int:
                         help="Where the databases live (default: ./data)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Report what would move, change nothing")
+    parser.add_argument("--i-know", dest="force", action="store_true",
+                        help="Claim even with accounts switched off, which "
+                             "hides the library until they are on")
     args = parser.parse_args()
 
     email = normalise_email(args.email)
@@ -88,6 +91,31 @@ async def main() -> int:
     if args.dry_run:
         print(f"Dry run — would give all of it to {email}.")
         return 0
+
+    # Claiming while accounts are off makes the library disappear, and I did
+    # exactly that to a live site: the rows become owned, the app is still
+    # running as the ownerless user, and every query returns nothing. Nothing
+    # is lost and the fix is one UPDATE, but the site looks empty until
+    # somebody notices.
+    #
+    # So the two changes belong together. Order them the other way — claim,
+    # then switch on — and there is a window with no library; switch on first
+    # and there is a window where the first person to sign in adopts it, which
+    # is fine but is not what this script is for.
+    import os
+    if os.environ.get("AUTH_ENABLED", "").lower() not in ("1", "true", "yes"):
+        print("Refusing: AUTH_ENABLED is not set.\n"
+              "\n"
+              "With accounts off the app runs as the ownerless user, so\n"
+              "claiming these rows would hide them from it — the library\n"
+              "would read as empty until accounts are switched on.\n"
+              "\n"
+              "Set AUTH_ENABLED=1 (and SMTP, or nobody can sign in), deploy,\n"
+              "then run this. Or pass --i-know to do it anyway.",
+              file=sys.stderr)
+        if not args.force:
+            return 3
+        print("--i-know given; claiming anyway.", file=sys.stderr)
 
     user = await find_or_create(accounts, email)
     print(f"Account {email} -> id {user['id']}")
