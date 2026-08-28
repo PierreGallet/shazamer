@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0](https://github.com/PierreGallet/shazamer/compare/v1.13.0...v1.14.0) (2026-08-28)
+
+
+### Features
+
+* **acquire:** Soulseek is a source card that opens a picker ([67d48e7](https://github.com/PierreGallet/shazamer/commit/67d48e7ef2167253bd7455017192a1f6becc73db))
+
 ## [1.13.0](https://github.com/PierreGallet/shazamer/compare/v1.12.3...v1.13.0) (2026-08-28)
 
 
