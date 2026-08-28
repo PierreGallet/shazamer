@@ -37,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "boundaries first (better on hard-cut compilations).")
     parser.add_argument("--interval", type=float,
                         help="Seconds between probes (default: from set length)")
-    parser.add_argument("--concurrency", type=int, default=8,
+    parser.add_argument("--concurrency", type=int, default=4,
                         help="Parallel identification requests (default: 8)")
     parser.add_argument("--probe-duration", type=float, default=12.0,
                         help="Seconds per probe; Shazam uses a centred 10s of it")

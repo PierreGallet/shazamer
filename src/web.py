@@ -85,7 +85,12 @@ for directory in (UPLOAD_DIR, MEDIA_DIR, DATA_DIR, TMP_DIR, DOWNLOAD_DIR):
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 2 * 1024 * 1024 * 1024))
 ALLOWED_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".opus", ".aac",
                       ".wma", ".aiff", ".aif", ".webm"}
-CONCURRENCY = int(os.environ.get("SHAZAM_CONCURRENCY", "8"))
+# Four, not eight. Eight was chosen when throughput plateaued around three
+# probes a second and extra slots were merely useless. They are not useless
+# now: Shazam refuses aggressively, and every parallel slot is another request
+# feeding the limit that then pauses *all* of them. On a 75-minute set the
+# refusals cost more wall-clock than the parallelism saved.
+CONCURRENCY = int(os.environ.get("SHAZAM_CONCURRENCY", "4"))
 KEEP_AUDIO_DAYS = int(os.environ.get("KEEP_AUDIO_DAYS", "14"))
 # Downloads are kept far longer than set audio, and for a different reason.
 # Set audio is a byproduct — it exists so the waveform can be scrubbed. A

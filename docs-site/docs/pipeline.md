@@ -47,15 +47,38 @@ probe was spawned up front, all alive at once — about 95 processes for a
 half-hour set and 430 for a three-hour one, which is how a container was
 OOM-killed.
 
-Concurrency defaults to four. Measured against the live service, throughput
-plateaus around three probes per second whatever is asked for: two in parallel
-and eight in parallel move the same number. The extra slots buy nothing and are
-what tips the service into refusing.
+Concurrency defaults to four. It was eight, from a measurement that no longer
+holds: throughput used to plateau around three probes per second whatever was
+asked for, so extra slots were merely useless. They are not merely useless now.
+Every parallel slot is another request feeding a rate limit that then pauses
+*all* of them, and on a seventy-five minute set the refusals cost more
+wall-clock than the parallelism saved.
 
-A refusal is retried, not recorded as "no match". Under load the service stops
-returning JSON and serves something else; treated as an answer, that
-manufactured gaps — one run filed 113 of 206 probes as unidentified because it
-could not ask, not because there was nothing there.
+A refusal is not an answer, and the two must not be confused. "No match" is
+real, common and useful — it is how a dub or an unsigned edit shows up. "The
+service would not talk to us" is not an outcome at all, and filing it as one
+manufactures gaps in the tracklist.
+
+Shazam answers a rate-limited request with `HTTP 429` and a 142-byte HTML
+page. The client library funnels every non-JSON body into one
+`FailedDecodeJson`, so the failure worth treating specially arrived disguised
+as a parsing problem — and the code did the worst thing available with it,
+retrying inside the library *and* outside it, eight requests for one refused
+probe. One run lost 85 of its 128 probes that way, and the retries were part
+of why.
+
+Rate limiting is now its own exception, and the backoff belongs to the
+**service** rather than to whichever probe discovered the problem. Per-probe
+backoff cannot work with four probes running: the one that sleeps wakes into a
+limit the other three have been feeding. One refusal pauses everyone, a
+simultaneous wave counts once, and success walks the penalty back down. The
+progress line says when it is waiting and for how long, because a run sitting
+out a limit exactly as designed is otherwise indistinguishable from a hung one.
+
+Waiting it out is the right answer for a tool you leave running, so refusals
+get a longer and separate budget from ordinary retries — being turned away is
+not a failed attempt at an answer. Probes still lost to a limit are counted,
+not folded silently into the tracklist.
 
 Retries live in one place. The client library retries twenty times with a
 sixty-second ceiling, and four attempts layered on top gave a worst case of
@@ -64,7 +87,7 @@ stalled request cannot hold a slot for ever.
 
 ## What it costs
 
-A sixty-nine minute set, measured end to end:
+A sixty-nine minute set, measured end to end on a quiet service:
 
 | Stage | Time | Share |
 | --- | --- | --- |
@@ -75,6 +98,22 @@ A sixty-nine minute set, measured end to end:
 | **Total** | **690 s** | |
 
 The same set took over two hours before the fixes above.
+
+A seventy-five minute set measured while Shazam *was* rate-limiting, for
+contrast — same code, 32 shared pauses, no probe lost:
+
+| Stage | Time | Share |
+| --- | --- | --- |
+| Decoding | 361 s | 28% |
+| Identifying | 374 s | 29% |
+| Confirming | 444 s | 34% |
+| BPM and key | 122 s | 9% |
+| **Total** | **1303 s** | |
+
+Confirmation overtakes identification there, because its extra probes pay the
+same pauses. The run before the rate-limit fix finished sooner and was worth
+much less: 85 probes lost, 13 records found instead of 32, 35% of the set
+covered instead of 64%. Finishing fast is not the goal.
 
 Every analysis records this breakdown, shown behind the elapsed time in the set
 header. The stages are unequal and which one dominates moves with the set and

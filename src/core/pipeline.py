@@ -44,7 +44,8 @@ class AnalyzeConfig:
     # identified. Segments thinner than this get extra probes spread across
     # them; see _confirm_segments. 1 disables the pass entirely.
     votes_per_segment: int = 3
-    concurrency: int = 8
+    # See src/web.py: parallel slots now cost refusals, not just memory.
+    concurrency: int = 4
     waveform_points: int = 1600
     min_segment: float = 20.0
     compute_musical_features: bool = True
