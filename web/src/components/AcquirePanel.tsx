@@ -28,6 +28,17 @@ export default function AcquirePanel(props: Props) {
   const [queued, setQueued] = createSignal<Record<string, boolean>>({});
   const [error, setError] = createSignal("");
 
+  let dialog: HTMLDialogElement | undefined;
+
+  /** Open first, search second: twenty seconds of nothing happening after a
+   *  click reads as a dead button. */
+  function openPicker() {
+    setCandidates(null);
+    setError("");
+    dialog?.showModal();
+    void searchSoulseek();
+  }
+
   async function searchSoulseek() {
     setSearching(true);
     setError("");
@@ -91,27 +102,57 @@ export default function AcquirePanel(props: Props) {
         </div>
 
         <Show when={sources()!.soulseek_configured}>
-          <div class="acquire-p2p">
-            <div class="row">
-              {/* One click, best match, verified and tagged — the list below
-                  is for when you want to overrule that choice. */}
-              <GetTrack track={props.track} enabled={true} />
-              <button
-                class="btn btn-ghost btn-sm"
-                onClick={searchSoulseek}
-                disabled={searching()}
-              >
-                <Show when={searching()}><span class="spinner" /></Show>
-                {searching() ? "Searching Soulseek…" : "Find it on Soulseek"}
-              </button>
-              <span class="tiny faint">
-                Needs your own account and a shared folder
+          {/* A card among the others, because that is what it is: another
+              place the record might be. The difference is that this one can
+              hand you the file rather than a page to buy it on. */}
+          <div class="acquire-grid acquire-grid-p2p">
+            <button class="acquire-card acquire-card-action" onClick={openPicker}>
+              <div class="acquire-card-top">
+                <span class="acquire-name">Soulseek</span>
+                <span class="chip chip-accent">p2p</span>
+              </div>
+              <div class="tiny muted">MP3 320 or lossless, from other people</div>
+              <div class="tiny faint">Pick from the best matches</div>
+            </button>
+          </div>
+        </Show>
+
+        <dialog class="picker" ref={dialog} onClose={() => setCandidates(null)}>
+          <div class="picker-head">
+            <div>
+              <div class="eyebrow">Soulseek</div>
+              <div class="tiny faint">
+                {props.track.artist} — {props.track.title}
+              </div>
+            </div>
+            <button class="btn btn-ghost btn-sm" onClick={() => dialog?.close()}>
+              Close
+            </button>
+          </div>
+
+          <Show when={searching()}>
+            {/* Said out loud because it is genuinely slow: peers answer over
+                about twenty seconds and a silent spinner reads as broken. */}
+            <div class="picker-wait">
+              <span class="spinner" />
+              <span class="tiny muted">
+                Asking the network — this takes about twenty seconds.
               </span>
             </div>
+          </Show>
 
-            <Show when={candidates()}>
+          <Show when={!searching() && candidates()}>
+            <Show
+              when={candidates()!.length}
+              fallback={
+                <div class="tiny faint picker-empty">
+                  Nobody is sharing this one right now. The pool changes
+                  constantly, so it is worth trying again later.
+                </div>
+              }
+            >
               <div class="candidates">
-                <For each={candidates()!.slice(0, 8)}>
+                <For each={candidates()!.slice(0, 5)}>
                   {(candidate) => (
                     <div class="candidate">
                       <span
@@ -148,9 +189,18 @@ export default function AcquirePanel(props: Props) {
                   )}
                 </For>
               </div>
+              <div class="picker-foot">
+                {/* The one-click path, kept and explained: it applies the same
+                    ranking as the list above and takes the top one. */}
+                <GetTrack track={props.track} enabled={true} />
+                <span class="tiny faint">
+                  Ranked by format, bitrate and length — extended mixes first.
+                </span>
+              </div>
             </Show>
-          </div>
-        </Show>
+          </Show>
+        </dialog>
+
       </Show>
 
       <Show when={error()}>

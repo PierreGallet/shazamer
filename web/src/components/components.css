@@ -453,3 +453,38 @@
 .btn-icon.muted { opacity: 0.3; cursor: default; }
 .btn-icon.muted:hover { background: none; color: var(--text-faint); }
 .btn-icon:disabled { opacity: 0.5; cursor: progress; }
+
+/* ── Soulseek picker ────────────────────────────────────────────────────
+   Soulseek is a card among the other sources, because that is what it is:
+   another place the record might be. It is a button rather than a link —
+   there is no page to open, only a question to ask the network. */
+.acquire-card-action {
+  font: inherit; text-align: left; cursor: pointer; width: 100%;
+}
+.acquire-grid-p2p { margin-top: 0.5rem; }
+
+/* A native <dialog>: focus trapping, Escape to close and a backdrop, none of
+   which is worth hand-rolling. */
+.picker {
+  width: min(680px, calc(100vw - 2rem));
+  padding: 1rem 1.1rem 1.1rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+}
+.picker::backdrop { background: rgba(0, 0, 0, 0.66); }
+.picker-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 1rem; margin-bottom: 0.9rem;
+}
+.picker-wait {
+  display: flex; align-items: center; gap: 0.6rem; padding: 1.6rem 0;
+  justify-content: center;
+}
+.picker-empty { padding: 1.4rem 0; text-align: center; }
+.picker-foot {
+  display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
+  margin-top: 0.85rem; padding-top: 0.85rem;
+  border-top: 1px solid var(--line);
+}
