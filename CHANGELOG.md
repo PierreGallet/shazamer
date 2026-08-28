@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.4](https://github.com/PierreGallet/shazamer/compare/v1.7.3...v1.7.4) (2026-08-28)
+
+
+### Bug Fixes
+
+* **deploy:** stop racing Swarm's own update ([53ec447](https://github.com/PierreGallet/shazamer/commit/53ec4479a4740f9e6be83ef7b639b45dbf3202ac))
+
 ## [1.7.3](https://github.com/PierreGallet/shazamer/compare/v1.7.2...v1.7.3) (2026-08-28)
 
 
