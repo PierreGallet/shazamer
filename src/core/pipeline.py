@@ -148,9 +148,14 @@ class AnalysisResult:
 
 class Pipeline:
     def __init__(self, identifier: Identifier,
-                 config: Optional[AnalyzeConfig] = None) -> None:
+                 config: Optional[AnalyzeConfig] = None,
+                 on_work: Optional[Callable[[int, int], None]] = None) -> None:
         self.identifier = identifier
         self.config = config or AnalyzeConfig()
+        # Reports (identify probes, confirmation probes) once both are known.
+        # Separate from on_progress because it is not progress — it is what the
+        # remaining progress is going to cost.
+        self.on_work = on_work
 
     async def run(self, path: str, on_progress: Optional[ProgressFn] = None
                   ) -> AnalysisResult:
@@ -366,6 +371,17 @@ class Pipeline:
 
         if not plan:
             return segments
+
+        # Published before the stage runs, because this is the number that
+        # makes the countdown honest: confirmation probes cost the same as any
+        # other, but they are packed into a twentieth of the bar, so how many
+        # there are decides whether this stage is a moment or a third of the
+        # run. Guessing it from a table missed a real run by 215%.
+        if self.on_work is not None:
+            try:
+                self.on_work(len(probes), len(plan))
+            except Exception:
+                logger.debug("work callback raised", exc_info=True)
 
         report("confirming", CONFIRM_FROM,
                f"Confirming {len({i for i, _ in plan})} thinly-probed tracks...")

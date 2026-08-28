@@ -37,6 +37,82 @@ def _now() -> str:
 # enough to follow a stage change, long enough not to swing on one slow probe.
 ETA_WINDOW = 8
 
+# What each part of the bar actually costs.
+#
+# Progress is one 0-100 scale across stages whose cost per point differs by an
+# order of magnitude, so a rate measured in one stage cannot be extrapolated
+# across the rest. Measured end to end on a 75-minute set:
+#
+#     stage         points   seconds   s/point
+#     decoding          30       361      12.0
+#     identifying       44       374       8.5
+#     confirming         5       444      88.7
+#     features           7       122      17.4
+#
+# Confirmation is 6% of the bar and 34% of the wall clock. Extrapolating the
+# identify rate across everything left promised three minutes at 79% with nine
+# and a half to go.
+#
+# But its cost is NOT a constant, and a first attempt at fixing this by baking
+# 10.5 into a table was worse than the bug: replayed against a second real run
+# it missed by 215%. Confirmation probes are not slow — they cost the same
+# 2.9 s as any other probe. Confirmation is expensive only because there are
+# many of them inside a narrow band: 152 probes over 5 points against 128 over
+# 44. How many depends on how many segments came out thinly evidenced, which
+# depends on how identification went, which varies by an order of magnitude
+# between runs.
+#
+# So the weight is computed from the actual probe counts, which the pipeline
+# knows before the stage begins. The table below is only the prior used until
+# it says otherwise.
+_IDENTIFY_POINTS = 44
+_CONFIRM_POINTS = 5
+
+_COST_CURVE = (
+    (5, 0.3),      # resolving and downloading; an upload skips most of it
+    (35, 1.4),     # decoding
+    (81, 1.0),     # identifying, then merging — the reference cost
+    (87, 4.0),     # confirming — a deliberately timid prior; see above
+    (95, 2.0),     # BPM and key
+    (100, 0.3),    # writing the set out
+)
+
+
+def confirm_weight(identify_probes: int, confirm_probes: int) -> float:
+    """Cost per confirmation point, relative to one identification point.
+
+    Both stages pay the same price per probe — the same network, the same rate
+    limit — so the ratio is purely how densely each packs probes into its share
+    of the bar.
+    """
+    if identify_probes <= 0 or confirm_probes <= 0:
+        return 0.05                     # nothing to confirm; the band is free
+    per_identify_point = identify_probes / _IDENTIFY_POINTS
+    per_confirm_point = confirm_probes / _CONFIRM_POINTS
+    return per_confirm_point / per_identify_point
+
+
+def _curve_with(confirm_cost: Optional[float]) -> tuple:
+    if confirm_cost is None:
+        return _COST_CURVE
+    return tuple((bound, confirm_cost if bound == 87 else cost)
+                 for bound, cost in _COST_CURVE)
+
+
+def _weighted(pct: float, confirm_cost: Optional[float] = None) -> float:
+    """Cost-weighted work done by `pct`, in units of one identification point.
+
+    Turns the uneven bar into an even one, so the ordinary rate-times-remaining
+    arithmetic is valid again.
+    """
+    total, prev = 0.0, 0.0
+    for bound, cost in _curve_with(confirm_cost):
+        if pct <= prev:
+            break
+        total += (min(pct, bound) - prev) * cost
+        prev = bound
+    return total
+
 
 class Task:
     def __init__(self, task_id: str, filename: str = "", source_url: str = "") -> None:
@@ -61,6 +137,9 @@ class Task:
         self.eta_seconds: Optional[int] = None
         # (monotonic time, progress) samples, for estimating what remains.
         self._samples: List[tuple] = []
+        # Set once the pipeline knows how much confirmation work there is.
+        # None until then, so the prior above is used.
+        self.confirm_cost: Optional[float] = None
         self._queues: List[asyncio.Queue] = []
         self._handle: Optional[asyncio.Task] = None
 
@@ -88,12 +167,18 @@ class Task:
             return
 
         first_at, first_pct = self._samples[0]
-        gained = progress - first_pct
+        # Measured in weighted points, not raw ones, so a rate observed during
+        # identification still means something once confirmation starts — that
+        # stage costs ten times as much per point, and pretending otherwise is
+        # what made the countdown promise three minutes with nine to go.
+        cost = self.confirm_cost
+        gained = _weighted(progress, cost) - _weighted(first_pct, cost)
         elapsed = now - first_at
         if gained <= 0 or elapsed <= 0:
             return                          # keep the previous estimate
 
-        remaining = (100 - progress) * (elapsed / gained)
+        left = _weighted(100.0, cost) - _weighted(progress, cost)
+        remaining = left * (elapsed / gained)
         # Rounded coarsely on purpose: this is an estimate, and showing it to
         # the second would claim a precision it does not have. Never rounded
         # down to zero while there is work left — "0 seconds remaining" on a

@@ -43,7 +43,7 @@ from src.jobs import queue as jobs
 from src.sentry_setup import init_sentry
 from src.sources import download as dl
 from src.store.library import Library
-from src.tasks import Task, TaskManager
+from src.tasks import Task, TaskManager, confirm_weight
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
@@ -171,10 +171,11 @@ app.add_middleware(
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
-def make_pipeline() -> Pipeline:
+def make_pipeline(on_work=None) -> Pipeline:
     return Pipeline(
         identifier=ShazamIdentifier(concurrency=CONCURRENCY),
         config=AnalyzeConfig(concurrency=CONCURRENCY),
+        on_work=on_work,
     )
 
 
@@ -242,10 +243,18 @@ async def run_analysis(task_id: str, path: Path, title: str, *,
         tasks.update(task, stage=stage, progress=pct, message=message,
                      status="processing")
 
+    def on_work(identify_probes: int, confirm_probes: int) -> None:
+        # What the rest of the bar is going to cost. Confirmation packs its
+        # probes into a twentieth of the width, so this is the difference
+        # between a countdown that is roughly right and one that is out by a
+        # factor of three.
+        task.confirm_cost = confirm_weight(identify_probes, confirm_probes)
+
     try:
         tasks.update(task, status="processing", stage="starting", progress=1,
                      message="Starting analysis...", filename=title)
-        result = await make_pipeline().run(str(path), on_progress=on_progress)
+        result = await make_pipeline(on_work=on_work).run(
+            str(path), on_progress=on_progress)
 
         set_id = set_id or task_id
         await library.save_set(
