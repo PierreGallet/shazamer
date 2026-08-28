@@ -1,0 +1,30 @@
+/* Shazamer docs — the app's palette, so the two read as one thing. */
+:root {
+  --ifm-color-primary: #d94500;
+  --ifm-color-primary-dark: #c33e00;
+  --ifm-color-primary-darker: #b83a00;
+  --ifm-color-primary-darkest: #973000;
+  --ifm-color-primary-light: #f34e00;
+  --ifm-color-primary-lighter: #ff5500;
+  --ifm-color-primary-lightest: #ff7128;
+  --ifm-code-font-size: 92%;
+  --ifm-font-family-base: "Archivo", system-ui, -apple-system, sans-serif;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="dark"] {
+  --ifm-color-primary: #ff7c33;
+  --ifm-color-primary-dark: #ff6414;
+  --ifm-color-primary-darker: #ff5905;
+  --ifm-color-primary-darkest: #d24500;
+  --ifm-color-primary-light: #ff9452;
+  --ifm-color-primary-lighter: #ff9f61;
+  --ifm-color-primary-lightest: #ffbf94;
+  --ifm-background-color: #0a0908;
+  --ifm-background-surface-color: #131110;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.06);
+}
+
+/* Tables carry most of the load in these pages. */
+table { display: table; width: 100%; }
+table th { text-align: left; }
