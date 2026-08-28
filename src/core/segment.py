@@ -112,13 +112,30 @@ class Segment:
         return "weak"
 
 
+def auto_edge_margin(duration: float) -> float:
+    """How much of each end to skip, as a function of length.
+
+    Eight seconds is right for a set: the opening is applause, a fade-in or a
+    DJ talking, and fingerprinting it wastes a request. It is badly wrong for
+    a reel. On a thirty-five second clip an eight-second margin at each end
+    puts nearly half the content outside any probe window — and unlike a set,
+    a reel has no intro to skip, the music starts on the first frame.
+
+    Capped at eight so nothing changes above about four minutes.
+    """
+    return min(8.0, max(1.0, duration * 0.03))
+
+
 def grid_probes(duration: float, interval: float = 25.0,
-                edge_margin: float = 8.0) -> List[float]:
+                edge_margin: Optional[float] = None) -> List[float]:
     """Probe positions on a regular grid.
 
     `edge_margin` keeps the first and last probe away from fade-ins and
-    applause, which fingerprint poorly and waste a request.
+    applause, which fingerprint poorly and waste a request. Derived from the
+    duration when not given, for the same reason the cadence is.
     """
+    if edge_margin is None:
+        edge_margin = auto_edge_margin(duration)
     if duration <= 0:
         return []
     if duration <= edge_margin * 2:
