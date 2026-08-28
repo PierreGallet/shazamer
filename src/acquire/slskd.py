@@ -342,6 +342,13 @@ class SlskdClient:
                     candidates.append(candidate)
 
         # Best-effort cleanup; a stale search is harmless if this fails.
+        #
+        # Deliberately after the responses have been read, and tolerant of
+        # failure: slskd finalises a search a moment after reporting it
+        # complete, and deleting it inside that window makes it log a database
+        # concurrency error. The delete still succeeds and the results are
+        # already in hand — but the log line looks like a fault, so it is
+        # worth saying here that it is not one.
         try:
             await self._request("DELETE", f"/searches/{search_id}")
         except SlskdError:

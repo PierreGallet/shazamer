@@ -102,7 +102,7 @@ export default function AcquirePanel(props: Props) {
                 disabled={searching()}
               >
                 <Show when={searching()}><span class="spinner" /></Show>
-                {searching() ? "Searching…" : "Show all candidates"}
+                {searching() ? "Searching Soulseek…" : "Find it on Soulseek"}
               </button>
               <span class="tiny faint">
                 Needs your own account and a shared folder
@@ -142,7 +142,7 @@ export default function AcquirePanel(props: Props) {
                         disabled={queued()[candidate.full_path]}
                         onClick={() => enqueue(candidate)}
                       >
-                        {queued()[candidate.full_path] ? "Queued" : "Get"}
+                        {queued()[candidate.full_path] ? "Queued" : "Download"}
                       </button>
                     </div>
                   )}
