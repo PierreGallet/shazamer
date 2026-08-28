@@ -15,8 +15,9 @@ from typing import Any, Callable, Dict, List, Optional
 from ..identify.base import Identifier, TrackMatch
 from . import audio as audio_io
 from .features import StreamingFeatures, estimate_bpm, estimate_key
-from .segment import (ProbeResult, Segment, auto_interval, confirmation_times,
-                      grid_probes, merge_probes, spectral_boundaries)
+from .segment import (ProbeResult, Segment, auto_interval, coalesce,
+                      confirmation_times, grid_probes, merge_probes,
+                      spectral_boundaries)
 from .timecode import format_timestamp
 
 logger = logging.getLogger(__name__)
@@ -303,13 +304,27 @@ class Pipeline:
                 done += 1
                 pct = IDENTIFY_FROM + int(
                     (IDENTIFY_TO - IDENTIFY_FROM) * done / total)
-                report("identifying", pct, f"Identifying... {done}/{total} probes")
+                report("identifying", pct,
+                       f"Identifying... {done}/{total} probes{self._waiting_note()}")
 
             if match is None:
                 return ProbeResult(time=t)
             return ProbeResult(time=t, key=match.key, payload=_match_payload(match))
 
         return list(await asyncio.gather(*(one(t) for t in times)))
+
+    def _waiting_note(self) -> str:
+        """Say so when the run is sitting out a rate limit.
+
+        Without this the progress bar simply stops, and a set that is waiting
+        exactly as designed is indistinguishable from one that has hung — a
+        distinction that cost an hour of staring at "82%" once already.
+        """
+        gate = getattr(self.identifier, "_gate", None)
+        pause = getattr(gate, "paused", 0.0) if gate else 0.0
+        if pause <= 1:
+            return ""
+        return f" — Shazam is rate-limiting, waiting {int(pause)}s"
 
     async def _confirm_segments(self, path: str, segments: List[Segment],
                                 probes: List[ProbeResult],
@@ -395,8 +410,17 @@ class Pipeline:
                 segment.payload = payloads.get(winner, segment.payload)
             segment.votes = counts[winner]
 
+        # Overturning a segment can leave it naming the same record as the
+        # segment beside it. Merging again is what turns that back into one
+        # track — without it the set reports the same record playing two or
+        # three times in a row, which is what a DJ notices first.
+        merged = coalesce(segments, self.config.min_segment)
+        if len(merged) != len(segments):
+            logger.info("Confirmation left %d adjacent duplicate(s), merged",
+                        len(segments) - len(merged))
+
         report("confirming", CONFIRM_TO, "Confirmation complete")
-        return segments
+        return merged
 
     def _to_tracks(self, segments: List[Segment]) -> List[Track]:
         tracks: List[Track] = []

@@ -553,3 +553,55 @@ def test_confidence_still_reports_how_much_was_recognised():
                       votes=3, probes=10, matched=3)
     assert segment.confidence == 0.3, "confidence should be share of all probes"
     assert segment.agreement == 1.0, "agreement should be share of those that spoke"
+
+
+async def test_confirmation_does_not_leave_a_track_playing_twice():
+    """A record must not be reported as two consecutive plays of itself.
+
+    Confirmation votes can rename a segment, and when the new name is the one
+    both its neighbours already carry, all three are one play. Merging ran
+    only *before* confirmation, so nothing put them back together — a
+    production set listed the same track at 06:55, 08:04 and 08:33, touching,
+    with identical artist and title, and no gap between them to bridge.
+    """
+    from src.identify.base import TrackMatch
+
+    right = {"title": "Reload", "artist": "Ben Kim"}
+    segments = [
+        Segment(start=0.0, end=415.5, key="ben kim::reload", payload=right,
+                votes=4, probes=4, matched=4),
+        # The one that will change hands: a single probe named something else.
+        Segment(start=415.5, end=484.6, key="andrea::good vibes",
+                payload={"title": "Good Vibes", "artist": "Andrea"},
+                votes=1, probes=1, matched=1),
+        Segment(start=484.6, end=900.0, key="ben kim::reload", payload=right,
+                votes=4, probes=4, matched=4),
+    ]
+
+    class AlwaysRight:
+        name = "stub"
+
+        async def identify(self, wav_bytes):
+            return TrackMatch(title="Reload", artist="Ben Kim", provider="stub")
+
+    async def tagged_probe(path, start, duration=12.0):
+        return b"x"
+
+    import src.core.audio as audio_io
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(audio_io, "extract_probe", tagged_probe)
+    try:
+        pipeline = Pipeline(AlwaysRight(),
+                            AnalyzeConfig(votes_per_segment=3,
+                                          compute_musical_features=False))
+        out = await pipeline._confirm_segments(
+            "unused.wav", segments,
+            [ProbeResult(time=t) for t in (0.0, 100.0, 200.0, 450.0, 600.0)],
+            lambda *a, **k: None)
+    finally:
+        monkey.undo()
+
+    keys = [s.key for s in out]
+    assert keys == ["ben kim::reload"], (
+        f"the same record left listed {len(keys)} times in a row: {keys}")
+    assert out[0].start == 0.0 and out[0].end == 900.0

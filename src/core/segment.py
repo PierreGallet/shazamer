@@ -234,6 +234,23 @@ def merge_probes(probes: Sequence[ProbeResult], duration: float,
             matched=sum(1 for p in group if p.key),
         ))
 
+    return coalesce(segments, min_segment)
+
+
+def coalesce(segments: List[Segment], min_segment: float = 20.0) -> List[Segment]:
+    """Bridge gaps, then absorb slivers. Safe to run more than once.
+
+    Split out of `merge_probes` because merging is not only that function's
+    business. Confirmation can *overturn* a segment — its extra probes vote,
+    and the majority can name a different record than the original probe did.
+    When the new name matches a neighbour, two adjacent segments now carry the
+    same track and nothing was putting them back together.
+
+    That is how a track came back as three consecutive plays of itself, at
+    06:55, 08:04 and 08:33, with no gap between them: three touching segments,
+    identical artist and title. The gap-bridging fix could not have caught it,
+    because by then there was no gap left to bridge.
+    """
     return _absorb_slivers(_bridge_gaps(segments), min_segment)
 
 
