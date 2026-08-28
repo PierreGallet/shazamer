@@ -170,23 +170,61 @@ def novelty_curve(features: FeatureSet, smooth_sigma: float = 10.0) -> np.ndarra
     return gaussian_filter1d(combined, sigma=smooth_sigma)
 
 
+# How far the curve must rise above its own surroundings before the peak is
+# treated as a real change rather than as noise.
+#
+# Measured on real music with known hard cuts: a genuine cut peaks at 1.19 to
+# 1.33 times the median of the window it sits in, and a window with no cut in
+# it reaches 1.03 to 1.10. The separation is clean and this sits between them.
+#
+# Below it the curve is flat and `argmax` returns whichever sample happens to
+# be highest — which near the start of a file is biased towards the beginning,
+# because the features are still settling. That produced a 1.1-second opening
+# "track" on a real reel and shifted every boundary after it.
+BOUNDARY_PROMINENCE = 1.15
+
+# A boundary must not land on a probe. The probe heard the track *there*, so
+# saying it ended there contradicts the only evidence in play. Trimmed from
+# each end of the window before looking for a peak.
+BOUNDARY_EDGE_MARGIN = 0.15
+
+
 def refine_boundary(features: FeatureSet, curve: np.ndarray,
                     lo: float, hi: float) -> float:
     """Place a boundary at the strongest change between two probe times.
 
     Called only once we know the track changed somewhere in `[lo, hi]`, which
-    turns an unreliable global search into a reliable local one.
+    turns an unreliable global search into a reliable local one — but only
+    where the curve has something to say. Where it does not, the midpoint is
+    the honest answer: knowing a change happened somewhere in five seconds and
+    guessing the middle is better than pointing confidently at noise.
     """
+    midpoint = (lo + hi) / 2
     if curve.size == 0 or hi <= lo:
-        return (lo + hi) / 2
+        return midpoint
 
     frames_per_second = features.sample_rate / features.hop_length
-    i_lo = max(0, int(lo * frames_per_second))
-    i_hi = min(curve.size, int(hi * frames_per_second))
-    if i_hi <= i_lo:
-        return (lo + hi) / 2
+    span = hi - lo
+    inner_lo = lo + span * BOUNDARY_EDGE_MARGIN
+    inner_hi = hi - span * BOUNDARY_EDGE_MARGIN
+    i_lo = max(0, int(inner_lo * frames_per_second))
+    i_hi = min(curve.size, int(inner_hi * frames_per_second))
+    if i_hi - i_lo < 2:
+        return midpoint
 
-    peak = i_lo + int(np.argmax(curve[i_lo:i_hi]))
+    # The baseline comes from the whole window and the peak only from its
+    # interior. Measuring both on the trimmed window moves the median with the
+    # trim and cost a boundary that had been landing within 0.02 s of a real
+    # cut — the level to clear is a property of the surroundings, not of the
+    # part being searched.
+    outer = curve[max(0, int(lo * frames_per_second)):
+                  min(curve.size, int(hi * frames_per_second))]
+    window = curve[i_lo:i_hi]
+    baseline = float(np.median(outer)) if outer.size else 0.0
+    if baseline <= 0 or float(window.max()) / baseline < BOUNDARY_PROMINENCE:
+        return midpoint                 # nothing stands out; do not pretend
+
+    peak = i_lo + int(np.argmax(window))
     return round(peak / frames_per_second, 3)
 
 
@@ -550,4 +588,9 @@ def auto_min_segment(duration: float) -> float:
     Capped at twenty so nothing changes for long input, where the current
     behaviour is what we want.
     """
-    return min(20.0, max(4.0, auto_interval(duration) * 0.8))
+    # Below the cadence, not at it. A track can only be caught by the probes
+    # that land inside it, so on a reel probed every five seconds a real track
+    # may legitimately show up as three or four seconds — and a floor of four
+    # deleted exactly that: the opening record of a real reel, correctly
+    # identified, thrown away for being shorter than the rule expected.
+    return min(20.0, max(2.5, auto_interval(duration) * 0.6))

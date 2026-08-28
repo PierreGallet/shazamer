@@ -757,3 +757,58 @@ def test_a_gap_never_swallows_the_opening_track():
 
     assert [s.identified for s in out] == [True, False, True], (
         [(s.start, s.end, s.key) for s in out])
+
+
+def test_a_boundary_is_not_moved_on_a_flat_curve():
+    """Refinement must decline when the curve has nothing to say.
+
+    `argmax` always returns something. On a flat stretch that something is
+    noise, and near the start of a file the noise is biased towards the
+    beginning because the features are still settling. Measured on a real
+    reel: a window of [1.07, 6.07] whose curve varied by 2% end to end refined
+    to 1.09 — hard against the probe that had just identified a track there.
+
+    The 1.1-second segment that produced was then absorbed as a sliver, which
+    deleted the opening record and shifted every label after it onto the wrong
+    span. The user noticed before the tests did.
+    """
+    import numpy as np
+    from src.core.features import FeatureSet
+    from src.core.segment import refine_boundary
+
+    fps = 43.0664
+    frames = int(20 * fps)
+    features = FeatureSet(
+        centroid=np.zeros(frames, dtype=np.float32),
+        rms=np.zeros(frames, dtype=np.float32),
+        sample_rate=22050, hop_length=512, duration=20.0)
+
+    # Flat to within 2%, exactly like the measured case.
+    flat = np.full(frames, 0.754, dtype=np.float32)
+    flat[int(1.09 * fps)] = 0.768
+    assert refine_boundary(features, flat, 1.065, 6.065) == pytest.approx(3.565), (
+        "a 2% bump is noise; the midpoint is the honest answer")
+
+    # A real change is still followed.
+    peaked = np.full(frames, 0.65, dtype=np.float32)
+    peaked[int(4.0 * fps):int(4.1 * fps)] = 0.95      # 1.46x the baseline
+    assert refine_boundary(features, peaked, 1.065, 6.065) == pytest.approx(
+        4.0, abs=0.2), "a real peak must still move the boundary"
+
+
+def test_the_floor_stays_below_the_probe_cadence():
+    """A track can only be found by probes that land inside it.
+
+    On a reel probed every five seconds a genuine track shows up as three or
+    four — and a floor of four deleted exactly that: the opening record of a
+    real reel, correctly identified, discarded for being shorter than the rule
+    expected.
+    """
+    from src.core.segment import auto_interval, auto_min_segment
+
+    for duration in (35.0, 60.0, 180.0, 300.0):
+        assert auto_min_segment(duration) < auto_interval(duration), duration
+
+    # Long sets keep the twenty-second floor they were tuned with.
+    for duration in (1800.0, 4126.0, 7200.0, 14400.0):
+        assert auto_min_segment(duration) == 20.0, duration

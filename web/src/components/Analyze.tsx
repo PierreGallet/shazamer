@@ -181,7 +181,7 @@ export default function Analyze(props: Props) {
           <input
             class="input"
             type="url"
-            placeholder="https://soundcloud.com/… or a YouTube link"
+            placeholder="SoundCloud, YouTube or an Instagram reel"
             value={url()}
             onInput={(e) => setUrl(e.currentTarget.value)}
             disabled={busy()}
