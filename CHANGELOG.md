@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0](https://github.com/PierreGallet/shazamer/compare/v1.7.4...v1.8.0) (2026-08-28)
+
+
+### Features
+
+* **segment:** scale the probe cadence to the input, so short clips work ([f191ab0](https://github.com/PierreGallet/shazamer/commit/f191ab06d47e5471fd9383759ab1a2c5971a58ae))
+
 ## [1.7.4](https://github.com/PierreGallet/shazamer/compare/v1.7.3...v1.7.4) (2026-08-28)
 
 
