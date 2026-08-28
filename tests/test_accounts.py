@@ -324,3 +324,23 @@ async def test_a_wrong_code_is_refused_through_the_api(auth_client):
                                json={"email": "a@b.com", "code": "000000"})
     assert r.status_code == 400
     assert (await auth_client.get("/api/sets")).status_code == 401
+
+
+async def test_the_worker_can_act_on_a_download_it_was_handed(library):
+    """The worker has a row id and no session, and must still read the row.
+
+    Scoping every method broke this without a test noticing: the acquire
+    runner called `get_download(id)` and got a TypeError, which would have
+    failed every Soulseek transfer in production. Passing None is deliberate
+    and explicit — the argument stays required, so forgetting it still raises
+    rather than quietly returning somebody else's download.
+    """
+    download_id = await library.start_download("a::x", "A", "X", user_id="bob")
+
+    assert await library.get_download(download_id, user_id=None) is not None
+    assert await library.get_download(download_id, user_id="alice") is None
+
+    import inspect
+    signature = inspect.signature(library.get_download)
+    assert signature.parameters["user_id"].default is inspect.Parameter.empty, (
+        "user_id must stay required; a default is how a request path forgets")

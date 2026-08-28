@@ -70,7 +70,7 @@ async def acquire_track(library, destination: Path, track_key: str,
     try:
         if not client.configured:
             await note("failed", "Soulseek is not configured on this server.")
-            return await library.get_download(download_id)
+            return await library.get_download(download_id, user_id=None)
 
         if chosen:
             # A candidate the user picked from the list. Trusted as their
@@ -93,7 +93,7 @@ async def acquire_track(library, destination: Path, track_key: str,
                 await note("failed",
                            "No peer is sharing this one right now. The pool "
                            "changes constantly — worth retrying.")
-                return await library.get_download(download_id)
+                return await library.get_download(download_id, user_id=None)
             best = candidates[0]
         logger.info("Best candidate for %s - %s: %s from %s",
                     artist, title, best.quality_label, best.username)
@@ -124,7 +124,7 @@ async def acquire_track(library, destination: Path, track_key: str,
                        f"slskd finished the transfer but the file is not at "
                        f"{source}. Check that SLSKD_DOWNLOADS_DIR matches the "
                        f"volume slskd writes to.")
-            return await library.get_download(download_id)
+            return await library.get_download(download_id, user_id=None)
 
         await note("verifying", "Checking it is the right track...")
         acquired = await collect(
@@ -147,4 +147,4 @@ async def acquire_track(library, destination: Path, track_key: str,
         logger.exception("Acquisition of %s - %s failed", artist, title)
         await note("failed", f"Unexpected failure: {exc}")
 
-    return await library.get_download(download_id)
+    return await library.get_download(download_id, user_id=None)

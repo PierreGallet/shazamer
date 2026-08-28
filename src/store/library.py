@@ -542,22 +542,32 @@ class Library:
                          (*writable.values(), download_id))
             conn.commit()
 
-    async def get_download(self, download_id: int, *, user_id: str
+    async def get_download(self, download_id: int, *, user_id: Optional[str]
                            ) -> Optional[Dict[str, Any]]:
-        """One download, scoped.
+        """One download, scoped — or unscoped when user_id is None.
 
-        Scoped because a download id is a small sequential integer. Unscoped,
-        anyone could walk the numbers and read what everybody else has been
-        fetching — and, through `download_path`, the files themselves.
+        Scoped because a download id is a small sequential integer. Left
+        unscoped in a request path, anyone could walk the numbers and read
+        what everybody else has been fetching, and through `download_path`
+        the files themselves.
+
+        None is for the worker, which is already acting on a row it was handed
+        and has no session to check against. It has to be passed explicitly:
+        the argument stays required so that forgetting it raises rather than
+        quietly returning somebody else's download.
         """
         return await self._run(self._get_download_sync, download_id, user_id)
 
     def _get_download_sync(self, download_id: int,
-                           user_id: str) -> Optional[Dict[str, Any]]:
+                           user_id: Optional[str]) -> Optional[Dict[str, Any]]:
         with closing(self._connect()) as conn:
-            row = conn.execute(
-                "SELECT * FROM downloads WHERE id = ? AND user_id = ?",
-                (download_id, user_id)).fetchone()
+            if user_id is None:
+                row = conn.execute("SELECT * FROM downloads WHERE id = ?",
+                                   (download_id,)).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM downloads WHERE id = ? AND user_id = ?",
+                    (download_id, user_id)).fetchone()
         return _download_row(row) if row else None
 
     async def download_path(self, download_id: int, *,
