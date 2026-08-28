@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.2](https://github.com/PierreGallet/shazamer/compare/v1.7.1...v1.7.2) (2026-08-28)
+
+
+### Bug Fixes
+
+* **identify:** stop making Shazam's rate limit worse, and stop hiding it ([125d3e8](https://github.com/PierreGallet/shazamer/commit/125d3e83aabe96b6959045faba95797e2cf9c8c3))
+* **jobs:** let Cancel actually cancel ([8ca45b9](https://github.com/PierreGallet/shazamer/commit/8ca45b9ed6334732445d32db049b418da7e7e2cf))
+* **segment:** merge again after confirmation, or a track plays three times ([4250c99](https://github.com/PierreGallet/shazamer/commit/4250c99fc4e48b3fbb925f1e310d0750ea14fe77))
+
 ## [1.7.1](https://github.com/PierreGallet/shazamer/compare/v1.7.0...v1.7.1) (2026-08-28)
 
 
