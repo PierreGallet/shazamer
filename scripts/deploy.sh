@@ -125,9 +125,26 @@ docker stack deploy -c docker-stack.yml shazamer
 # silently left the worker on whatever code it started with — including
 # through a fix written specifically to unstick it.
 echo ">> Force task recreate (locally-built image has no registry digest)"
+# `docker stack deploy` returns before Swarm has finished applying it, so a
+# force-update issued immediately races the update already in flight and dies
+# with "update out of sequence". That happened, the script reported the worker
+# had failed, and the worker was in fact already running the new code — which
+# is the worst of both: a scary message that means nothing, next to the exact
+# shape of the failure that once left the worker on stale code for a week.
+#
+# So: wait for the service to settle, then force, then retry once.
 for svc in shazamer_app shazamer_worker; do
   echo "   $svc"
-  docker service update --force --image shazamer_app:latest "$svc"
+  for _ in $(seq 1 30); do
+    state=$(docker service inspect "$svc" \
+              --format '{{.UpdateStatus.State}}' 2>/dev/null || echo unknown)
+    case "$state" in updating|rollback_started) sleep 5 ;; *) break ;; esac
+  done
+  if ! docker service update --force --image shazamer_app:latest "$svc"; then
+    echo "   $svc: force update failed, retrying once after settling"
+    sleep 15
+    docker service update --force --image shazamer_app:latest "$svc"
+  fi
 done
 
 # slskd reads its config once, at startup. Writing the API key above changes
