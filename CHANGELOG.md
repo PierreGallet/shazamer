@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0](https://github.com/PierreGallet/shazamer/compare/v1.5.3...v1.6.0) (2026-08-28)
+
+
+### Features
+
+* estimate what is left, and show what is already running ([9fd30d3](https://github.com/PierreGallet/shazamer/commit/9fd30d316e3f3e572ef1aa36506ca89987f2ce5c))
+* **watches:** check followed channels on a schedule, and cap what slskd costs ([446e367](https://github.com/PierreGallet/shazamer/commit/446e36761cb8825f62069cdffa5020e6d8a850d3))
+
+
+### Bug Fixes
+
+* **jobs:** stop ordinary churn exhausting a job's retry budget ([4e7bd13](https://github.com/PierreGallet/shazamer/commit/4e7bd134eb5b5c5bbfb007a16e888a1e82c74ebc))
+* **segment:** stop shredding a track into separate plays ([6bc09c8](https://github.com/PierreGallet/shazamer/commit/6bc09c8d5be87103d4a6726e5837d6869841d231))
+
 ## [1.5.3](https://github.com/PierreGallet/shazamer/compare/v1.5.2...v1.5.3) (2026-08-27)
 
 
