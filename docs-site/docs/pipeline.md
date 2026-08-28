@@ -5,8 +5,8 @@ title: The pipeline
 
 # The pipeline
 
-Six stages. The set is complete and usable at the end of the fifth; enrichment
-follows separately.
+Seven stages, one of them conditional. The set is complete and usable once
+key and BPM are in; enrichment follows separately.
 
 | Stage | Progress | What happens |
 | --- | --- | --- |
