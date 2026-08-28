@@ -500,3 +500,33 @@ async def test_openapi_page_moved_out_of_the_way_of_the_docs(client):
     """Swagger lives under /api now, because /docs is the written manual."""
     assert (await client.get("/api/docs")).status_code == 200
     assert (await client.get("/api/openapi.json")).status_code == 200
+
+
+def test_a_stale_extractor_failure_says_so():
+    """"Login required" on a public post is usually an out-of-date extractor.
+
+    Worth naming, because the message the site returns sends you the wrong
+    way: Instagram answers "login required" for a post a logged-out browser
+    opens fine, and the obvious next move — hunting for cookies — cannot work.
+    The actual fix had shipped upstream six weeks before we hit it.
+    """
+    from src.sources import download as dl
+
+    age = dl._installed_age_days()
+    message = dl._clean_ytdlp_error(
+        "ERROR: [Instagram] x: Requested content is not available, "
+        "rate-limit reached or login required.")
+
+    if age is not None and age >= dl.STALE_AFTER_DAYS:
+        assert "days old" in message
+    else:
+        assert "days old" not in message, (
+            "a fresh install must not blame itself")
+
+
+def test_a_real_failure_is_not_blamed_on_staleness():
+    """A private video is private however new the extractor is."""
+    from src.sources import download as dl
+
+    assert dl._clean_ytdlp_error(
+        "ERROR: [youtube] abc: Private video") == "Private video"

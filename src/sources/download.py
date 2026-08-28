@@ -273,5 +273,50 @@ def _clean_ytdlp_error(raw: str) -> str:
             message = line.split("ERROR:", 1)[1].strip()
             message = re.sub(r"^\[[^\]]+\]\s*", "", message)
             message = re.sub(r"^[\w-]+:\s*", "", message, count=1)
-            return message or line
-    return lines[-1] if lines else "yt-dlp failed with no output"
+            return _with_staleness_hint(message or line)
+    return _with_staleness_hint(
+        lines[-1] if lines else "yt-dlp failed with no output")
+
+
+# Failures that usually mean the extractor has fallen behind the site rather
+# than anything being wrong with the link. Sites change their pages and
+# yt-dlp catches up within days — but only if this copy is updated.
+_STALE_SIGNS = (
+    "login required", "unable to extract", "unable to download webpage",
+    "failed to parse", "no video formats", "requested content is not available",
+    "sign in to confirm", "unsupported url",
+)
+
+# Beyond about this, an extractor bug has almost certainly been fixed upstream
+# and never picked up. Instagram failed for exactly this reason: the installed
+# build was four months old and the fix had shipped six weeks earlier.
+STALE_AFTER_DAYS = 45
+
+
+def _installed_age_days() -> Optional[int]:
+    """How old the installed yt-dlp is, from its own version string."""
+    try:
+        from yt_dlp.version import __version__ as raw
+        from datetime import date, datetime
+        stamp = datetime.strptime(raw.split(".dev")[0][:10], "%Y.%m.%d").date()
+        return (date.today() - stamp).days
+    except Exception:                       # noqa: BLE001 - a hint, not a fact
+        return None
+
+
+def _with_staleness_hint(message: str) -> str:
+    """Add the likely cause when the failure looks like extractor drift.
+
+    Worth saying out loud because the message the site gives is actively
+    misleading: Instagram answers "login required" for a public post that a
+    logged-out browser opens fine, and the obvious next step — hunting for
+    cookies — is the wrong one.
+    """
+    if not any(sign in message.lower() for sign in _STALE_SIGNS):
+        return message
+    age = _installed_age_days()
+    if age is None or age < STALE_AFTER_DAYS:
+        return message
+    return (f"{message} (yt-dlp here is {age} days old, which is the usual "
+            f"cause of this — sites change and the fix normally ships within "
+            f"days. Rebuilding the image picks it up.)")
