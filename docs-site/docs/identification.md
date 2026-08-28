@@ -41,15 +41,43 @@ difference between seconds and minutes.
 
 ## How often
 
-| Set length | Cadence | Probes |
-| --- | --- | --- |
-| under 30 min | every 25 s | ~51 |
-| under 90 min | every 35 s | ~118 |
-| under 3 h | every 45 s | ~160 |
-| longer | every 60 s | ~180 |
+| Input length | Cadence | Probes | Shortest track reported |
+| --- | --- | --- | --- |
+| under 2 min | every 5 s | ~12 | 4 s |
+| under 5 min | every 8 s | ~22 | 6 s |
+| under 10 min | every 12 s | ~25 | 10 s |
+| under 30 min | every 25 s | ~51 | 20 s |
+| under 90 min | every 35 s | ~118 | 20 s |
+| under 3 h | every 45 s | ~160 | 20 s |
+| longer | every 60 s | ~180 | 20 s |
 
-A track runs three to eight minutes, so this puts five to thirteen probes
-inside one — several times what is needed to name it.
+A track runs three to eight minutes, so on a set this puts five to thirteen
+probes inside one — several times what is needed to name it.
+
+Short input is a different problem wearing the same clothes. Below about ten
+minutes the thing is not a set: it is a reel, a radio edit, a promo cut, and
+the tracks in it last seconds and stop dead between them. The set cadence does
+not merely lose precision there, it loses whole tracks. A sixty-second clip of
+four fifteen-second tracks got two probes, found two tracks, and gave half the
+clip to a record that had stopped playing thirty seconds earlier — measured
+with an identifier that answered correctly every time, so none of it was
+Shazam's doing.
+
+Being fine on short input costs nothing, because the input is short: twelve
+probes for a minute against a hundred and eighteen for a set. The floor on how
+short a reported track can be scales with it, for the same reason — twenty
+seconds is right for a set, where anything briefer is a stray probe or a
+sampled loop, and wrong for a reel, where a twelve-second snippet is the whole
+point.
+
+This is also why there is no cut detector. Hard cuts and beatmatched blends
+would have to be told apart from the audio, and on the novelty curve at its
+working smoothing they are indistinguishable — 1.9 against 1.9 by peak-to-median
+ratio. Unsmoothed they separate by about 1.5×, on synthetic audio where the cut
+is a clean discontinuity between two sine tones; real music, full of kicks and
+breakdowns that spike the curve constantly, would erase that margin. The grid
+handles hard cuts perfectly well once it is sampling finely enough, and
+duration — known before a single sample is decoded — says when to.
 
 An earlier version probed every twenty seconds, which put nine to twenty-four
 inside each track. That is five-fold redundancy paid for in requests to a

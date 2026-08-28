@@ -15,8 +15,8 @@ from typing import Any, Callable, Dict, List, Optional
 from ..identify.base import Identifier, TrackMatch
 from . import audio as audio_io
 from .features import StreamingFeatures, estimate_bpm, estimate_key
-from .segment import (ProbeResult, Segment, auto_interval, coalesce,
-                      confirmation_times, grid_probes, merge_probes,
+from .segment import (ProbeResult, Segment, auto_interval, auto_min_segment,
+                      coalesce, confirmation_times, grid_probes, merge_probes,
                       spectral_boundaries)
 from .timecode import format_timestamp
 
@@ -47,7 +47,9 @@ class AnalyzeConfig:
     # See src/web.py: parallel slots now cost refusals, not just memory.
     concurrency: int = 4
     waveform_points: int = 1600
-    min_segment: float = 20.0
+    # None → derived from duration, like probe_interval and for the same
+    # reason: what counts as a track depends on what you fed it.
+    min_segment: Optional[float] = None
     compute_musical_features: bool = True
     # Legacy spectral-strategy knobs, unused by the grid strategy.
     min_song_duration: Optional[float] = None
@@ -182,11 +184,15 @@ class Pipeline:
 
         # ── Stage 3: probes → segments ────────────────────────────────────
         report("merging", MERGE_AT, "Merging probes into tracks...")
+        min_segment = (self.config.min_segment
+                       if self.config.min_segment is not None
+                       else auto_min_segment(duration))
         segments = merge_probes(results, duration, features,
-                                min_segment=self.config.min_segment)
+                                min_segment=min_segment)
 
         # ── Stage 4: confirm the thin ones ────────────────────────────────
-        segments = await self._confirm_segments(path, segments, results, report)
+        segments = await self._confirm_segments(path, segments, results, report,
+                                                min_segment)
         tracks = self._to_tracks(segments)
 
         # ── Stage 4: per-track BPM and key ────────────────────────────────
@@ -328,8 +334,8 @@ class Pipeline:
         return f" — Shazam is rate-limiting, waiting {int(pause)}s"
 
     async def _confirm_segments(self, path: str, segments: List[Segment],
-                                probes: List[ProbeResult],
-                                report: ProgressFn) -> List[Segment]:
+                                probes: List[ProbeResult], report: ProgressFn,
+                                min_segment: float) -> List[Segment]:
         """Re-probe segments that rest on too little evidence.
 
         A track found by a single probe reports 100% agreement, because it
@@ -415,7 +421,7 @@ class Pipeline:
         # segment beside it. Merging again is what turns that back into one
         # track — without it the set reports the same record playing two or
         # three times in a row, which is what a DJ notices first.
-        merged = coalesce(segments, self.config.min_segment)
+        merged = coalesce(segments, min_segment)
         if len(merged) != len(segments):
             logger.info("Confirmation left %d adjacent duplicate(s), merged",
                         len(segments) - len(merged))

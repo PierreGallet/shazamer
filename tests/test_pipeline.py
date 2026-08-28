@@ -597,7 +597,7 @@ async def test_confirmation_does_not_leave_a_track_playing_twice():
         out = await pipeline._confirm_segments(
             "unused.wav", segments,
             [ProbeResult(time=t) for t in (0.0, 100.0, 200.0, 450.0, 600.0)],
-            lambda *a, **k: None)
+            lambda *a, **k: None, 20.0)
     finally:
         monkey.undo()
 
@@ -605,3 +605,80 @@ async def test_confirmation_does_not_leave_a_track_playing_twice():
     assert keys == ["ben kim::reload"], (
         f"the same record left listed {len(keys)} times in a row: {keys}")
     assert out[0].start == 0.0 and out[0].end == 900.0
+
+
+def test_cadence_and_floor_scale_with_duration():
+    """A reel and a three-hour set are not the same problem.
+
+    The cadence was written for sets and applied to everything: 25 s for
+    anything under half an hour, which on a one-minute clip is two probes.
+    """
+    from src.core.segment import auto_interval, auto_min_segment
+
+    # Short: fine enough to see a fifteen-second track, and cheap because the
+    # input is short — a minute at this cadence is a dozen probes.
+    assert auto_interval(60) == 5.0
+    assert auto_min_segment(60) < 15.0, "a 12 s snippet must survive the floor"
+    assert 60 / auto_interval(60) < 15, "should stay cheap"
+
+    # Long: unchanged. Sets are where the cadence was tuned and it was right.
+    for duration in (1800, 4126, 7200, 14400):
+        assert auto_min_segment(duration) == 20.0
+
+    # Monotonic: no duration should probe more finely than a shorter one.
+    lengths = [30, 60, 120, 300, 600, 1800, 3600, 7200, 14400]
+    intervals = [auto_interval(d) for d in lengths]
+    assert intervals == sorted(intervals), intervals
+
+
+async def test_a_short_clip_of_hard_cuts_finds_every_track(tmp_path):
+    """Four fifteen-second tracks in a minute, cut dead between them.
+
+    The identifier here answers correctly every single time, so anything
+    missing is the sampling losing it rather than the fingerprinter. Before
+    the cadence scaled, this returned two rows for four tracks and gave half
+    the clip to a track that had stopped thirty seconds earlier.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    import src.core.audio as audio_io
+    from src.identify.base import TrackMatch
+
+    sr, seg, plan = 44100, 15.0, ["Alpha", "Bravo", "Charlie", "Delta"]
+    parts = []
+    for i, _ in enumerate(plan):
+        t = np.linspace(0, seg, int(sr * seg), endpoint=False)
+        beat = (np.sin(2 * np.pi * 2.2 * t) > 0.7).astype(np.float32)
+        parts.append((0.3 * np.sin(2 * np.pi * (200 + i * 130) * t)
+                      + 0.3 * beat).astype(np.float32))
+    path = tmp_path / "reel.wav"
+    sf.write(str(path), np.concatenate(parts), sr)
+
+    async def tagged_probe(_path, start, duration=12.0):
+        return f"T={start:<28.3f}".encode()[:30]
+
+    class Truth:
+        name = "truth"
+
+        async def identify(self, wav_bytes):
+            start = float(wav_bytes[2:].decode().strip())
+            return TrackMatch(title=plan[min(int(start // seg), len(plan) - 1)],
+                              artist="Artist", provider="t")
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(audio_io, "extract_probe", tagged_probe)
+    try:
+        result = await Pipeline(
+            Truth(), AnalyzeConfig(compute_musical_features=False),
+        ).run(str(path))
+    finally:
+        monkey.undo()
+
+    found = [t.title for t in result.tracks if t.identified]
+    assert found == plan, f"expected {plan}, got {found}"
+
+    # And the cuts land where the cuts are.
+    for track, expected in zip(result.tracks[1:], (15.0, 30.0, 45.0)):
+        assert track.start == pytest.approx(expected, abs=2.0), (
+            f"boundary at {track.start:.1f}s, cut is at {expected:.0f}s")
