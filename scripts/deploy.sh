@@ -74,7 +74,42 @@ echo ">> Building shazamer image"
 docker build -t shazamer_app:latest .
 
 echo ">> Deploying swarm stack (host/secrets from .env)"
+# `.` on a file with an unquoted value containing spaces does not fail — it
+# assigns the first word and tries to run the rest as a command. A Gmail app
+# password is sixteen characters shown in groups of four, so pasting one
+# verbatim silently produced an empty SMTP_PASSWORD and a deploy that looked
+# fine. Caught here rather than discovered as "the code is broken".
+if ! . ./.env 2>/tmp/envload.$$; then
+  echo ">> .env could not be read:" >&3
+  cat /tmp/envload.$$ >&3
+  rm -f /tmp/envload.$$
+  exit 1
+fi
+if [ -s /tmp/envload.$$ ]; then
+  echo ">> .env produced errors while loading — a value with spaces almost" >&3
+  echo "   certainly needs quoting. Nothing was deployed." >&3
+  sed -E 's/(PASSWORD|KEY|SECRET)[=:].*/\1=***/' /tmp/envload.$$ >&3
+  rm -f /tmp/envload.$$
+  exit 1
+fi
+rm -f /tmp/envload.$$
 set -a; . ./.env; set +a
+
+# Accounts are on unless deliberately switched off, and with no way to send a
+# code there is no way in. Refusing here beats locking the owner out of their
+# own library and having to find this from the outside.
+if [ "${AUTH_ENABLED:-1}" != "0" ]; then
+  missing=""
+  [ -n "${SMTP_HOST:-}" ]     || missing="$missing SMTP_HOST"
+  [ -n "${MAIL_FROM:-}" ]     || missing="$missing MAIL_FROM"
+  [ -n "${SMTP_PASSWORD:-}" ] || missing="$missing SMTP_PASSWORD"
+  if [ -n "$missing" ]; then
+    echo ">> Accounts are on but these are empty:$missing" >&3
+    echo "   Nobody could receive a sign-in code, so nobody could get in." >&3
+    echo "   Set them in .env, or set AUTH_ENABLED=0 to run without accounts." >&3
+    exit 1
+  fi
+fi
 
 # Written here, after the .env is loaded — not before it. The first version of
 # this sat above the load, read an unset SLSKD_API_KEY, skipped its own
