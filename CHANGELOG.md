@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.1](https://github.com/PierreGallet/shazamer/compare/v1.12.0...v1.12.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* **deploy:** refuse a config that would lock everybody out ([0505f63](https://github.com/PierreGallet/shazamer/commit/0505f634d8cf2bd2c8ac1a438a5f9153a46ec59f))
+
 ## [1.12.0](https://github.com/PierreGallet/shazamer/compare/v1.11.2...v1.12.0) (2026-08-28)
 
 
