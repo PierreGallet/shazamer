@@ -286,13 +286,26 @@ class SlskdClient:
         except SlskdError:
             return False
 
-    async def search(self, query: str, *, wait: float = 12.0,
-                     poll: float = 1.5) -> List[Candidate]:
+    # Long enough for a search to finish. slskd reports peers arriving within
+    # a second or two, but it only *hands them over* once the search reaches a
+    # completed state, which its own timeout puts at about twenty seconds.
+    # Twelve was the previous value, so every search returned an empty list
+    # and every acquisition reported "no peer is sharing this one" — measured
+    # against a query that had twenty-six peers waiting behind it.
+    SEARCH_WAIT = float(os.environ.get("SLSKD_SEARCH_WAIT", "45"))
+
+    async def search(self, query: str, *, wait: Optional[float] = None,
+                     poll: float = 2.0) -> List[Candidate]:
         """Run a search and return candidates, best first.
 
         Soulseek searches are asynchronous by nature — peers answer over
-        several seconds — so we start one, let responses accumulate, then rank.
+        several seconds — so we start one, wait for it to finish, then rank.
+
+        Waiting for *completion* rather than for a while is the point: the
+        response array stays empty for the whole search and fills in at the
+        end, so stopping early does not return fewer results, it returns none.
         """
+        wait = self.SEARCH_WAIT if wait is None else wait
         search_id = str(uuid.uuid4())
         await self._request("POST", "/searches", json={
             "id": search_id, "searchText": query,
@@ -306,11 +319,23 @@ class SlskdClient:
             elapsed += poll
             payload = await self._request(
                 "GET", f"/searches/{search_id}?includeResponses=true")
-            if payload.get("state", "").lower().startswith("completed"):
+            if "completed" in payload.get("state", "").lower():
                 break
 
+        responses = payload.get("responses") or []
+        if not responses and payload.get("responseCount"):
+            # Peers answered but the array came back empty — ask for them
+            # directly rather than reporting that nobody is sharing it.
+            try:
+                fetched = await self._request(
+                    "GET", f"/searches/{search_id}/responses")
+                if isinstance(fetched, list):
+                    responses = fetched
+            except SlskdError:
+                pass
+
         candidates: List[Candidate] = []
-        for response in payload.get("responses") or []:
+        for response in responses:
             for raw in response.get("files") or []:
                 candidate = score_candidate(raw, response, query)
                 if candidate is not None:

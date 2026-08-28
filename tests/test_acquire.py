@@ -20,6 +20,11 @@ from tests.conftest import TEST_USER
 pytestmark = pytest.mark.anyio
 
 
+async def _instant(_seconds):
+    """Skip the wait without skipping the loop the wait is inside."""
+    return None
+
+
 def _file(name, ext="mp3", bitrate=320, size=8_000_000, length=360, **user):
     raw = {"filename": f"@@abc\\Music\\{name}.{ext}", "extension": ext,
            "size": size, "bitRate": bitrate, "length": length}
@@ -268,3 +273,72 @@ async def test_a_served_path_is_kept_off_the_wire(tmp_path):
     assert "local_path" not in row
     assert row["filename"] == "x.flac"
     assert await library.download_path(download_id, user_id=TEST_USER) == "/srv/downloads/x.flac"
+
+
+async def test_a_search_waits_for_the_peers_to_be_handed_over(monkeypatch):
+    """slskd fills the response array only when the search completes.
+
+    Peers arrive within seconds and `responseCount` reflects them immediately,
+    but `responses` stays empty until the search reaches a completed state —
+    about twenty seconds. The client waited twelve, so every search returned
+    nothing and every acquisition reported "no peer is sharing this one".
+    Measured against a query with twenty-six peers behind it.
+    """
+    from src.acquire.slskd import SlskdClient
+
+    calls = {"n": 0}
+
+    async def fake_request(self, method, path, **kwargs):
+        if method == "POST":
+            return {"id": "s1"}
+        if method == "DELETE":
+            return {}
+        calls["n"] += 1
+        if calls["n"] < 4:
+            # In progress: peers counted, none handed over.
+            return {"state": "InProgress", "responseCount": 26, "responses": []}
+        return {
+            "state": "Completed, TimedOut", "responseCount": 1,
+            "responses": [{
+                "username": "peer", "hasFreeUploadSlot": True,
+                "uploadSpeed": 900_000, "queueLength": 0,
+                "files": [{"filename": "Alan Dixon - Acid Drop.mp3",
+                           "size": 12_000_000, "bitRate": 320, "length": 380}],
+            }],
+        }
+
+    monkeypatch.setattr(SlskdClient, "_request", fake_request)
+    monkeypatch.setattr("asyncio.sleep", _instant)
+
+    found = await SlskdClient(base_url="http://x", api_key="k").search("Acid Drop")
+    assert found, "gave up before slskd handed the peers over"
+    assert found[0].username == "peer"
+
+
+async def test_an_empty_array_with_peers_counted_is_fetched_directly(monkeypatch):
+    """A completed search that still reports an empty array is asked again.
+
+    Reporting "nobody is sharing this" while the same payload says
+    twenty-six peers answered is the failure worth ruling out.
+    """
+    from src.acquire.slskd import SlskdClient
+
+    async def fake_request(self, method, path, **kwargs):
+        if method == "POST":
+            return {"id": "s1"}
+        if method == "DELETE":
+            return {}
+        if path.endswith("/responses"):
+            return [{
+                "username": "peer", "hasFreeUploadSlot": True,
+                "uploadSpeed": 900_000, "queueLength": 0,
+                "files": [{"filename": "Alan Dixon - Acid Drop.mp3",
+                           "size": 12_000_000, "bitRate": 320, "length": 380}],
+            }]
+        return {"state": "Completed", "responseCount": 1, "responses": []}
+
+    monkeypatch.setattr(SlskdClient, "_request", fake_request)
+    monkeypatch.setattr("asyncio.sleep", _instant)
+
+    found = await SlskdClient(base_url="http://x", api_key="k").search("Acid Drop")
+    assert found and found[0].username == "peer"
