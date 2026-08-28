@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0](https://github.com/PierreGallet/shazamer/compare/v1.12.3...v1.13.0) (2026-08-28)
+
+
+### Features
+
+* **acquire:** say Soulseek where it is Soulseek ([aea6e70](https://github.com/PierreGallet/shazamer/commit/aea6e7074a9e442c65f32a9b8e2b11818bae56b8))
+
 ## [1.12.3](https://github.com/PierreGallet/shazamer/compare/v1.12.2...v1.12.3) (2026-08-28)
 
 
