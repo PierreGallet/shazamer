@@ -40,9 +40,11 @@ def _entry(n):
 class Recorder:
     def __init__(self):
         self.urls: List[str] = []
+        self.owners: List[str] = []
 
-    async def __call__(self, url: str) -> bool:
+    async def __call__(self, url: str, user_id: str = "") -> bool:
         self.urls.append(url)
+        self.owners.append(user_id)
         return True
 
 
@@ -136,7 +138,7 @@ async def test_entries_are_recorded_even_when_queueing_fails(tmp_path,
 
     fake_channel["entries"]["https://x/chan"] = [_entry(2), _entry(1)]
 
-    async def refuses(url):
+    async def refuses(url, user_id=""):
         return False
 
     await check_watches(library, refuses)
@@ -147,3 +149,30 @@ async def test_nothing_followed_is_not_an_error(tmp_path, fake_channel):
     library = Library(tmp_path / "lib.db")
     report = await check_watches(library, Recorder())
     assert report == {"watches": 0, "found": 0, "queued": 0}
+
+
+async def test_a_queued_upload_belongs_to_whoever_follows_the_channel(
+        tmp_path, fake_channel):
+    """The scheduled check runs for everyone at once, so it has to say who.
+
+    Without this the analysis is filed under nobody, and with accounts on
+    that means invisible — including to the person who followed the channel
+    and asked for it.
+    """
+    library = Library(tmp_path / "lib.db")
+    await library.add_watch("w1", "https://x/alice", "Alice's", user_id="alice")
+    await library.add_watch("w2", "https://x/bob", "Bob's", user_id="bob")
+
+    fake_channel["entries"]["https://x/alice"] = [_entry(1)]
+    fake_channel["entries"]["https://x/bob"] = [_entry(2)]
+    await check_watches(library, Recorder())          # first look records only
+
+    fake_channel["entries"]["https://x/alice"] = [_entry(3), _entry(1)]
+    fake_channel["entries"]["https://x/bob"] = [_entry(4), _entry(2)]
+    recorder = Recorder()
+    await check_watches(library, recorder)
+
+    assert len(recorder.owners) == 2
+    assert set(recorder.owners) == {"alice", "bob"}, (
+        f"queued under {recorder.owners}; a set owned by nobody is a set "
+        "nobody can see")

@@ -825,6 +825,11 @@ class Library:
             "id": r["id"], "url": r["url"], "title": r["title"], "kind": r["kind"],
             "created_at": r["created_at"], "last_checked": r["last_checked"],
             "seen_count": len(json.loads(r["seen_ids"] or "[]")),
+            # Carried because the scheduled check runs for everyone at once and
+            # has to file each new upload under the account that follows the
+            # channel. Without it those analyses land owned by nobody and are
+            # invisible to the person who asked for them.
+            "user_id": r["user_id"] if "user_id" in r.keys() else "",
         } for r in rows]
 
     async def mark_watch_checked(self, watch_id: str, seen_ids: List[str]) -> None:

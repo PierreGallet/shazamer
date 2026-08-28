@@ -29,6 +29,9 @@ from src.auth import SOLO_USER
 
 TEST_USER = SOLO_USER["id"]
 
+# Half of the default 12 s probe window.
+PROBE_CENTRE = 6.0
+
 
 @pytest.fixture
 def anyio_backend():
@@ -93,7 +96,12 @@ def stub_identifier(synthetic_set, monkeypatch):
             try:
                 await asyncio.sleep(0.01)
                 start = float(wav_bytes[2:].decode().strip())
-                index = min(int(start // seconds), len(plan) - 1)
+                # A probe reading from `start` is fingerprinted on a centred
+                # ten seconds of the twelve it read, so what it hears is the
+                # music around start + 6 — not at `start`. Modelling that here
+                # is what keeps this stub honest about boundary placement.
+                heard = start + PROBE_CENTRE
+                index = min(int(heard // seconds), len(plan) - 1)
                 entry = plan[index]
                 if entry is None:
                     return None

@@ -31,7 +31,9 @@ async def check_watches(library, enqueue, *, max_per_round: int = MAX_PER_ROUND
     """Look for new uploads on every followed channel and queue them.
 
     `enqueue` is passed in rather than imported so this can be tested without
-    a queue, and so the caller decides what "analyse it" means.
+    a queue, and so the caller decides what "analyse it" means. It receives
+    the owner as well as the URL: this runs for every account at once, and a
+    set filed under nobody is invisible to the person who follows the channel.
     """
     from src.sources import download as dl
 
@@ -74,7 +76,7 @@ async def check_watches(library, enqueue, *, max_per_round: int = MAX_PER_ROUND
                 logger.info("Reached the per-round cap; the rest will be "
                             "picked up next time")
                 break
-            if await enqueue(entry["url"]):
+            if await enqueue(entry["url"], watch.get("user_id", "")):
                 queued.append({"watch": watch["title"], "title": entry["title"]})
 
     for item in queued:

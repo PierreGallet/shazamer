@@ -87,10 +87,10 @@ async def check_watches_job(ctx: Dict[str, Any]) -> Dict[str, Any]:
     from src import web
     from src.jobs.watches import check_watches
 
-    async def enqueue(url: str) -> bool:
+    async def enqueue(url: str, user_id: str) -> bool:
         task_id = str(_uuid.uuid4())
         task = web.tasks.create(task_id, filename="From a followed channel",
-                                source_url=url)
+                                source_url=url, user_id=user_id)
         await web.dispatch(task, "analyze_url_job", task_id, url, None)
         return True
 

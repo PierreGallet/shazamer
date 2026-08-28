@@ -31,8 +31,14 @@ ProgressFn = Callable[[str, int, str], None]
 DECODE_FROM, DECODE_TO = 5, 35
 IDENTIFY_FROM, IDENTIFY_TO = 36, 80
 MERGE_AT = 81
-CONFIRM_FROM, CONFIRM_TO = 82, 87
+CONFIRM_FROM, CONFIRM_TO = 82, 86
+BOUNDARY_FROM, BOUNDARY_TO = 86, 88
 FEATURES_FROM, FEATURES_TO = 88, 95
+
+# Stop bisecting once the window is this small. Below it the probe window
+# itself — twelve seconds, of which the fingerprinter reads a centred ten —
+# is the limit, and further rounds buy noise rather than precision.
+MIN_BISECT_SPAN = 1.0
 
 
 @dataclass
@@ -50,6 +56,12 @@ class AnalyzeConfig:
     # None → derived from duration, like probe_interval and for the same
     # reason: what counts as a track depends on what you fed it.
     min_segment: Optional[float] = None
+    # Bisection rounds per boundary. Two takes a five-second window under a
+    # second and a half; 0 disables the pass.
+    boundary_rounds: int = 2
+    # How far either side of a boundary it might really be. Set from the
+    # cadence at run time.
+    probe_interval_hint: float = 25.0
     compute_musical_features: bool = True
     # Legacy spectral-strategy knobs, unused by the grid strategy.
     min_song_duration: Optional[float] = None
@@ -184,9 +196,14 @@ class Pipeline:
 
         # ── Stage 2: fingerprint probes, in parallel ──────────────────────
         probes = self._plan_probes(duration, features)
+        # How wide a boundary window can be: one cadence either side of where
+        # merging put it. Carried on the config so the bisection pass uses the
+        # cadence this run chose rather than a stale default.
+        self.config.probe_interval_hint = (
+            self.config.probe_interval or auto_interval(duration))
         report("identifying", IDENTIFY_FROM,
                f"Identifying {len(probes)} probes across {format_timestamp(duration)}...")
-        results = await self._run_probes(path, probes, report)
+        results = await self._run_probes(path, probes, report, duration)
 
         # ── Stage 3: probes → segments ────────────────────────────────────
         report("merging", MERGE_AT, "Merging probes into tracks...")
@@ -199,6 +216,9 @@ class Pipeline:
         # ── Stage 4: confirm the thin ones ────────────────────────────────
         segments = await self._confirm_segments(path, segments, results, report,
                                                 min_segment)
+
+        # ── Stage 5: find the boundaries by asking ────────────────────────
+        segments = await self._bisect_boundaries(path, segments, report)
         tracks = self._to_tracks(segments)
 
         # ── Stage 4: per-track BPM and key ────────────────────────────────
@@ -281,7 +301,8 @@ class Pipeline:
         return grid_probes(duration, interval=interval)
 
     async def _run_probes(self, path: str, times: List[float],
-                          report: ProgressFn) -> List[ProbeResult]:
+                          report: ProgressFn,
+                          duration: float = float("inf")) -> List[ProbeResult]:
         """Fingerprint every probe position, a bounded number at a time.
 
         The bound covers **extraction as well as identification**, which is the
@@ -320,11 +341,120 @@ class Pipeline:
                 report("identifying", pct,
                        f"Identifying... {done}/{total} probes{self._waiting_note()}")
 
+            # Where the music was, not where reading started. `extract_probe`
+            # reads forward from t, and the fingerprinter uses a centred ten
+            # seconds of that — so a probe launched at t answers about roughly
+            # t + 6, and calling it t put every boundary six seconds early.
+            heard_at = min(duration, t + self.config.probe_duration / 2)
             if match is None:
-                return ProbeResult(time=t)
-            return ProbeResult(time=t, key=match.key, payload=_match_payload(match))
+                return ProbeResult(time=heard_at)
+            return ProbeResult(time=heard_at, key=match.key,
+                               payload=_match_payload(match))
 
         return list(await asyncio.gather(*(one(t) for t in times)))
+
+    async def _bisect_boundaries(self, path: str, segments: List[Segment],
+                                 report: ProgressFn) -> List[Segment]:
+        """Narrow each boundary by probing across it.
+
+        Everything before this places a boundary somewhere between the last
+        probe that heard one track and the first that heard the next. With a
+        five-second cadence that is a five-second window, and the midpoint —
+        the honest answer when the audio says nothing — is only ever accurate
+        to half of it.
+
+        The novelty curve fixes that where a transition is a real spectral
+        rupture. Measured on a reel of hard cuts it managed one of four; the
+        rest were beat-matched or simply too similar either side to show up.
+
+        So the remaining ones are found the same way the tracks were: by
+        asking. A probe halfway across the window answers "which side is this",
+        and each answer halves what is left. Two rounds take a five-second
+        window under a second and a half.
+
+        Cheap because it is bounded by boundaries rather than by length: a
+        reel has four, an hour-long set has thirty, and each costs at most two
+        probes. It is skipped entirely where it would not help — a boundary
+        already narrower than the resolution this can reach is left alone.
+        """
+        rounds = self.config.boundary_rounds
+        if rounds <= 0 or len(segments) < 2:
+            return segments
+
+        # Only between two *named* tracks. A gap's edges are not a transition
+        # from one record to another — they are where identification stopped
+        # working, and bisecting them asks a question with no answer.
+        candidates = [
+            i for i in range(len(segments) - 1)
+            if segments[i].identified and segments[i + 1].identified
+            and segments[i].key != segments[i + 1].key
+        ]
+        if not candidates:
+            return segments
+
+        probe_seconds = self.config.probe_duration
+        slots = asyncio.Semaphore(self.config.concurrency)
+
+        async def ask(at: float) -> Optional[str]:
+            async with slots:
+                try:
+                    wav = await audio_io.extract_probe(path, at, probe_seconds)
+                    match = await self.identifier.identify(wav)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning("Boundary probe at %.1fs failed: %s", at, exc)
+                    return None
+            return match.key if match else None
+
+        async def narrow(index: int) -> tuple:
+            """Bisect one boundary. Returns (index, new time)."""
+            before, after = segments[index], segments[index + 1]
+            lo, hi = before.start, after.end
+            # Start from the span the boundary could occupy, not the whole of
+            # both segments: a long track either side would otherwise make the
+            # first probe land nowhere near the transition.
+            edge = before.end
+            lo = max(lo, edge - self.config.probe_interval_hint)
+            hi = min(hi, edge + self.config.probe_interval_hint)
+            if hi - lo < MIN_BISECT_SPAN:
+                return index, edge
+
+            for _ in range(rounds):
+                middle = (lo + hi) / 2
+                # The fingerprinter reads a centred window, so a probe started
+                # at `middle` actually hears the seconds *after* it. Starting
+                # half a window early is what makes the answer about the
+                # moment rather than about what follows it.
+                heard = await ask(max(0.0, middle - probe_seconds / 2))
+                if heard == before.key:
+                    lo = middle
+                elif heard == after.key:
+                    hi = middle
+                else:
+                    # Silence, or a third record in the blend. Neither side is
+                    # confirmed, so nothing has been learned and guessing here
+                    # would be worse than the span we already have.
+                    break
+                if hi - lo < MIN_BISECT_SPAN:
+                    break
+            return index, round((lo + hi) / 2, 3)
+
+        report("boundaries", BOUNDARY_FROM,
+               f"Placing {len(candidates)} boundaries...")
+        outcomes = await asyncio.gather(*(narrow(i) for i in candidates))
+
+        for index, moved in outcomes:
+            before, after = segments[index], segments[index + 1]
+            # Clamped so a boundary cannot cross its neighbours and invert a
+            # segment. Nothing below should produce that; this makes it
+            # impossible rather than unlikely.
+            moved = max(before.start + 0.5, min(after.end - 0.5, moved))
+            before.end = moved
+            after.start = moved
+
+        report("boundaries", BOUNDARY_TO, "Boundaries placed")
+        return segments
 
     def _waiting_note(self) -> str:
         """Say so when the run is sitting out a rate limit.
@@ -392,8 +522,12 @@ class Pipeline:
         async def one(index: int, t: float):
             async with slots:
                 try:
+                    # `t` is a moment inside the segment, and segments are in
+                    # heard-time now — so reading has to start half a window
+                    # earlier for the fingerprint to be about that moment.
                     wav = await audio_io.extract_probe(
-                        path, t, self.config.probe_duration)
+                        path, max(0.0, t - self.config.probe_duration / 2),
+                        self.config.probe_duration)
                     match = await self.identifier.identify(wav)
                 except asyncio.CancelledError:
                     raise
