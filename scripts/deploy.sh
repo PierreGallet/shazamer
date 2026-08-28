@@ -156,5 +156,46 @@ if docker service ls --filter name=shazamer_slskd --format '{{.Name}}' | grep -q
   docker service update --force shazamer_slskd
 fi
 
+# ── Reclaim disk ──────────────────────────────────────────────────────
+# Placed here, AFTER the rollout: `set -e` means a failed deploy exits before
+# this line, so a rollback still finds the previous image and a warm cache.
+# What we reap is regenerable by definition — the worst case is a slower next
+# build, never a broken one.
+#
+# This step did not exist at all. shazamer tags only `:latest`, so every
+# rebuild orphans the previous image as dangling and leaves the old Swarm
+# task's container Shutdown. Those containers cost almost nothing in
+# themselves (~1 MB total, measured on genius 2026-08-28) but they PIN their
+# image, and that is what stops the nightly cleanup from reclaiming it — it
+# logs "in use, skip" and moves on.
+echo ">> Reclaiming disk"
+docker image prune -f >/dev/null 2>&1 || true
+# until=1h, not a bare prune: a container that exited seconds ago may still be
+# the rollback target of a rollout that has not finished converging.
+docker container prune -f --filter "until=1h" >/dev/null 2>&1 || true
+
+# NOT `--max-used-space`: on Docker 29.1.2 / buildx 0.30.1 it exits 0 and frees
+# nothing. Verified on genius 2026-08-28 — 59.24 GB of cache against a 35 GB
+# cap gave "Total: 0B", exit 0. Sibling repos carried that flag for weeks
+# thinking they were capped. Measure instead, and prune only when over.
+# Never `-a`: it also evicts layers shared with existing images, making the
+# next build cold.
+BUILD_CACHE_MAX_GB="${BUILD_CACHE_MAX_GB:-5}"
+_cache_mib() {
+    docker builder du 2>/dev/null | awk -F'\t' '/^Total:/{
+        v=$NF; sub(/B$/,"",v); u=substr(v,length(v));
+        n=(u ~ /[0-9]/) ? v : substr(v,1,length(v)-1);
+        m=(u=="G")?1024:((u=="M")?1:((u=="k"||u=="K")?1/1024:1/1048576));
+        printf "%d", n*m; exit}'
+}
+_cache_now="$(_cache_mib)"
+if [ -n "$_cache_now" ] && [ "$_cache_now" -gt $((BUILD_CACHE_MAX_GB * 1024)) ] 2>/dev/null; then
+    echo "   cache $((_cache_now / 1024)) GiB > ${BUILD_CACHE_MAX_GB} GiB — purge"
+    docker builder prune -f >/dev/null 2>&1 || true
+    echo "   reste $(( $(_cache_mib) / 1024 )) GiB"
+else
+    echo "   cache $(( ${_cache_now:-0} / 1024 )) GiB <= ${BUILD_CACHE_MAX_GB} GiB, rien a purger"
+fi
+
 echo ">> Done. Current service:"
 docker service ls --filter name=shazamer_app
