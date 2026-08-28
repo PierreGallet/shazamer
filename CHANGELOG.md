@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1](https://github.com/PierreGallet/shazamer/compare/v1.8.0...v1.8.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* **segment:** absorb a too-short opening segment ([56f3ed4](https://github.com/PierreGallet/shazamer/commit/56f3ed48dc9df8a32b1f86971bf933b1651b963b))
+* **sources:** reach Instagram, and stop skipping half of a short clip ([23e0286](https://github.com/PierreGallet/shazamer/commit/23e0286a3c665955cfdec236a08c1f7cd61d57e5))
+* **tasks:** make the countdown account for the stages still ahead ([0302029](https://github.com/PierreGallet/shazamer/commit/0302029adb0512d2e7ea7f79bdbd1c4ac9ea1e9b))
+
 ## [1.8.0](https://github.com/PierreGallet/shazamer/compare/v1.7.4...v1.8.0) (2026-08-28)
 
 
