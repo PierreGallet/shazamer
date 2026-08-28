@@ -12,8 +12,11 @@ const config = {
   tagline: "Identify every track in a DJ set, then go find the records",
   favicon: "img/favicon.svg",
 
-  url: "https://pierregallet.github.io",
-  baseUrl: "/shazamer/",
+  // Served by the app itself, under /docs — not on GitHub Pages. The app
+  // mounts docs-site/build there, so baseUrl has to match that prefix or
+  // every asset URL the build emits points somewhere that does not exist.
+  url: "https://shazamer.pierregallet.com",
+  baseUrl: "/docs/",
   organizationName: "PierreGallet",
   projectName: "shazamer",
 
@@ -46,6 +49,14 @@ const config = {
         title: "Shazamer",
         items: [
           { type: "docSidebar", sidebarId: "docs", position: "left", label: "Docs" },
+          // Back to the app. Raw HTML because every link type the navbar
+          // offers runs the URL through baseUrl: both `to: "/"` and
+          // `href: "/"` come out as "/docs/", pointing at this page.
+          {
+            type: "html",
+            position: "right",
+            value: '<a class="navbar__item navbar__link" href="/">\u2190 App</a>',
+          },
           {
             href: "https://github.com/PierreGallet/shazamer",
             label: "GitHub",

@@ -74,6 +74,10 @@ MEDIA_DIR = BASE_DIR / "media"
 DATA_DIR = BASE_DIR / "data"
 TMP_DIR = BASE_DIR / "tmp"
 FRONTEND_DIST = BASE_DIR / "web" / "dist"
+# The Docusaurus build, served alongside the app rather than on GitHub
+# Pages: one domain, one deploy, and the docs are always the ones that
+# describe the version actually running.
+DOCS_DIST = BASE_DIR / "docs-site" / "build"
 
 for directory in (UPLOAD_DIR, MEDIA_DIR, DATA_DIR, TMP_DIR, DOWNLOAD_DIR):
     directory.mkdir(parents=True, exist_ok=True)
@@ -146,7 +150,11 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Shazamer", version=_version(), lifespan=lifespan)
+# /docs belongs to the written documentation, which people read; the
+# generated OpenAPI page moves under /api where the rest of the API lives.
+app = FastAPI(title="Shazamer", version=_version(), lifespan=lifespan,
+              docs_url="/api/docs", redoc_url=None,
+              openapi_url="/api/openapi.json")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -970,6 +978,13 @@ async def health():
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")),
               name="assets")
+
+# Mounted before the SPA catch-all below, which would otherwise answer every
+# /docs/* request with the app's index.html. html=True serves directory
+# indexes, which is how Docusaurus's pretty URLs resolve.
+if DOCS_DIST.exists():
+    app.mount("/docs", StaticFiles(directory=str(DOCS_DIST), html=True),
+              name="docs")
 
 @app.api_route("/", methods=["GET", "HEAD"])
 @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])

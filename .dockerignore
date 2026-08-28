@@ -31,6 +31,17 @@ ENV/
 *.md
 LICENSE
 docs/
+# ...except the documentation site's own pages, which ARE the build input.
+# The `*.md` above is unanchored and was silently eating every page in it,
+# leaving a Docusaurus build with nothing to render.
+!docs-site/**/*.md
+
+# Node. Both projects install inside their build stage; shipping the host's
+# node_modules would only make the context slower to send.
+node_modules/
+**/node_modules/
+docs-site/build/
+docs-site/.docusaurus/
 
 # Tests
 tests/

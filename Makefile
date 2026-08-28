@@ -1,4 +1,4 @@
-.PHONY: help install install-web dev web web-build build test test-integration clean lint
+.PHONY: help install install-web install-docs dev web web-build build docs docs-dev test test-integration clean lint
 
 VENV := venv/bin/python
 PORT ?= 8000
@@ -11,11 +11,13 @@ help:
 	@echo "  make web            Run the production server (built frontend)"
 	@echo "  make worker         Run the analysis worker (needs REDIS_URL)"
 	@echo "  make build          Build the frontend into web/dist"
+	@echo "  make docs           Build the documentation into docs-site/build"
+	@echo "  make docs-dev       Run the documentation with hot reload (:3000)"
 	@echo "  make test           Run the test suite"
 	@echo "  make analyze FILE=… Analyse a file from the command line"
 	@echo "  make clean          Remove venv, build output and caches"
 
-install: install-py install-web
+install: install-py install-web install-docs
 
 install-py:
 	@command -v ffmpeg >/dev/null 2>&1 || { \
@@ -32,8 +34,20 @@ install-web:
 	@cd web && npm install --no-audit --no-fund
 	@echo "Frontend dependencies ready."
 
+install-docs:
+	@cd docs-site && npm install --no-audit --no-fund
+	@echo "Docs dependencies ready."
+
 build:
 	@cd web && npm run build
+
+# The app serves this at /docs, so `make web` shows the real thing only after
+# this has run at least once. The Docker image builds it in its own stage.
+docs:
+	@cd docs-site && npm run build
+
+docs-dev:
+	@cd docs-site && npm start
 
 # The analysis worker. Needs REDIS_URL; without one the API runs analyses
 # itself and this is unnecessary.
@@ -64,6 +78,7 @@ lint:
 	@cd web && npm run typecheck
 
 clean:
-	@rm -rf venv web/node_modules web/dist tmp .pytest_cache
+	@rm -rf venv web/node_modules web/dist tmp .pytest_cache \
+	        docs-site/node_modules docs-site/build docs-site/.docusaurus
 	@find . -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
 	@echo "Cleaned."

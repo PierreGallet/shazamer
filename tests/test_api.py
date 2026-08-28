@@ -471,3 +471,31 @@ async def test_strength_survives_a_round_trip(client):
     await client.web.library.save_set("s1", "Set", payload)
     stored = (await client.get("/api/sets/s1")).json()
     assert stored["tracks"][0]["strength"] == "strong"
+
+
+async def test_docs_are_not_swallowed_by_the_spa_catch_all(client):
+    """/docs must reach the Docusaurus build, not the app shell.
+
+    The catch-all that serves the frontend answers *every* unmatched path with
+    index.html, so a docs route that is not mounted ahead of it comes back
+    200 — with the wrong page. That failure is invisible to a status check,
+    which is exactly how it got shipped the first time.
+    """
+    if not client.web.DOCS_DIST.exists():
+        pytest.skip("docs not built (`make docs`)")
+
+    response = await client.get("/docs/")
+    assert response.status_code == 200
+    body = response.text
+    assert "docusaurus" in body.lower(), "served the app shell instead of the docs"
+
+    # Its assets live under the same prefix; the app's own /assets mount must
+    # not shadow them.
+    response = await client.get("/docs/assets/css/", follow_redirects=True)
+    assert response.status_code != 500
+
+
+async def test_openapi_page_moved_out_of_the_way_of_the_docs(client):
+    """Swagger lives under /api now, because /docs is the written manual."""
+    assert (await client.get("/api/docs")).status_code == 200
+    assert (await client.get("/api/openapi.json")).status_code == 200

@@ -7,6 +7,17 @@ RUN npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
+# ── Stage 1b: build the documentation ────────────────────────────────────
+# Its own stage rather than a step in the frontend one: separate dependency
+# tree, and a docs-only change then reuses the frontend layer untouched.
+FROM node:22-alpine AS docs
+
+WORKDIR /docs
+COPY docs-site/package.json docs-site/package-lock.json* ./
+RUN npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund
+COPY docs-site/ ./
+RUN npm run build
+
 # ── Stage 2: runtime ─────────────────────────────────────────────────────
 FROM python:3.12-slim-bookworm
 
@@ -36,6 +47,9 @@ COPY src/ ./src/
 COPY .release-please-manifest.json ./
 COPY scripts/healthcheck.py ./
 COPY --from=web /web/dist ./web/dist
+# Mounted at /docs by the app, so the docs ship with the version they
+# describe instead of drifting on a separate Pages deploy.
+COPY --from=docs /docs/build ./docs-site/build
 
 # uploads/media hold audio; data holds the SQLite library; tmp holds task state.
 RUN mkdir -p uploads media data tmp

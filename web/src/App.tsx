@@ -88,6 +88,12 @@ function Shell(props: ParentProps) {
           ))}
         </nav>
 
+        {/* /docs is served by the API from the Docusaurus build, not by this
+            app. rel="external" is what stops the client router taking the
+            click — it intercepts every same-origin anchor otherwise, and a
+            plain <a> lands on the app's own "Nothing here". */}
+        <a class="nav-item nav-docs" href="/docs/" rel="external">Docs</a>
+
         <Show when={running().length > 0 && !onItsPage()}>
           <For each={running().slice(0, 2)}>
             {(task) => (
