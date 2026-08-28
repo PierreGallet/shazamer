@@ -21,12 +21,14 @@ import asyncio
 import json
 import logging
 import os
+import urllib.parse
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import aiohttp
 from fastapi import (Depends, FastAPI, File, HTTPException, Query, Request,
                      Response, UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,6 +40,7 @@ from pydantic import BaseModel
 from src.acquire import resolve as acquire_resolve
 from src.acquire.slskd import SlskdClient, SlskdError, search_query
 from src.core.pipeline import AnalyzeConfig, Pipeline
+from src.enrich import preview as preview_lookup
 from src.export import formats as export_formats
 from src.identify.shazam import ShazamIdentifier
 from src.jobs import queue as jobs
@@ -919,6 +922,95 @@ async def search_library(q: str = "", bpm_min: Optional[float] = None,
     return await library.search_tracks(q, bpm_min=bpm_min, bpm_max=bpm_max,
                                        camelot=camelot, starred_only=starred,
                                        limit=limit, user_id=user["id"])
+
+
+@app.get("/api/tracks/{track_key}/preview")
+async def track_preview(track_key: str,
+                        user: Dict[str, Any] = Depends(current_user)):
+    """A ~30 second excerpt of the identified record, for checking by ear.
+
+    A tracklist is a set of claims, and the only way to check one is to hear
+    the record next to the moment it was claimed for. A wrong match at low
+    confidence looks exactly like a right one until you do.
+
+    Answers 200 with a null url rather than 404 when there is no excerpt to be
+    had: a dub or a white label simply is not on Apple Music, which for a set
+    worth digging through is most of it. That is an ordinary outcome, not an
+    error, and the interface says "no preview" rather than showing a failure.
+    """
+    cached = await library.preview_for(track_key)
+    if cached:
+        return {"key": track_key, "url": _preview_proxy(track_key),
+                "source": "cached"}
+
+    names = await library.track_names(track_key)
+    if names is None:
+        raise HTTPException(status_code=404, detail="Track not found")
+
+    url = await preview_lookup.find_preview(
+        names["artist"], names["title"], names["isrc"])
+    if url:
+        await library.remember_preview(track_key, url)
+    return {"key": track_key, "url": _preview_proxy(track_key) if url else None,
+            "source": "lookup" if url else "none"}
+
+
+def _preview_proxy(track_key: str) -> str:
+    return f"/api/tracks/{urllib.parse.quote(track_key, safe='')}/preview.m4a"
+
+
+@app.get("/api/tracks/{track_key}/preview.m4a")
+async def stream_track_preview(track_key: str,
+                               user: Dict[str, Any] = Depends(current_user)):
+    """Serve the excerpt through here rather than linking Apple directly.
+
+    Apple labels these `audio/x-m4p`, which browsers decline to play — the
+    bytes are ordinary unprotected AAC, verified with ffprobe, but the content
+    type alone is enough for the element to refuse. Relabelling it is the
+    reason this exists.
+
+    Two things fall out of it for free: Apple never sees who is listening, and
+    no future content-security policy has to allow an external audio host.
+    """
+    url = await library.preview_for(track_key)
+    if not url:
+        # Looked up here rather than by a separate call the page makes first.
+        # That ordering matters in the browser: an await before play() ends
+        # the user gesture, and Chrome then refuses to start the audio. With
+        # the address deterministic and the lookup behind it, the page can
+        # call play() synchronously on the click.
+        names = await library.track_names(track_key)
+        if names is None:
+            raise HTTPException(status_code=404, detail="Track not found")
+        url = await preview_lookup.find_preview(
+            names["artist"], names["title"], names["isrc"])
+        if not url:
+            raise HTTPException(status_code=404,
+                                detail="No excerpt for that track")
+        await library.remember_preview(track_key, url)
+
+    try:
+        async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=20)) as session:
+            async with session.get(url) as upstream:
+                if upstream.status != 200:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="The excerpt could not be fetched")
+                body = await upstream.read()
+    except aiohttp.ClientError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    return Response(
+        content=body,
+        media_type="audio/mp4",
+        headers={
+            # Thirty seconds of audio, immutable once published: worth letting
+            # the browser keep so re-checking a match costs nothing.
+            "Cache-Control": "private, max-age=86400",
+            "Content-Length": str(len(body)),
+        },
+    )
 
 
 @app.get("/api/library/crate")

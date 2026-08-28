@@ -110,6 +110,7 @@ class Track:
     year: str = ""
     genre: str = ""
     isrc: str = ""
+    preview_url: str = ""
     key: str = ""
     confidence: float = 0.0         # share of all probes that named this
     agreement: float = 0.0          # share of *speaking* probes that agreed
@@ -465,6 +466,7 @@ class Pipeline:
                 year=payload.get("year", ""),
                 genre=payload.get("genre", ""),
                 isrc=payload.get("isrc", ""),
+                preview_url=payload.get("preview_url", ""),
                 key=seg.key or "",
                 confidence=seg.confidence,
                 agreement=seg.agreement,
@@ -521,6 +523,7 @@ def _match_payload(match: TrackMatch) -> Dict[str, Any]:
         "year": match.year,
         "genre": match.genre,
         "isrc": match.isrc,
+        "preview_url": match.preview_url,
         "provider": match.provider,
     }
 

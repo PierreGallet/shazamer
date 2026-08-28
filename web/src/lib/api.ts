@@ -5,6 +5,9 @@
 // rendering blank in the UI.
 
 export interface Track {
+  /** Whether an excerpt of the record is already known. Not where it is —
+   *  the audio always comes from our own endpoint. */
+  has_preview?: boolean;
   index: number;
   start: number;
   end: number;
@@ -221,6 +224,19 @@ export const api = {
 
   logout: () => request<{ authenticated: boolean }>("/api/auth/logout",
     { method: "POST" }),
+
+  /** Where the excerpt lives. A plain function rather than a request, so the
+   *  player can start inside the click that asked for it — awaiting anything
+   *  first ends the gesture and Chrome declines to play. */
+  trackPreviewUrl: (key: string) =>
+    `/api/tracks/${encodeURIComponent(key)}/preview.m4a`,
+
+  /** A ~30s excerpt of the identified record, or null when there is none.
+   *  Null is ordinary: a dub or a white label is not on Apple Music. */
+  trackPreview: (key: string) =>
+    request<{ key: string; url: string | null; source: string }>(
+      `/api/tracks/${encodeURIComponent(key)}/preview`,
+    ),
 
   /**
    * Start an analysis from a URL.

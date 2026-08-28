@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     isrc         TEXT DEFAULT '',
     url          TEXT DEFAULT '',
     cover_url    TEXT DEFAULT '',
+    preview_url  TEXT DEFAULT '',
     bpm          REAL,
     camelot      TEXT,
     musical_key  TEXT,
@@ -164,6 +165,8 @@ class Library:
         ("tracks", "strength", "TEXT DEFAULT ''"),
         ("tracks", "catalog_number", "TEXT DEFAULT ''"),
         ("tracks", "mbid", "TEXT DEFAULT ''"),
+        # A ~30 s excerpt of the record, for checking the match by ear.
+        ("tracks", "preview_url", "TEXT DEFAULT ''"),
         # Ownership, added when accounts arrived. Empty means "from before
         # accounts existed" — those rows are adopted by the first account to
         # sign in rather than deleted, because they are someone's work.
@@ -334,8 +337,8 @@ class Library:
             conn.executemany(
                 "INSERT INTO tracks (set_id, position, start, end, identified,"
                 " track_key, title, artist, album, label, year, genre, isrc, url,"
-                " cover_url, bpm, camelot, musical_key, confidence, strength)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " cover_url, bpm, camelot, musical_key, confidence, strength,"
+                " preview_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     (set_id, t.get("index", i + 1), t.get("start", 0), t.get("end", 0),
                      1 if t.get("identified") else 0, t.get("key", ""),
@@ -343,7 +346,8 @@ class Library:
                      t.get("label", ""), t.get("year", ""), t.get("genre", ""),
                      t.get("isrc", ""), t.get("url", ""), t.get("cover_url", ""),
                      t.get("bpm"), t.get("camelot"), t.get("musical_key"),
-                     t.get("confidence", 0), t.get("strength", ""))
+                     t.get("confidence", 0), t.get("strength", ""),
+                     t.get("preview_url", ""))
                     for i, t in enumerate(result.get("tracks", []))
                 ],
             )
@@ -728,6 +732,49 @@ class Library:
             "set_count": r["set_count"], "starred_at": r["starred_at"], "starred": True,
         } for r in rows]
 
+    async def remember_preview(self, track_key: str, url: str) -> None:
+        """Cache a looked-up excerpt against every row for that track.
+
+        Written back so the lookup happens once per record rather than once
+        per row per page load — the same track appears in several sets, and
+        each appearance would otherwise be its own request to Apple.
+        """
+        if track_key and url:
+            await self._run(self._remember_preview_sync, track_key, url)
+
+    def _remember_preview_sync(self, track_key: str, url: str) -> None:
+        with closing(self._connect()) as conn:
+            conn.execute(
+                "UPDATE tracks SET preview_url = ? WHERE track_key = ?"
+                " AND (preview_url IS NULL OR preview_url = '')",
+                (url, track_key))
+            conn.commit()
+
+    async def preview_for(self, track_key: str) -> Optional[str]:
+        """Any excerpt already known for this track."""
+        return await self._run(self._preview_for_sync, track_key)
+
+    def _preview_for_sync(self, track_key: str) -> Optional[str]:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT preview_url FROM tracks WHERE track_key = ?"
+                " AND preview_url != '' LIMIT 1", (track_key,)).fetchone()
+        return row["preview_url"] if row else None
+
+    async def track_names(self, track_key: str) -> Optional[Dict[str, str]]:
+        """Artist, title and ISRC for a track key, for looking it up."""
+        return await self._run(self._track_names_sync, track_key)
+
+    def _track_names_sync(self, track_key: str) -> Optional[Dict[str, str]]:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT artist, title, isrc FROM tracks WHERE track_key = ?"
+                " LIMIT 1", (track_key,)).fetchone()
+        if row is None:
+            return None
+        return {"artist": row["artist"] or "", "title": row["title"] or "",
+                "isrc": row["isrc"] or ""}
+
     # ── Watches ──────────────────────────────────────────────────────────
 
     async def add_watch(self, watch_id: str, url: str, title: str,
@@ -851,5 +898,11 @@ def _track_row(r: sqlite3.Row, starred: set) -> Dict[str, Any]:
         "strength": r["strength"] if "strength" in r.keys() else "",
         "catalog_number": r["catalog_number"] if "catalog_number" in r.keys() else "",
         "mbid": r["mbid"] if "mbid" in r.keys() else "",
+        # Whether an excerpt is known, not where it lives. The upstream URL is
+        # a server-side cache key: handing it to the browser once meant the
+        # page played Apple's copy directly, which Chrome refuses because
+        # Apple labels it audio/x-m4p. One address for the audio, ours.
+        "has_preview": bool(
+            r["preview_url"] if "preview_url" in r.keys() else ""),
         "starred": key in starred,
     }

@@ -92,9 +92,9 @@ a:hover { color: var(--accent-lit); text-decoration: underline; }
 
 .brand { display: flex; align-items: center; gap: 0.55rem; flex: none; }
 .brand-mark {
-  width: 26px; height: 26px; border-radius: var(--radius-sm);
-  background: var(--accent);
-  display: grid; place-items: center;
+  color: var(--accent);
+  flex: none;
+  display: block;
 }
 .brand-name {
   font-weight: 800; font-stretch: 86%; font-size: 1.02rem;
@@ -298,7 +298,7 @@ h3 { font-size: 0.95rem; font-weight: 700; }
   flex-direction: column;
   gap: 0.9rem;
 }
-.signin-mark { width: 34px; height: 34px; margin-bottom: 0.4rem; }
+.signin-mark { margin-bottom: 0.4rem; }
 .signin-title {
   font-size: 1.45rem; font-weight: 800; font-stretch: 88%;
   letter-spacing: -0.02em; margin: 0;

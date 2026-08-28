@@ -58,14 +58,13 @@ export function SignIn(props: { onSignedIn: () => void }) {
   return (
     <div class="signin-wrap">
       <div class="signin">
-        <span class="brand-mark signin-mark">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="#fff">
-            <rect x="3" y="10" width="2.4" height="4" rx="1.2" />
-            <rect x="8" y="6.5" width="2.4" height="11" rx="1.2" />
-            <rect x="13" y="4" width="2.4" height="16" rx="1.2" />
-            <rect x="18" y="8.5" width="2.4" height="7" rx="1.2" />
-          </svg>
-        </span>
+        <svg class="brand-mark signin-mark" viewBox="0 0 24 24"
+             width="34" height="34" fill="currentColor" aria-hidden="true">
+          <rect x="3" y="10" width="2.4" height="4" rx="1.2" />
+          <rect x="8" y="6.5" width="2.4" height="11" rx="1.2" />
+          <rect x="13" y="4" width="2.4" height="16" rx="1.2" />
+          <rect x="18" y="8.5" width="2.4" height="7" rx="1.2" />
+        </svg>
 
         <Show when={step() === "email"}>
           <h1 class="signin-title">Sign in to Shazamer</h1>

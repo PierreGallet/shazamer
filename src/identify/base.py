@@ -25,6 +25,11 @@ class TrackMatch:
     year: str = ""
     genre: str = ""
     isrc: str = ""
+    # A ~30 second excerpt of the record itself, for checking by ear that the
+    # thing named is the thing playing. Shazam hands one over with the match;
+    # it is the same Apple Music preview the iTunes API returns, so a track
+    # identified before this existed can still get one looked up.
+    preview_url: str = ""
     raw_matches: int = 0
 
     @property

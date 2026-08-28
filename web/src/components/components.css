@@ -446,3 +446,10 @@
   .set-card-meta .coverage { display: none; }
   .candidate { grid-template-columns: auto 1fr auto; }
 }
+
+/* An excerpt that could not be found is not an error — the record simply is
+   not on Apple Music, which for dubs and white labels is most of them. Dimmed
+   rather than hidden, so the control does not vanish under the cursor. */
+.btn-icon.muted { opacity: 0.3; cursor: default; }
+.btn-icon.muted:hover { background: none; color: var(--text-faint); }
+.btn-icon:disabled { opacity: 0.5; cursor: progress; }

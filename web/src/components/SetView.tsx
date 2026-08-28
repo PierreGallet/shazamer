@@ -290,6 +290,10 @@ export default function SetView(props: Props) {
                 activeIndex={activeIndex()}
                 onSeek={seek}
                 onSelect={setActiveIndex}
+                /* Hearing the set and the reference at once is the one thing
+                   that makes this check useless, so starting one stops the
+                   other. */
+                onPreviewStart={() => audio()?.pause()}
               />
             </div>
 

@@ -109,6 +109,19 @@ def _looks_transient(exc: Exception) -> bool:
     return any(sign in text for sign in _TRANSIENT_SIGNS)
 
 
+def _preview_url(track: Dict[str, Any]) -> str:
+    """The audio excerpt Shazam offers alongside the match.
+
+    Buried in `hub.actions` as the entry whose type is literally "uri"; the
+    sibling `applemusicplay` action carries no URL at all. Absent for plenty of
+    records, which is why the caller has a fallback.
+    """
+    for action in ((track.get("hub") or {}).get("actions") or []):
+        if action.get("type") == "uri" and action.get("uri"):
+            return str(action["uri"]).strip()
+    return ""
+
+
 def parse_shazam_track(result: Dict[str, Any]) -> Optional[TrackMatch]:
     """Map a raw Shazam response onto a `TrackMatch`. Pure — easy to test."""
     track = (result or {}).get("track")
@@ -135,6 +148,7 @@ def parse_shazam_track(result: Dict[str, Any]) -> Optional[TrackMatch]:
         year=meta.get("released", ""),
         genre=((track.get("genres") or {}).get("primary") or "").strip(),
         isrc=(track.get("isrc") or "").strip(),
+        preview_url=_preview_url(track),
         raw_matches=len({m.get("id") for m in matches if m.get("id")}),
     )
 

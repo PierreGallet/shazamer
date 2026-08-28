@@ -64,14 +64,15 @@ function Shell(props: ParentProps) {
     <>
       <header class="app-header">
         <A href="/" class="brand" aria-label="Shazamer home">
-          <span class="brand-mark">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="#fff">
-              <rect x="3" y="10" width="2.4" height="4" rx="1.2" />
-              <rect x="8" y="6.5" width="2.4" height="11" rx="1.2" />
-              <rect x="13" y="4" width="2.4" height="16" rx="1.2" />
-              <rect x="18" y="8.5" width="2.4" height="7" rx="1.2" />
-            </svg>
-          </span>
+          {/* The bars alone, in the accent colour — no tile behind them. The
+              favicon keeps the square, where a 16px mark needs the contrast. */}
+          <svg class="brand-mark" viewBox="0 0 24 24" width="22" height="22"
+               fill="currentColor" aria-hidden="true">
+            <rect x="3" y="10" width="2.4" height="4" rx="1.2" />
+            <rect x="8" y="6.5" width="2.4" height="11" rx="1.2" />
+            <rect x="13" y="4" width="2.4" height="16" rx="1.2" />
+            <rect x="18" y="8.5" width="2.4" height="7" rx="1.2" />
+          </svg>
           <span class="brand-name">Shazamer</span>
         </A>
 
