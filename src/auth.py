@@ -29,10 +29,15 @@ COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1").lower() not in ("0", "false
 COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "lax")
 COOKIE_DOMAIN = os.environ.get("COOKIE_DOMAIN", "") or None
 
-# Set once at import so the whole process agrees. When accounts are disabled
-# every request runs as one built-in owner, which is what a single-user
-# install wants and what every existing deployment gets until it is turned on.
-AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "").lower() in ("1", "true", "yes")
+# On unless deliberately switched off. Secure by default: an install that
+# forgets to set anything gets accounts, not an open library.
+#
+# The escape hatch stays because it is genuinely useful — running locally with
+# no SMTP configured means no way to receive a code, and the alternative is
+# not being able to open your own app. It is a development convenience, not a
+# production option, which is why the default is the other way round.
+AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "1").lower() not in (
+    "0", "false", "no")
 
 # The empty string, and that is the whole point rather than an oversight.
 #

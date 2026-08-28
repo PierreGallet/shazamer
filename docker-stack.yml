@@ -33,6 +33,11 @@ services:
       - COOKIE_SECURE=${COOKIE_SECURE:-1}
       - COOKIE_SAMESITE=${COOKIE_SAMESITE:-lax}
       - COOKIE_DOMAIN=${COOKIE_DOMAIN:-}
+      # Documented in .env.example, so they have to reach the container or
+      # setting them does nothing and looks like the code ignoring them.
+      - MUSICBRAINZ_CONTACT=${MUSICBRAINZ_CONTACT:-}
+      - MUSICBRAINZ_INTERVAL=${MUSICBRAINZ_INTERVAL:-1.5}
+      - MUSICBRAINZ_MIN_SCORE=${MUSICBRAINZ_MIN_SCORE:-88}
     volumes:
       - type: bind
         source: /home/sharon/shazamer/data
@@ -129,6 +134,11 @@ services:
       - COOKIE_SECURE=${COOKIE_SECURE:-1}
       - COOKIE_SAMESITE=${COOKIE_SAMESITE:-lax}
       - COOKIE_DOMAIN=${COOKIE_DOMAIN:-}
+      # Documented in .env.example, so they have to reach the container or
+      # setting them does nothing and looks like the code ignoring them.
+      - MUSICBRAINZ_CONTACT=${MUSICBRAINZ_CONTACT:-}
+      - MUSICBRAINZ_INTERVAL=${MUSICBRAINZ_INTERVAL:-1.5}
+      - MUSICBRAINZ_MIN_SCORE=${MUSICBRAINZ_MIN_SCORE:-88}
     volumes:
       - type: bind
         source: /home/sharon/shazamer/data

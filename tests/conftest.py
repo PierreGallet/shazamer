@@ -114,6 +114,16 @@ async def client(tmp_path, monkeypatch):
         (tmp_path / name.lower()).mkdir(exist_ok=True)
 
     monkeypatch.setenv("SLSKD_URL", "")
+    # Accounts off for this fixture. These tests are about the pipeline, the
+    # library and the API's own behaviour; making each of them sign in first
+    # would test the login flow three hundred times and the thing under test
+    # once. `test_accounts.py` covers the signed-in path properly, with
+    # accounts on.
+    monkeypatch.setenv("AUTH_ENABLED", "0")
+    # Reloaded because AUTH_ENABLED is read at import, and `web` binds its
+    # request dependencies to whatever `auth` decided at that moment.
+    import src.auth as auth_mod
+    importlib.reload(auth_mod)
     import src.web as web
     importlib.reload(web)
 
