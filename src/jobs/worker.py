@@ -156,6 +156,13 @@ class WorkerSettings:
     max_jobs = 1
     # Keep finished jobs briefly so a result can be inspected after the fact.
     keep_result = 3600
+    # Without this arq ignores every abort request, and it defaults to False.
+    # The UI has always shown a Cancel button on a running analysis; for any
+    # analysis actually running in the worker — which is all of them — it
+    # returned "Task is not running" and the work carried on. An hour of
+    # probing you have decided you do not want is expensive in the one budget
+    # that matters here, which is how often Shazam will still talk to us.
+    allow_abort_jobs = True
 
     # An attribute, not a method: arq reads this off the class and expects a
     # RedisSettings instance. A staticmethod here fails at connection time with
