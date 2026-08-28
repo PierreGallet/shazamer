@@ -367,6 +367,28 @@ def _absorb_slivers(segments: List[Segment], min_segment: float) -> List[Segment
         i += 1
 
     # Pass 2: fold remaining fragments into the segment before them.
+    #
+    # The leading segment is folded *forwards* instead, into its successor.
+    # Nothing else could absorb it: pass 1 needs a predecessor and this has
+    # none, and the rule below needs one too. So a too-short opening segment
+    # survived at any length — a real reel came back with a 1.1-second first
+    # track, which is not a track, it is the tail of the probe window.
+    #
+    # Same blind spot as the gap-bridging cap had: rules written as "look at
+    # the one before" quietly exempt the first of anything.
+    # Not when the successor is a gap and the head has a name: that would let
+    # an unidentified stretch swallow a real finding, and keeping those
+    # visible is the point of the whole merge step.
+    if (len(kept) > 1 and kept[0].duration < min_segment
+            and (kept[1].identified or not kept[0].identified)):
+        head, nxt = kept[0], kept[1]
+        nxt.start = head.start
+        nxt.probes += head.probes
+        if nxt.key == head.key:
+            nxt.votes += head.votes
+            nxt.matched += head.matched
+        kept = kept[1:]
+
     out: List[Segment] = []
     for seg in kept:
         if out and seg.duration < min_segment and not seg.identified:

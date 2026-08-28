@@ -690,3 +690,70 @@ async def test_a_short_clip_of_hard_cuts_finds_every_track(tmp_path):
     for track, expected in zip(result.tracks[1:], (15.0, 30.0, 45.0)):
         assert track.start == pytest.approx(expected, abs=4.0), (
             f"boundary at {track.start:.1f}s, cut is at {expected:.0f}s")
+
+
+def test_a_too_short_opening_segment_is_absorbed():
+    """The first segment had no rule that could ever absorb it.
+
+    Sliver removal has two passes and both look backwards: one needs a
+    predecessor whose track matches its successor's, the other folds a
+    fragment into the segment before it. The first segment has nothing before
+    it, so it survived at any length — a real 35-second reel came back with a
+    1.1-second opening "track", which is not a track, it is the tail of a
+    probe window.
+
+    The same blind spot cost a bridging fix earlier: rules phrased as "look at
+    the one before" quietly exempt the first of anything.
+    """
+    from src.core.segment import Segment, coalesce
+
+    out = coalesce([
+        Segment(start=0.0, end=1.1, key="a::x", payload={"title": "X"},
+                votes=1, probes=1, matched=1),
+        Segment(start=1.1, end=9.1, key="b::y", payload={"title": "Y"},
+                votes=1, probes=1, matched=1),
+        Segment(start=9.1, end=20.0, key="c::z", payload={"title": "Z"},
+                votes=1, probes=1, matched=1),
+    ], min_segment=4.0)
+
+    assert all(s.duration >= 4.0 for s in out), (
+        [(s.start, s.end, s.key) for s in out])
+    assert out[0].start == 0.0, "absorbing it must not lose the opening seconds"
+    assert out[0].key == "b::y", "it folds forwards, into its successor"
+
+
+def test_a_long_enough_opening_segment_is_left_alone():
+    """The inverse, or the rule above would eat a legitimate first track."""
+    from src.core.segment import Segment, coalesce
+
+    out = coalesce([
+        Segment(start=0.0, end=30.0, key="a::x", payload={"title": "X"},
+                votes=3, probes=3, matched=3),
+        Segment(start=30.0, end=60.0, key="b::y", payload={"title": "Y"},
+                votes=3, probes=3, matched=3),
+    ], min_segment=20.0)
+    assert len(out) == 2
+    assert out[0].key == "a::x"
+
+
+def test_a_gap_never_swallows_the_opening_track():
+    """Absorbing the head forwards must not lose an identification.
+
+    The first version of the leading-sliver rule folded any short head into
+    its successor, including an identified one into an unidentified gap. That
+    deleted a real finding to tidy up a short row, and broke the invariant the
+    merge exists for: unmatched stretches stay visible, and named ones stay
+    named.
+    """
+    from src.core.segment import Segment, coalesce
+
+    out = coalesce([
+        Segment(start=0.0, end=15.0, key="a::x", payload={"title": "X"},
+                votes=1, probes=1, matched=1),
+        Segment(start=15.0, end=75.0, key=None, votes=0, probes=2, matched=0),
+        Segment(start=75.0, end=120.0, key="b::y", payload={"title": "Y"},
+                votes=1, probes=1, matched=1),
+    ], min_segment=20.0)
+
+    assert [s.identified for s in out] == [True, False, True], (
+        [(s.start, s.end, s.key) for s in out])
