@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0](https://github.com/PierreGallet/shazamer/compare/v1.6.1...v1.7.0) (2026-08-28)
+
+
+### Features
+
+* **docs:** link the documentation from the app header ([8874c48](https://github.com/PierreGallet/shazamer/commit/8874c488d2c9b5e48026ff9d2afa7c8d80b58695))
+
 ## [1.6.1](https://github.com/PierreGallet/shazamer/compare/v1.6.0...v1.6.1) (2026-08-28)
 
 
