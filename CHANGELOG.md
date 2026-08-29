@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0](https://github.com/PierreGallet/shazamer/compare/v1.16.3...v1.17.0) (2026-08-29)
+
+
+### Features
+
+* **acquire:** a downloads tab, and say who a track is coming from ([7099dd2](https://github.com/PierreGallet/shazamer/commit/7099dd225fc31bee112e859d586bb70b5867a5b2))
+
 ## [1.16.3](https://github.com/PierreGallet/shazamer/compare/v1.16.2...v1.16.3) (2026-08-29)
 
 
