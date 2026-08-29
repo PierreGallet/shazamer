@@ -107,6 +107,21 @@ class Candidate:
         return self.filename.replace("\\", "/").rsplit("/", 1)[-1]
 
     @property
+    def full_path(self) -> str:
+        """The peer's own path to the file, under the name the API uses.
+
+        `to_dict` has always called this `full_path` — `filename` there is the
+        basename, which is what a person reads. Callers that took the dict and
+        callers that took the object were therefore using different names for
+        the same thing, and every one of the latter raised AttributeError.
+
+        That broke the whole one-click acquisition path, silently, because the
+        only route exercised until now went straight to slskd and never
+        touched a Candidate object after ranking.
+        """
+        return self.filename
+
+    @property
     def duration_label(self) -> str:
         """Length as a DJ reads it — the single most telling field here."""
         if not self.length:

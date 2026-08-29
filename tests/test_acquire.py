@@ -406,3 +406,100 @@ def test_a_fully_bracketed_title_still_searches_for_something():
     from src.acquire.slskd import search_query
 
     assert search_query("X", "(Untitled)").strip()
+
+
+def test_a_candidate_answers_to_the_name_the_api_gives_it():
+    """`to_dict` calls the peer's path `full_path`; the object must too.
+
+    It did not, so anything that took a Candidate object rather than its dict
+    raised AttributeError — which broke the entire one-click acquisition path.
+    It went unnoticed because the only route exercised until recently went
+    straight to slskd and never touched a Candidate after ranking.
+    """
+    from src.acquire.slskd import Candidate
+
+    candidate = Candidate(
+        username="peer", filename="@@abc\\music\\Alan Dixon - Acid Drop.mp3",
+        size=14_000_000, extension="mp3", bitrate=320, sample_rate=None,
+        bit_depth=None, length=380, queue_length=0, free_slot=True,
+        upload_speed=900_000, score=12.0)
+
+    assert candidate.full_path == candidate.to_dict()["full_path"]
+    assert candidate.basename == "Alan Dixon - Acid Drop.mp3"
+    assert candidate.full_path != candidate.basename, (
+        "the peer needs its own path, not the display name")
+
+
+async def test_the_whole_acquisition_runs_without_a_missing_attribute(
+        tmp_path, monkeypatch):
+    """Drive the runner end to end against a stub slskd.
+
+    Written after 'Candidate object has no attribute full_path' reached
+    production. Nothing covered this path: the tests exercised ranking and the
+    client, and the code that strings them together had none. A missing
+    attribute is exactly the kind of fault a single pass through catches and
+    no amount of unit testing around it does.
+    """
+    from src.acquire import runner as runner_module
+    from src.acquire.runner import acquire_track
+    from src.acquire.slskd import Candidate
+    from src.store.library import Library
+
+    library = Library(tmp_path / "lib.db")
+    # The key the verifier compares against, not a placeholder: it
+    # fingerprints what was fetched and checks it names the same record.
+    key = "alan dixon::acid drop"
+    download_id = await library.start_download(key, "Alan Dixon",
+                                               "Acid Drop", user_id="u1")
+
+    # Real audio, because the runner fingerprints what it fetched before
+    # accepting it — a Soulseek filename is whatever the uploader typed, so
+    # the check is the point rather than an obstacle.
+    fetched = tmp_path / "slskd" / "Alan Dixon - Acid Drop.wav"
+    fetched.parent.mkdir()
+    import numpy as np
+    import soundfile as sf
+    tone = np.linspace(0, 30.0, 44100 * 30, endpoint=False)
+    sf.write(str(fetched),
+             (0.2 * np.sin(2 * np.pi * 220 * tone)).astype("float32"), 44100)
+    monkeypatch.setattr(runner_module, "SLSKD_DOWNLOADS", fetched.parent)
+
+    candidate = Candidate(
+        username="peer", filename="@@abc\\music\\Alan Dixon - Acid Drop.wav",
+        size=fetched.stat().st_size, extension="wav", bitrate=320, sample_rate=None,
+        bit_depth=None, length=380, queue_length=0, free_slot=True,
+        upload_speed=900_000, score=12.0)
+
+    class StubClient:
+        def configured(self):
+            return True
+
+        async def search(self, _query):
+            return [candidate]
+
+        async def enqueue(self, _candidate):
+            return {"queued": True}
+
+        async def await_transfer(self, _username, _filename, on_progress=None):
+            if on_progress:
+                on_progress(50.0, "inprogress")
+            return {"full_path": candidate.filename,
+                    "local_path": str(fetched), "state": "Completed, Succeeded"}
+
+    class StubIdentifier:
+        name = "stub"
+
+        async def identify(self, _wav):
+            from src.identify.base import TrackMatch
+            return TrackMatch(title="Acid Drop", artist="Alan Dixon",
+                              provider="stub")
+
+    row = await acquire_track(
+        library, tmp_path / "downloads", key, "Alan Dixon", "Acid Drop",
+        download_id=download_id, client=StubClient(),
+        identifier=StubIdentifier())
+
+    assert row is not None
+    assert row["status"] != "failed", row.get("message")
+    assert row["status"] == "ready", (
+        f"finished as {row['status']}: {row.get('message')}")

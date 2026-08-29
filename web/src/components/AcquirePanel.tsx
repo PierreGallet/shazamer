@@ -25,6 +25,16 @@ export default function AcquirePanel(props: Props) {
   );
 
   const [candidates, setCandidates] = createSignal<SoulseekCandidate[] | null>(null);
+  /**
+   * What was actually asked of the network.
+   *
+   * Shown because it is the first thing worth knowing when a search comes
+   * back thin: Soulseek matches a plain substring against filenames, so what
+   * we send decides what can possibly come back — and it is not the title as
+   * written. "(Extended Mix)" and ampersands are stripped, because leaving
+   * them in costs the whole result rather than narrowing it.
+   */
+  const [query, setQuery] = createSignal("");
   const [searching, setSearching] = createSignal(false);
   const [queued, setQueued] = createSignal<Record<string, boolean>>({});
   const [error, setError] = createSignal("");
@@ -68,6 +78,7 @@ export default function AcquirePanel(props: Props) {
    *  click reads as a dead button. */
   function openPicker() {
     setCandidates(null);
+    setQuery("");
     setError("");
     dialog?.showModal();
     void searchSoulseek();
@@ -78,6 +89,7 @@ export default function AcquirePanel(props: Props) {
     setError("");
     try {
       const result = await api.soulseekSearch(props.track.artist, props.track.title);
+      setQuery(result.query);
       setCandidates(result.candidates);
       if (result.candidates.length === 0) {
         setError("No peer is sharing this one right now. Try again later — the "
@@ -182,6 +194,11 @@ export default function AcquirePanel(props: Props) {
               <div class="tiny faint">
                 {props.track.artist} — {props.track.title}
               </div>
+              <Show when={query()}>
+                <div class="tiny faint">
+                  searched for <span class="mono">{query()}</span>
+                </div>
+              </Show>
             </div>
             <button class="btn btn-ghost btn-sm" onClick={() => dialog?.close()}>
               Close

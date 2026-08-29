@@ -149,10 +149,20 @@ async def collect(source: Path, destination_dir: Path, artist: str, title: str,
     if identifier is not None and expected_key:
         verified, actually = await verify(source, identifier, expected_key)
         if not verified and require_verification:
+            # The comparison is on keys, so the message has to be too when
+            # they disagree while reading the same. Otherwise it says "the
+            # file is Alan Dixon — Acid Drop, not Alan Dixon — Acid Drop",
+            # which sounds like a bug in the check rather than a mismatch it
+            # correctly found.
+            heard = actually or "unrecognisable"
+            detail = (f"The file is {heard}, not {artist} — {title}."
+                      if heard.lower() != f"{artist} — {title}".lower()
+                      else f"The file identifies as {heard}, which does not "
+                           f"match the track this was queued for "
+                           f"({expected_key}).")
             raise VerificationFailed(
-                f"The file is {actually or 'unrecognisable'}, not "
-                f"{artist} — {title}. Soulseek filenames are whatever the "
-                f"uploader typed, so this one was wrong."
+                f"{detail} Soulseek filenames are whatever the uploader "
+                f"typed, so this one was wrong."
             )
 
     destination_dir.mkdir(parents=True, exist_ok=True)
