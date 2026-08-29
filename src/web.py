@@ -104,7 +104,24 @@ ALLOWED_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".opus", ".aac",
 # feeding the limit that then pauses *all* of them. On a 75-minute set the
 # refusals cost more wall-clock than the parallelism saved.
 CONCURRENCY = int(os.environ.get("SHAZAM_CONCURRENCY", "4"))
-KEEP_AUDIO_DAYS = int(os.environ.get("KEEP_AUDIO_DAYS", "14"))
+# Zero means keep it. A set's audio is what makes the waveform scrubbable and
+# lets you hear the moment a track was claimed for — which is most of why the
+# tracklist is worth having. Deleting it after a fortnight turned a library
+# into a fortnight's library.
+#
+# The fortnight was a guess made before there was anything to measure.
+# Measured: six sets take 325 MB, about 54 MB each, against 69 GB free — room
+# for something like thirteen hundred of them. It was solving a problem that
+# does not exist, and the cost of being wrong the other way is somebody's
+# archive.
+#
+# Disk is still bounded, by MIN_FREE_DISK_GB below, which deletes only when
+# space actually runs short and takes the oldest first.
+KEEP_AUDIO_DAYS = int(os.environ.get("KEEP_AUDIO_DAYS", "0"))
+# When free space falls below this, the oldest set audio is dropped until it
+# is back above. A real limit, applied when it bites, rather than a timer that
+# throws away files nobody was short of room for.
+MIN_FREE_DISK_GB = float(os.environ.get("MIN_FREE_DISK_GB", "5"))
 # Avatars are stored inline as data URIs rather than as files: there is one
 # per account, they are small, and a file store means a path, a sweeper and a
 # way to serve it. This caps what "small" means.
@@ -145,15 +162,70 @@ def sweep_media(max_age_days: int, downloads_days: Optional[int] = None) -> int:
     lives far longer.
     """
     now = datetime.now().timestamp()
-    cutoffs = {
-        MEDIA_DIR: now - max_age_days * 86400,
-        UPLOAD_DIR: now - max_age_days * 86400,
-        DOWNLOAD_DIR: now - (downloads_days if downloads_days is not None
-                             else KEEP_DOWNLOADS_DAYS) * 86400,
-    }
     removed = 0
-    for folder, cutoff in cutoffs.items():
-        removed += _sweep_folder(folder, cutoff)
+
+    # An age limit only if one was asked for. Zero — the default — means the
+    # audio stays until the disk says otherwise.
+    if max_age_days > 0:
+        cutoff = now - max_age_days * 86400
+        removed += _sweep_folder(MEDIA_DIR, cutoff)
+        removed += _sweep_folder(UPLOAD_DIR, cutoff)
+
+    keep_downloads = (downloads_days if downloads_days is not None
+                      else KEEP_DOWNLOADS_DAYS)
+    if keep_downloads > 0:
+        removed += _sweep_folder(DOWNLOAD_DIR,
+                                 now - keep_downloads * 86400)
+
+    removed += _sweep_for_space()
+    return removed
+
+
+def _sweep_for_space(min_free_gb: Optional[float] = None) -> int:
+    """Drop the oldest set audio until there is room again.
+
+    Only when space actually runs short, and oldest first — the set you
+    analysed this morning is the one you are most likely to be listening to,
+    and the one from a year ago is the one you can re-fetch from its source.
+
+    Uploads and set audio only. A downloaded track is the thing you went
+    looking for and cannot always be found again; deleting that to make room
+    would be deleting the point of the exercise.
+    """
+    import shutil
+
+    limit = MIN_FREE_DISK_GB if min_free_gb is None else min_free_gb
+    if limit <= 0:
+        return 0
+    try:
+        free_gb = shutil.disk_usage(MEDIA_DIR).free / (1024 ** 3)
+    except OSError:
+        return 0
+    if free_gb >= limit:
+        return 0
+
+    candidates = []
+    for folder in (MEDIA_DIR, UPLOAD_DIR):
+        for path in folder.iterdir():
+            try:
+                if path.is_file():
+                    candidates.append((path.stat().st_mtime, path))
+            except OSError:
+                continue
+    candidates.sort()
+
+    removed = 0
+    for _, path in candidates:
+        if free_gb >= limit:
+            break
+        try:
+            size = path.stat().st_size
+            path.unlink()
+            free_gb += size / (1024 ** 3)
+            removed += 1
+            logger.warning("Low disk: dropped %s to reclaim space", path.name)
+        except OSError:
+            continue
     return removed
 
 

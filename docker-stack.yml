@@ -14,7 +14,8 @@ services:
       - PYTHON_ENV=Production
       - SENTRY_DSN=${SENTRY_DSN:-}
       - SHAZAM_CONCURRENCY=${SHAZAM_CONCURRENCY:-4}
-      - KEEP_AUDIO_DAYS=${KEEP_AUDIO_DAYS:-14}
+      - KEEP_AUDIO_DAYS=${KEEP_AUDIO_DAYS:-0}
+      - MIN_FREE_DISK_GB=${MIN_FREE_DISK_GB:-5}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-https://shazamer.pierregallet.com}
       - SLSKD_URL=${SLSKD_URL:-}
       - SLSKD_API_KEY=${SLSKD_API_KEY:-}
@@ -115,7 +116,8 @@ services:
       - PYTHON_ENV=Production
       - SENTRY_DSN=${SENTRY_DSN:-}
       - SHAZAM_CONCURRENCY=${SHAZAM_CONCURRENCY:-4}
-      - KEEP_AUDIO_DAYS=${KEEP_AUDIO_DAYS:-14}
+      - KEEP_AUDIO_DAYS=${KEEP_AUDIO_DAYS:-0}
+      - MIN_FREE_DISK_GB=${MIN_FREE_DISK_GB:-5}
       - SLSKD_URL=${SLSKD_URL:-}
       - SLSKD_API_KEY=${SLSKD_API_KEY:-}
       - SLSKD_DOWNLOADS_DIR=/slskd-downloads

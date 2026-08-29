@@ -1,5 +1,6 @@
 """HTTP surface: validation, the library, exports, and the hardening fixes."""
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -530,3 +531,50 @@ def test_a_real_failure_is_not_blamed_on_staleness():
 
     assert dl._clean_ytdlp_error(
         "ERROR: [youtube] abc: Private video") == "Private video"
+
+
+def test_set_audio_is_kept_by_default():
+    """A library that forgets after a fortnight is a fortnight's library.
+
+    The tracklist survived the old sweep but the audio did not, so you could
+    no longer hear the moment a track was claimed for — which is most of what
+    makes the tracklist worth having. Measured before changing it: 54 MB a
+    set against 69 GB free, room for about thirteen hundred.
+    """
+    import src.web as web
+
+    assert web.KEEP_AUDIO_DAYS == 0, "audio is on a timer again"
+    assert web.MIN_FREE_DISK_GB > 0, "and nothing bounds the disk instead"
+
+
+def test_space_is_reclaimed_oldest_first_and_only_when_short(tmp_path,
+                                                             monkeypatch):
+    """Delete when the disk says so, not when a clock does."""
+    import shutil
+    import src.web as web
+
+    media = tmp_path / "media"
+    media.mkdir()
+    for i, name in enumerate(("old.mp3", "middle.mp3", "new.mp3")):
+        path = media / name
+        path.write_bytes(b"\x00" * 1024)
+        os.utime(path, (1000 + i * 1000, 1000 + i * 1000))
+
+    monkeypatch.setattr(web, "MEDIA_DIR", media)
+    monkeypatch.setattr(web, "UPLOAD_DIR", tmp_path / "absent")
+    (tmp_path / "absent").mkdir()
+
+    class Usage:
+        def __init__(self, free):
+            self.free = free
+
+    # Plenty of room: nothing goes.
+    monkeypatch.setattr(shutil, "disk_usage", lambda _p: Usage(50 * 1024 ** 3))
+    assert web._sweep_for_space(5.0) == 0
+    assert len(list(media.iterdir())) == 3
+
+    # Short: the oldest goes first, and only as far as needed.
+    monkeypatch.setattr(shutil, "disk_usage", lambda _p: Usage(0))
+    web._sweep_for_space(0.000001)
+    remaining = {p.name for p in media.iterdir()}
+    assert "old.mp3" not in remaining, "the newest was taken instead"
