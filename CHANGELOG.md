@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0](https://github.com/PierreGallet/shazamer/compare/v1.17.0...v1.18.0) (2026-08-29)
+
+
+### Features
+
+* **library:** a recurring track leads to its sets, and the tabs say what they are ([9505bd2](https://github.com/PierreGallet/shazamer/commit/9505bd2a95432ce71d0739c8aa97fe523bd75013))
+
 ## [1.17.0](https://github.com/PierreGallet/shazamer/compare/v1.16.3...v1.17.0) (2026-08-29)
 
 
