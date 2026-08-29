@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0](https://github.com/PierreGallet/shazamer/compare/v1.14.1...v1.15.0) (2026-08-29)
+
+
+### Features
+
+* **share:** pass a set to someone, and a profile to sign it with ([f3c660d](https://github.com/PierreGallet/shazamer/commit/f3c660dd687e08fe48068f759e1eb5b29371e634))
+* **tracks:** a scrubber on the excerpt, so you can skip to the part that matters ([494dd62](https://github.com/PierreGallet/shazamer/commit/494dd62666f7c99475635ecc0b08a546ac780989))
+* **web:** profile, sharing, and a landing page for an invitation ([af03b2b](https://github.com/PierreGallet/shazamer/commit/af03b2bc75fbad3abd1ca63f5cfa5b4f289839b3))
+
+
+### Bug Fixes
+
+* **deploy:** pass PUBLIC_URL to the containers ([944af4d](https://github.com/PierreGallet/shazamer/commit/944af4debd09f953b695b0a766ecef8ff9029999))
+* **media:** keep the audio, and bound the disk with the disk ([98e1933](https://github.com/PierreGallet/shazamer/commit/98e1933dc23db223b365647ef68118572b66f2cb))
+
 ## [1.14.1](https://github.com/PierreGallet/shazamer/compare/v1.14.0...v1.14.1) (2026-08-29)
 
 
