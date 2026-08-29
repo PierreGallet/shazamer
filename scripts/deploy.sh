@@ -23,6 +23,30 @@ cd "$(dirname "$0")/.."
 # fd 3 keeps a handle on the real stderr, so the failure tail below still
 # reaches whoever launched this instead of vanishing into the log it quotes.
 DEPLOY_SERVICE="${DEPLOY_SERVICE:-shazamer_app}"
+
+# One deploy at a time.
+#
+# Two overlapping runs make Swarm reject the second with "update out of
+# sequence": the service's version index moves between the CLI reading the
+# spec and sending the update, and that is exactly what a concurrent update
+# does. Observed four times in one morning, always in pairs minutes apart —
+# because a deploy on this machine takes fifteen to twenty minutes under load,
+# and anything that gives up waiting and retries starts a fight rather than a
+# queue.
+#
+# flock, not a pidfile: the lock dies with the process, so a killed deploy
+# does not leave the next one blocked for ever.
+LOCK_FILE="${DEPLOY_LOCK:-/tmp/deploy-${DEPLOY_SERVICE}.lock}"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  holder=$(cat "$LOCK_FILE" 2>/dev/null || echo "?")
+  echo ">> Another deploy of $DEPLOY_SERVICE is already running (pid $holder)."
+  echo "   Not starting a second one — they would fight over the same"
+  echo "   services and Swarm would reject both."
+  exit 75          # EX_TEMPFAIL: try again, nothing is wrong
+fi
+echo $$ >&9
+
 DEPLOY_LOG_DIR="${DEPLOY_LOG_DIR:-$HOME/deploy-logs}"
 DEPLOY_METRICS_DIR="${DEPLOY_METRICS_DIR:-$HOME/node_exporter_textfile}"
 mkdir -p "$DEPLOY_LOG_DIR" "$DEPLOY_METRICS_DIR"
@@ -51,11 +75,17 @@ _deploy_finish() {
         echo "# TYPE genius_deploy_last_timestamp_seconds gauge"
         echo "genius_deploy_last_timestamp_seconds{service=\"$DEPLOY_SERVICE\"} $(date +%s)"
     } > "$f.tmp" 2>/dev/null && mv "$f.tmp" "$f" 2>/dev/null || true
+    # Written to the log first, then to the caller. fd 3 is the terminal that
+    # launched this, and a detached deploy outlives it — so the interesting
+    # half of a failure used to vanish with the ssh session, leaving a log
+    # that simply stopped mid-sentence with no verdict at the end of it.
     if [ "$rc" -ne 0 ]; then
-        echo ">> DEPLOY FAILED (${dur}s) — last 40 lines of $DEPLOY_LOG:" >&3
+        echo ">> DEPLOY FAILED (${dur}s), exit $rc"
+        echo ">> DEPLOY FAILED (${dur}s) — last 40 lines of $DEPLOY_LOG:" >&3 2>/dev/null || true
         tail -40 "$DEPLOY_LOG" >&3 2>/dev/null || true
     else
-        echo ">> deploy ok in ${dur}s — $DEPLOY_LOG" >&3
+        echo ">> DEPLOY OK (${dur}s)"
+        echo ">> deploy ok in ${dur}s — $DEPLOY_LOG" >&3 2>/dev/null || true
     fi
     find "$DEPLOY_LOG_DIR" -name "${DEPLOY_SERVICE}-*.log" -mtime +30 -delete 2>/dev/null || true
 }
@@ -144,7 +174,27 @@ if [ -n "${SLSKD_API_KEY:-}" ]; then
   echo ">> slskd API key written to its config"
 fi
 
-docker stack deploy -c docker-stack.yml shazamer
+# Retried once. "update out of sequence" means the service changed under the
+# CLI between reading and writing — a conflict with something else finishing,
+# not a bad stack file. Retrying after it settles is the correct response;
+# aborting the deploy over it is what left production on old code.
+deploy_stack() {
+  docker stack deploy -c docker-stack.yml shazamer
+}
+if ! deploy_stack; then
+  echo ">> Stack deploy was rejected; waiting for Swarm to settle and retrying"
+  for _ in $(seq 1 24); do
+    busy=0
+    for svc in shazamer_app shazamer_worker shazamer_slskd; do
+      state=$(docker service inspect "$svc" \
+                --format '{{.UpdateStatus.State}}' 2>/dev/null || echo "")
+      case "$state" in updating|rollback_started) busy=1 ;; esac
+    done
+    [ "$busy" -eq 0 ] && break
+    sleep 5
+  done
+  deploy_stack
+fi
 
 # `docker stack deploy` exits 0 even when the rebuilt
 # `shazamer_app:latest` is byte-different from the running one,
@@ -176,8 +226,8 @@ for svc in shazamer_app shazamer_worker; do
     case "$state" in updating|rollback_started) sleep 5 ;; *) break ;; esac
   done
   if ! docker service update --force --image shazamer_app:latest "$svc"; then
-    echo "   $svc: force update failed, retrying once after settling"
-    sleep 15
+    echo "   $svc: force update rejected, settling and retrying once"
+    sleep 20
     docker service update --force --image shazamer_app:latest "$svc"
   fi
 done
