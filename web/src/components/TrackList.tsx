@@ -38,6 +38,11 @@ export default function TrackList(props: Props) {
   const [previewKey, setPreviewKey] = createSignal<string | null>(null);
   const [previewBusy, setPreviewBusy] = createSignal<string | null>(null);
   const [noPreview, setNoPreview] = createSignal<Record<string, boolean>>({});
+  // Position and length of the excerpt playing, so it can be scrubbed. Read
+  // off the element rather than counted with a timer: a timer drifts, and it
+  // keeps running when the audio stalls on a slow connection.
+  const [at, setAt] = createSignal(0);
+  const [span, setSpan] = createSignal(0);
   let previewAudio: HTMLAudioElement | undefined;
 
   onCleanup(() => previewAudio?.pause());
@@ -45,6 +50,15 @@ export default function TrackList(props: Props) {
   function stopPreview() {
     previewAudio?.pause();
     setPreviewKey(null);
+    setAt(0);
+    setSpan(0);
+  }
+
+  function seekPreview(seconds: number) {
+    if (previewAudio) {
+      previewAudio.currentTime = seconds;
+      setAt(seconds);
+    }
   }
 
   function togglePreview(track: Track, event: MouseEvent) {
@@ -63,7 +77,9 @@ export default function TrackList(props: Props) {
     // looks the excerpt up behind it and answers 404 when there is none.
     if (!previewAudio) previewAudio = new Audio();
     previewAudio.src = api.trackPreviewUrl(track.key);
-    previewAudio.onended = () => setPreviewKey(null);
+    previewAudio.ontimeupdate = () => setAt(previewAudio!.currentTime);
+    previewAudio.onloadedmetadata = () => setSpan(previewAudio!.duration || 0);
+    previewAudio.onended = () => stopPreview();
     previewAudio.onerror = () => {
       setNoPreview({ ...noPreview(), [track.key]: true });
       setPreviewBusy(null);
@@ -278,6 +294,31 @@ export default function TrackList(props: Props) {
                       </svg>
                     </Show>
                   </button>
+
+                  {/* A scrubber for the excerpt, in the row rather than in a
+                      player elsewhere: what it is for is comparing this
+                      thirty seconds against the moment above it, and a
+                      control that lives somewhere else breaks that. A range
+                      input rather than a drawn bar — dragging, keyboard and
+                      touch all come with it. */}
+                  <Show when={previewKey() === track.key && span() > 0}>
+                    <span class="preview-scrub">
+                      <input
+                        type="range"
+                        min="0"
+                        max={span()}
+                        step="0.1"
+                        value={at()}
+                        aria-label="Position in the excerpt"
+                        onInput={(e) =>
+                          seekPreview(Number(e.currentTarget.value))}
+                      />
+                      <span class="tiny faint mono">
+                        {formatTime(at())} / {formatTime(span())}
+                      </span>
+                    </span>
+                  </Show>
+
                   <button
                     class="btn-icon"
                     classList={{ on: isStarred(track) }}

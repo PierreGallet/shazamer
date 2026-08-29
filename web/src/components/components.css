@@ -496,3 +496,31 @@
   margin-top: 0.7rem; padding-top: 0.7rem;
   border-top: 1px solid var(--line);
 }
+
+/* The excerpt scrubber, inline in the track row. Narrow on purpose: it shares
+   the row with the actions, and the excerpt is thirty seconds — this is for
+   skipping the intro, not for navigating a set. */
+.preview-scrub {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+}
+.preview-scrub input[type="range"] {
+  width: 92px; height: 3px; -webkit-appearance: none; appearance: none;
+  background: var(--line); border-radius: 2px; cursor: pointer;
+}
+.preview-scrub input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--accent); cursor: pointer;
+}
+.preview-scrub input[type="range"]::-moz-range-thumb {
+  width: 10px; height: 10px; border: none; border-radius: 50%;
+  background: var(--accent); cursor: pointer;
+}
+.preview-scrub input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 3px;
+}
+
+@media (max-width: 720px) {
+  /* The row is tight enough already on a phone. */
+  .preview-scrub input[type="range"] { width: 56px; }
+}
