@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0](https://github.com/PierreGallet/shazamer/compare/v1.18.1...v1.19.0) (2026-08-29)
+
+
+### Features
+
+* **media:** sets holding the same audio share one copy of it ([73cd607](https://github.com/PierreGallet/shazamer/commit/73cd607a9791da002f34ead22d5900708b4b9d0f))
+
 ## [1.18.1](https://github.com/PierreGallet/shazamer/compare/v1.18.0...v1.18.1) (2026-08-29)
 
 
