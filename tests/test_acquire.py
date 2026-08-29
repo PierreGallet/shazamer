@@ -470,21 +470,40 @@ async def test_the_whole_acquisition_runs_without_a_missing_attribute(
         bit_depth=None, length=380, queue_length=0, free_slot=True,
         upload_speed=900_000, score=12.0)
 
-    class StubClient:
-        def configured(self):
-            return True
+    # A real SlskdClient with only its HTTP layer replaced.
+    #
+    # The first version of this stubbed `await_transfer` — which was the
+    # method carrying the next bug, a missing `import time` that had been
+    # there since it was written. A stub of the thing under test tests the
+    # stub. Everything above the socket runs for real now.
+    from src.acquire.slskd import SlskdClient
 
-        async def search(self, _query):
-            return [candidate]
+    class StubClient(SlskdClient):
+        def __init__(self):
+            super().__init__(base_url="http://stub", api_key="k")
 
-        async def enqueue(self, _candidate):
-            return {"queued": True}
-
-        async def await_transfer(self, _username, _filename, on_progress=None):
-            if on_progress:
-                on_progress(50.0, "inprogress")
-            return {"full_path": candidate.filename,
-                    "local_path": str(fetched), "state": "Completed, Succeeded"}
+        async def _request(self, method, path, **kwargs):
+            if method == "POST" and path == "/searches":
+                return {"id": "s1"}
+            if path.startswith("/searches"):
+                return {"state": "Completed", "responseCount": 1, "responses": [{
+                    "username": candidate.username, "hasFreeUploadSlot": True,
+                    "uploadSpeed": 900_000, "queueLength": 0,
+                    "files": [{"filename": candidate.filename,
+                               "size": candidate.size, "bitRate": 320,
+                               "length": 380}]}]}
+            if path.startswith("/transfers/downloads"):
+                if method == "POST":
+                    return {"queued": True}
+                return [{"username": candidate.username, "directories": [
+                    {"files": [{"filename": candidate.filename,
+                                "state": "Completed, Succeeded",
+                                "percentComplete": 100,
+                                "bytesTransferred": candidate.size,
+                                "size": candidate.size,
+                                "averageSpeed": 900_000,
+                                "localPath": str(fetched)}]}]}]
+            return {}
 
     class StubIdentifier:
         name = "stub"
