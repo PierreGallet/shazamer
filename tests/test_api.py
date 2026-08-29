@@ -618,3 +618,42 @@ async def test_soulseek_endpoints_need_a_session(client, monkeypatch):
     monkeypatch.undo()
     importlib.reload(auth_mod)
     importlib.reload(web)
+
+
+async def test_a_finished_download_can_be_saved_again(client, tmp_path):
+    """The file has to be reachable after the moment it finished.
+
+    It was only offered by the panel that started it, on the page it was
+    started from. Close the tab and the bytes sat on the server with no way
+    to ask for them — which is the same as not having fetched them.
+    """
+    lib = client.web.library
+    download_id = await lib.start_download("a::x", "Alan Dixon", "Acid Drop",
+                                           user_id=TEST_USER)
+    fetched = client.web.DOWNLOAD_DIR / "Alan Dixon - Acid Drop.mp3"
+    fetched.parent.mkdir(parents=True, exist_ok=True)
+    fetched.write_bytes(b"audio")
+    await lib.update_download(download_id, status="ready", message="Ready",
+                              local_path=str(fetched), verified=1)
+
+    listed = (await client.get("/api/acquire/downloads")).json()
+    assert any(d["id"] == download_id and d["available"] for d in listed)
+
+    served = await client.get(f"/api/acquire/downloads/{download_id}/file")
+    assert served.status_code == 200
+    assert served.content == b"audio"
+    fetched.unlink(missing_ok=True)
+
+
+async def test_a_file_outside_the_downloads_directory_is_refused(client,
+                                                                 tmp_path):
+    """A stored path is not a licence to read anywhere on the disk."""
+    lib = client.web.library
+    download_id = await lib.start_download("a::x", "A", "X", user_id=TEST_USER)
+    elsewhere = tmp_path / "secret.mp3"
+    elsewhere.write_bytes(b"nope")
+    await lib.update_download(download_id, status="ready",
+                              local_path=str(elsewhere))
+
+    refused = await client.get(f"/api/acquire/downloads/{download_id}/file")
+    assert refused.status_code == 400

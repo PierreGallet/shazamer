@@ -583,3 +583,28 @@
    thing you decide while scanning the library, and making it a two-step
    detour through the set is the reason it would go unused. */
 .set-card-share { display: flex; align-items: center; }
+
+/* Downloads, as a list you can come back to. A file could previously only be
+   saved in the moment it finished, from the panel that started it — close the
+   tab and it sat on the server unreachable, which is the same as not having
+   fetched it. */
+.downloads-head { margin-bottom: 0.9rem; }
+.downloads-filter { max-width: 200px; font-size: 0.82rem; padding: 0.4rem 0.6rem; }
+.downloads { display: flex; flex-direction: column; gap: 0.35rem; }
+.download-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 0.6rem; align-items: center;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 0.55rem 0.7rem;
+}
+.download-name { min-width: 0; }
+.download-title {
+  font-size: 0.88rem; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.download-gone { white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .download-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 0.4rem; }
+}

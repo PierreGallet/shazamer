@@ -155,7 +155,12 @@ async def acquire_track(library, destination: Path, track_key: str,
             best = candidates[0]
         logger.info("Best candidate for %s - %s: %s from %s",
                     artist, title, best.quality_label, best.username)
-        await note("downloading", f"Downloading {best.quality_label}...",
+        # Who it is coming from, not only what. A Soulseek transfer depends
+        # entirely on one stranger's machine staying online and their queue
+        # moving, so the peer is the part that explains why it is fast, slow
+        # or stuck — and it is already on the row, just never said out loud.
+        await note("downloading",
+                   f"Downloading {best.quality_label} from {best.username}...",
                    username=best.username, remote_path=best.full_path,
                    quality=best.quality_label, size=best.size)
 
@@ -173,8 +178,10 @@ async def acquire_track(library, destination: Path, track_key: str,
             # what went wrong.
             import asyncio
             progress_writes.append(asyncio.create_task(
-                library.update_download(download_id, progress=percent,
-                                        message=f"Downloading... {percent:.0f}%")
+                library.update_download(
+                    download_id, progress=percent,
+                    message=f"Downloading from {best.username}... "
+                            f"{percent:.0f}%")
             ))
 
 

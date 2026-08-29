@@ -2,6 +2,7 @@ import { Router, Route, useNavigate, useParams, useLocation, A } from "@solidjs/
 import { For, Show, createResource, createSignal, onCleanup, type ParentProps } from "solid-js";
 import Analyze from "./components/Analyze";
 import Crate from "./components/Crate";
+import Downloads from "./components/Downloads";
 import Library from "./components/Library";
 import SetView from "./components/SetView";
 import Watches from "./components/Watches";
@@ -24,6 +25,7 @@ const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Analyse" },
   { href: "/library", label: "Library" },
   { href: "/crate", label: "Crate" },
+  { href: "/downloads", label: "Downloads" },
   { href: "/following", label: "Following" },
 ];
 
@@ -230,6 +232,7 @@ function AppRoutes() {
       <Route path="/sets/:id" component={SetRoute} />
       <Route path="/crate" component={Crate} />
       <Route path="/following" component={Watches} />
+      <Route path="/downloads" component={Downloads} />
       <Route path="/profile" component={Profile} />
       <Route path="*" component={NotFound} />
     </Router>
