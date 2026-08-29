@@ -51,7 +51,7 @@ perfectly — taking the analysis with it.
 | `enrich/` | MusicBrainz lookups and the cache |
 | `acquire/` | Soulseek: ranking, transfers, verification, tagging |
 | `sources/` | yt-dlp, and the quality ladder per platform |
-| `store/library.py` | SQLite: sets, tracks, crate, watches, downloads |
+| `store/library.py` | SQLite: sets, tracks, crate (starred), watches, downloads |
 | `jobs/` | The queue, the worker, the scheduled checks |
 | `web/` | TypeScript + SolidJS interface |
 

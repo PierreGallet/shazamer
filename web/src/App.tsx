@@ -1,4 +1,4 @@
-import { Router, Route, useNavigate, useParams, useLocation, A } from "@solidjs/router";
+import { Router, Route, Navigate, useNavigate, useParams, useLocation, A } from "@solidjs/router";
 import { For, Show, createResource, createSignal, onCleanup, type ParentProps } from "solid-js";
 import Analyze from "./components/Analyze";
 import Crate from "./components/Crate";
@@ -15,7 +15,7 @@ import { api } from "./lib/api";
  * Routes, so the app has addresses.
  *
  * Everything worth returning to has a URL: a set you found, an analysis you
- * kicked off, the crate you were filtering. Without that, sharing "listen to
+ * kicked off, the starred tracks you were filtering. Without that, sharing "listen to
  * this" means describing where to click, refreshing during a twenty-minute
  * analysis loses the progress view, and the browser's back button does
  * nothing — which reads as broken rather than minimal.
@@ -24,7 +24,7 @@ import { api } from "./lib/api";
 const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Analyse" },
   { href: "/library", label: "Library" },
-  { href: "/crate", label: "Starred" },
+  { href: "/starred", label: "Starred" },
   { href: "/downloads", label: "Downloads" },
   { href: "/following", label: "Following" },
 ];
@@ -230,7 +230,11 @@ function AppRoutes() {
       <Route path="/analyzing/:taskId" component={AnalyzeRoute} />
       <Route path="/library" component={LibraryRoute} />
       <Route path="/sets/:id" component={SetRoute} />
-      <Route path="/crate" component={Crate} />
+      <Route path="/starred" component={Crate} />
+      {/* The old address, kept working. It is in browser history and in any
+          link already sent, and a renamed tab is not a reason to break
+          those. */}
+      <Route path="/crate" component={() => <Navigate href="/starred" />} />
       <Route path="/following" component={Watches} />
       <Route path="/downloads" component={Downloads} />
       <Route path="/profile" component={Profile} />

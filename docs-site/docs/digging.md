@@ -16,9 +16,9 @@ usually how you find the records that matter to the DJs you follow.
 
 Shown at the top of the library, ordered by how many sets a track turns up in.
 
-## The crate
+## Starred tracks
 
-Star a track and it collects in the crate, filterable by the things you
+Star a track and it collects here, filterable by the things you
 actually sort on — BPM range, Camelot key, label, free text.
 
 ## Following channels
@@ -37,7 +37,7 @@ Two restraints, both deliberate:
 
 ## What matching is based on
 
-Everything — recurrence, the crate, enrichment, downloads — keys on a
+Everything — recurrence, starred tracks, enrichment, downloads — keys on a
 normalised `artist::title`, which collapses the decorations that make one
 record look like several: `(Original Mix)`, `- Extended`, `[Remastered 2019]`,
 `feat.` credits, accents, punctuation.
