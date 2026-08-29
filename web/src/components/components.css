@@ -364,13 +364,54 @@
   padding-top: 0.6rem; border-top: 1px solid var(--line);
 }
 .candidates { display: flex; flex-direction: column; gap: 0.3rem; }
+/* Eight fields, eight named columns.
+   They were five, and three got added — so the extras fell onto an implicit
+   second row and nothing lined up between one candidate and the next, which
+   is the whole reason to put them in a table-like list. Fixed widths on the
+   numbers so 13 MB and 14 MB sit in the same place; the filename is the only
+   thing that flexes, because it is the only thing whose length matters. */
 .candidate {
   display: grid;
-  grid-template-columns: auto 1fr auto auto auto;
-  gap: 0.6rem; align-items: center;
+  grid-template-columns:
+    auto              /* format and bitrate */
+    minmax(0, 1fr)    /* filename */
+    3.6rem            /* size */
+    2.8rem            /* length */
+    5.5rem            /* who is sharing it */
+    4.6rem            /* their upload speed */
+    4.4rem            /* free, or how deep the queue is */
+    auto;             /* the button */
+  gap: 0.55rem; align-items: center;
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius-sm); padding: 0.4rem 0.6rem;
   font-size: 0.8rem;
+}
+/* Right-aligned and tabular, so the digits form a column rather than a
+   ragged edge. */
+.candidate-num {
+  text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.candidate-slot { white-space: nowrap; }
+.candidate .btn { justify-self: end; }
+
+@media (max-width: 640px) {
+  /* Two rows on a phone: what it is, then who has it. Still a grid, so the
+     columns keep lining up down the list. */
+  .candidate {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "quality name    size"
+      "peer    speed   button";
+    row-gap: 0.35rem;
+  }
+  .candidate > :nth-child(1) { grid-area: quality; }
+  .candidate > :nth-child(2) { grid-area: name; }
+  .candidate > :nth-child(3) { grid-area: size; }
+  .candidate > :nth-child(4) { display: none; }   /* length, least useful here */
+  .candidate > :nth-child(5) { grid-area: peer; }
+  .candidate > :nth-child(6) { grid-area: speed; }
+  .candidate > :nth-child(7) { display: none; }   /* queue depth */
+  .candidate > :nth-child(8) { grid-area: button; }
 }
 .candidate-file {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -535,8 +576,7 @@
   overscroll-behavior: contain;
 }
 .candidate-peer {
-  max-width: 96px; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 /* Sharing from the list, not only from inside a set: passing one on is a

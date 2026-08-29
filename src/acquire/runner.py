@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .library import VerificationFailed, collect
 from .slskd import Candidate, SlskdClient, SlskdError, search_query
@@ -37,6 +37,7 @@ async def rank_candidates(artist: str, title: str, limit: int = 5,
     extended mix and the radio edit is invisible until someone looks.
     """
     client = client or SlskdClient()
+
     if not client.configured:
         raise SlskdError("Soulseek is not configured on this server.")
 
@@ -46,6 +47,46 @@ async def rank_candidates(artist: str, title: str, limit: int = 5,
         "candidates": [c.to_dict() for c in candidates[:limit]],
         "total": len(candidates),
     }
+
+
+def _locate(entry: Dict[str, Any]) -> Optional[Path]:
+    """Find the file slskd just finished writing.
+
+    Three attempts, because slskd's own view of where it put something is not
+    ours and its filing is not flat.
+
+    It reports `localPath` from inside its container — `/downloads/music/x.mp3`
+    — which is mounted elsewhere here. And it recreates the *peer's* directory
+    structure underneath, so a file lands in `music/` or `not in current
+    sets/` rather than at the top. Looking only at the root found nothing and
+    reported a transfer that had in fact succeeded as a failure.
+    """
+    reported = Path(entry.get("local_path") or "")
+    if reported.is_absolute() and reported.exists():
+        return reported
+
+    wanted = Path(entry.get("full_path", "").replace("\\", "/")).name
+    if not wanted:
+        return None
+
+    # slskd's path, remapped onto our mount: everything after its own
+    # downloads root is the part that is the same on both sides.
+    if reported.parts:
+        for i, part in enumerate(reported.parts):
+            if part in ("downloads", "download"):
+                candidate = SLSKD_DOWNLOADS.joinpath(*reported.parts[i + 1:])
+                if candidate.exists():
+                    return candidate
+                break
+
+    # Failing that, look for the name. Newest first: slskd appends a suffix
+    # when a name is already taken, so a second fetch of the same record
+    # leaves two files and the one just written is the one meant.
+    matches = sorted(
+        (p for p in SLSKD_DOWNLOADS.rglob("*") if p.is_file()
+         and p.name == wanted),
+        key=lambda p: p.stat().st_mtime, reverse=True)
+    return matches[0] if matches else None
 
 
 async def acquire_track(library, destination: Path, track_key: str,
@@ -62,6 +103,23 @@ async def acquire_track(library, destination: Path, track_key: str,
     went offline at 60%" is a genuinely different outcome from "nobody has it".
     """
     client = client or SlskdClient()
+
+    # Declared out here so the failure handlers below can drain them. Defining
+    # them inside the try would leave the handlers referring to a name that
+    # does not exist when the failure came first.
+    progress_writes: List[Any] = []
+
+    async def settle_progress() -> None:
+        """Let every queued progress write finish before the verdict.
+
+        Untracked, the last one landed *after* the outcome and overwrote it: a
+        failed download displayed "failed" beside "Downloading... 100%", with
+        the actual reason gone.
+        """
+        import asyncio
+        if progress_writes:
+            await asyncio.gather(*progress_writes, return_exceptions=True)
+            progress_writes.clear()
 
     async def note(status: str, message: str, **extra) -> None:
         await library.update_download(download_id, status=status,
@@ -104,26 +162,35 @@ async def acquire_track(library, destination: Path, track_key: str,
         await client.enqueue(best)
 
         def on_progress(percent: float, state: str) -> None:
-            # Fire-and-forget: progress is a nicety, and awaiting a DB write
-            # inside the poll loop would slow the loop for no benefit.
+            # Fire-and-forget, because awaiting a database write inside the
+            # poll loop would slow the loop for no benefit — but *tracked*,
+            # and drained before anything final is written.
+            #
+            # Untracked, the last of these landed after the outcome and
+            # overwrote it: a download that failed displayed "failed" next to
+            # "Downloading... 100%", with the actual reason gone. The status
+            # said one thing and the message said another, and neither said
+            # what went wrong.
             import asyncio
-            asyncio.create_task(
+            progress_writes.append(asyncio.create_task(
                 library.update_download(download_id, progress=percent,
                                         message=f"Downloading... {percent:.0f}%")
-            )
+            ))
+
 
         entry = await client.await_transfer(best.username, best.full_path,
                                             on_progress=on_progress)
 
-        source = Path(entry.get("local_path") or "")
-        if not source.is_absolute() or not source.exists():
-            # slskd reports its own view of the path; map it into ours.
-            source = SLSKD_DOWNLOADS / Path(entry["full_path"].replace("\\\\", "/")).name
-        if not source.exists():
+        await settle_progress()
+
+        source = _locate(entry)
+        if source is None:
+            wanted = Path(entry.get("full_path", "").replace("\\", "/")).name
             await note("failed",
-                       f"slskd finished the transfer but the file is not at "
-                       f"{source}. Check that SLSKD_DOWNLOADS_DIR matches the "
-                       f"volume slskd writes to.")
+                       f"slskd finished the transfer but {wanted!r} is not "
+                       f"under {SLSKD_DOWNLOADS}. Check that "
+                       f"SLSKD_DOWNLOADS_DIR matches the volume slskd writes "
+                       f"to.")
             return await library.get_download(download_id, user_id=None)
 
         await note("verifying", "Checking it is the right track...")
@@ -140,10 +207,15 @@ async def acquire_track(library, destination: Path, track_key: str,
         logger.info("Acquired %s - %s -> %s", artist, title, acquired.path.name)
 
     except VerificationFailed as exc:
+        await settle_progress()
         await note("failed", str(exc))
     except SlskdError as exc:
+        await settle_progress()
         await note("failed", str(exc))
     except Exception as exc:
+        # Drained here too, not only on the happy path: a failure at 99% is
+        # exactly when a late progress write lands on top of the reason.
+        await settle_progress()
         logger.exception("Acquisition of %s - %s failed", artist, title)
         await note("failed", f"Unexpected failure: {exc}")
 

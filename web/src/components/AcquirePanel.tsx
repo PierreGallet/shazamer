@@ -254,10 +254,12 @@ export default function AcquirePanel(props: Props) {
                       <span class="candidate-file" title={candidate.full_path}>
                         {candidate.filename}
                       </span>
-                      <span class="tiny faint mono">
+                      <span class="tiny faint mono candidate-num">
                         {formatBytes(candidate.size)}
                       </span>
-                      <span class="tiny faint">{candidate.duration_label}</span>
+                      <span class="tiny faint mono candidate-num">
+                        {candidate.duration_label}
+                      </span>
                       {/* Who is sharing it and how fast they upload. On
                           Soulseek that decides whether a file arrives in ten
                           seconds or ten minutes — a free slot on a fast line
@@ -266,18 +268,18 @@ export default function AcquirePanel(props: Props) {
                             title={`Shared by ${candidate.username}`}>
                         {candidate.username}
                       </span>
-                      <span class="tiny faint mono">
+                      <span class="tiny faint mono candidate-num">
                         {formatSpeed(candidate.upload_speed)}
                       </span>
                       <span
-                        class="tiny"
+                        class="tiny candidate-slot"
                         classList={{
                           faint: !candidate.free_slot,
                           muted: candidate.free_slot,
                         }}
                       >
                         {candidate.free_slot
-                          ? "free slot"
+                          ? "free"
                           : `queue ${candidate.queue_length}`}
                       </span>
                       <button

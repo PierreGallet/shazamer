@@ -522,3 +522,119 @@ async def test_the_whole_acquisition_runs_without_a_missing_attribute(
     assert row["status"] != "failed", row.get("message")
     assert row["status"] == "ready", (
         f"finished as {row['status']}: {row.get('message')}")
+
+
+def test_a_file_filed_under_a_subfolder_is_found(tmp_path, monkeypatch):
+    """slskd recreates the peer's directory structure underneath its root.
+
+    A file lands in `music/` or `not in current sets/`, never at the top.
+    Looking only at the root found nothing and reported a transfer that had
+    genuinely succeeded as a failure — at 100%, which is the most confusing
+    place for it to happen.
+    """
+    from src.acquire import runner as runner_module
+
+    root = tmp_path / "slskd-downloads"
+    (root / "music").mkdir(parents=True)
+    wanted = root / "music" / "Alan Dixon - Acid Drop.mp3"
+    wanted.write_bytes(b"x")
+    monkeypatch.setattr(runner_module, "SLSKD_DOWNLOADS", root)
+
+    found = runner_module._locate({
+        # slskd's own view, from inside its container: not a path here.
+        "local_path": "/downloads/music/Alan Dixon - Acid Drop.mp3",
+        "full_path": "@@peer\\music\\Alan Dixon - Acid Drop.mp3",
+    })
+    assert found == wanted
+
+
+def test_the_newest_copy_wins_when_a_name_repeats(tmp_path, monkeypatch):
+    """slskd suffixes a name it has seen before, leaving two files.
+
+    Fetching the same record twice must pick the one just written, not the
+    one from last week.
+    """
+    import os
+    from src.acquire import runner as runner_module
+
+    root = tmp_path / "dl"
+    (root / "a").mkdir(parents=True)
+    (root / "b").mkdir()
+    old = root / "a" / "Track.mp3"
+    new = root / "b" / "Track.mp3"
+    for path in (old, new):
+        path.write_bytes(b"x")
+    os.utime(old, (1000, 1000))
+    os.utime(new, (9000, 9000))
+    monkeypatch.setattr(runner_module, "SLSKD_DOWNLOADS", root)
+
+    assert runner_module._locate(
+        {"local_path": "", "full_path": "@@p\\x\\Track.mp3"}) == new
+
+
+def test_nothing_found_is_reported_as_nothing_found(tmp_path, monkeypatch):
+    from src.acquire import runner as runner_module
+
+    root = tmp_path / "dl"
+    root.mkdir()
+    monkeypatch.setattr(runner_module, "SLSKD_DOWNLOADS", root)
+    assert runner_module._locate(
+        {"local_path": "", "full_path": "@@p\\x\\Missing.mp3"}) is None
+
+
+async def test_a_failure_keeps_its_reason(tmp_path, monkeypatch):
+    """A late progress write must not land on top of the verdict.
+
+    Reported as status "failed" beside the message "Downloading... 100%" —
+    the status said one thing, the message said another, and neither said what
+    went wrong. The writes are fire-and-forget so the poll loop stays quick;
+    they are now drained before anything final is written.
+    """
+    from src.acquire import runner as runner_module
+    from src.acquire.runner import acquire_track
+    from src.acquire.slskd import Candidate, SlskdClient
+    from src.store.library import Library
+
+    library = Library(tmp_path / "lib.db")
+    download_id = await library.start_download("a::x", "A", "X", user_id="u1")
+
+    empty = tmp_path / "nothing"
+    empty.mkdir()
+    monkeypatch.setattr(runner_module, "SLSKD_DOWNLOADS", empty)
+
+    candidate = Candidate(
+        username="peer", filename="@@p\\music\\A - X.mp3", size=10,
+        extension="mp3", bitrate=320, sample_rate=None, bit_depth=None,
+        length=200, queue_length=0, free_slot=True, upload_speed=1, score=1.0)
+
+    class StubClient(SlskdClient):
+        def __init__(self):
+            super().__init__(base_url="http://stub", api_key="k")
+
+        async def _request(self, method, path, **kwargs):
+            if method == "POST" and path == "/searches":
+                return {"id": "s1"}
+            if path.startswith("/searches"):
+                return {"state": "Completed", "responseCount": 1, "responses": [{
+                    "username": "peer", "hasFreeUploadSlot": True,
+                    "uploadSpeed": 1, "queueLength": 0,
+                    "files": [{"filename": candidate.filename, "size": 10,
+                               "bitRate": 320, "length": 200}]}]}
+            if path.startswith("/transfers/downloads"):
+                if method == "POST":
+                    return {"queued": True}
+                return [{"username": "peer", "directories": [{"files": [{
+                    "filename": candidate.filename,
+                    "state": "Completed, Succeeded", "percentComplete": 100,
+                    "bytesTransferred": 10, "size": 10, "averageSpeed": 1,
+                    "localPath": ""}]}]}]
+            return {}
+
+    row = await acquire_track(
+        library, tmp_path / "out", "a::x", "A", "X",
+        download_id=download_id, client=StubClient())
+
+    assert row["status"] == "failed"
+    assert "Downloading" not in row["message"], (
+        f"the reason was overwritten by a progress write: {row['message']!r}")
+    assert "not under" in row["message"], row["message"]
