@@ -34,8 +34,24 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id          TEXT PRIMARY KEY,
     email       TEXT NOT NULL UNIQUE,
+    first_name  TEXT DEFAULT '',
+    last_name   TEXT DEFAULT '',
+    avatar      TEXT DEFAULT '',
     created_at  TEXT NOT NULL,
     last_seen   TEXT
+);
+
+-- A pending change of address. Held here rather than written to `users`
+-- until the code sent to the NEW address is entered: an unverified change
+-- would let a typo lock someone out of their own account, and a malicious
+-- one would hand it to somebody else.
+CREATE TABLE IF NOT EXISTS email_changes (
+    user_id     TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    new_email   TEXT NOT NULL,
+    code_hash   TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    sent_at     TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS login_codes (
@@ -107,6 +123,20 @@ def looks_like_email(email: str) -> bool:
     return bool(local) and "." in domain and not domain.startswith(".")
 
 
+def display_name(user: Dict[str, Any]) -> str:
+    """What to call someone in front of other people.
+
+    Falls back to the local part of the address rather than the whole thing:
+    "shared by pierre" is friendly, and "shared by pierre.gallet@hotmail.fr"
+    hands an address to everyone a set is passed along to.
+    """
+    name = " ".join(p for p in (user.get("first_name") or "",
+                                user.get("last_name") or "") if p).strip()
+    if name:
+        return name
+    return (user.get("email") or "").split("@")[0] or "someone"
+
+
 def _hash(value: str) -> str:
     """SHA-256, not a password KDF, and deliberately.
 
@@ -133,7 +163,24 @@ class Accounts:
         self._lock = asyncio.Lock()
         with closing(self._connect()) as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
             conn.commit()
+
+    # Columns added after accounts shipped. `CREATE TABLE IF NOT EXISTS` does
+    # nothing to a database that already has the table, so a new column has to
+    # be named here or it only appears on fresh installs.
+    MIGRATIONS = (
+        ("users", "first_name", "TEXT DEFAULT ''"),
+        ("users", "last_name", "TEXT DEFAULT ''"),
+        ("users", "avatar", "TEXT DEFAULT ''"),
+    )
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        for table, column, definition in self.MIGRATIONS:
+            existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if existing and column not in existing:
+                logger.info("Adding %s.%s to accounts", table, column)
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=15)
@@ -306,6 +353,136 @@ class Accounts:
             conn.commit()
             return cur.rowcount
 
+    # ── Profile ──────────────────────────────────────────────────────────
+
+    async def profile(self, user_id: str) -> Optional[Dict[str, Any]]:
+        return await self._run(self._profile_sync, user_id)
+
+    def _profile_sync(self, user_id: str) -> Optional[Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT id, email, first_name, last_name, avatar, created_at"
+                " FROM users WHERE id = ?", (user_id,)).fetchone()
+            if row is None:
+                return None
+            pending = conn.execute(
+                "SELECT new_email, expires_at FROM email_changes"
+                " WHERE user_id = ?", (user_id,)).fetchone()
+        out = {k: row[k] for k in row.keys()}
+        out["display_name"] = display_name(out)
+        # Surfaced so the interface can say a change is waiting rather than
+        # appearing to have forgotten it.
+        out["pending_email"] = (
+            pending["new_email"]
+            if pending and _parse(pending["expires_at"]) > _now() else None)
+        return out
+
+    async def update_profile(self, user_id: str, **fields) -> None:
+        """Set the parts of a profile that need no proving.
+
+        Not the address: changing that has to be verified on the new one,
+        which `start_email_change` handles.
+        """
+        allowed = {k: v for k, v in fields.items()
+                   if k in ("first_name", "last_name", "avatar")
+                   and v is not None}
+        if allowed:
+            await self._run(self._update_profile_sync, user_id, allowed)
+
+    def _update_profile_sync(self, user_id: str, fields: Dict[str, Any]) -> None:
+        assignments = ", ".join(f"{k} = ?" for k in fields)
+        with closing(self._connect()) as conn:
+            conn.execute(f"UPDATE users SET {assignments} WHERE id = ?",
+                         (*fields.values(), user_id))
+            conn.commit()
+
+    # ── Changing the address ─────────────────────────────────────────────
+
+    async def start_email_change(self, user_id: str,
+                                 new_email: str) -> Optional[str]:
+        """Issue a code to the new address, or None if one is in flight.
+
+        Verified on the *new* address rather than the old one, because that is
+        the claim being made: that this mailbox is reachable and is yours. An
+        unverified change turns a typo into a locked account.
+        """
+        return await self._run(self._start_email_change_sync, user_id,
+                               normalise_email(new_email))
+
+    def _start_email_change_sync(self, user_id: str,
+                                 new_email: str) -> Optional[str]:
+        now = _now()
+        with closing(self._connect()) as conn:
+            taken = conn.execute(
+                "SELECT 1 FROM users WHERE email = ? AND id != ?",
+                (new_email, user_id)).fetchone()
+            if taken:
+                # Deliberately indistinguishable from success further up: this
+                # endpoint must not report who else has an account.
+                return None
+            row = conn.execute(
+                "SELECT sent_at, expires_at FROM email_changes WHERE user_id = ?",
+                (user_id,)).fetchone()
+            if row and _parse(row["expires_at"]) > now \
+                    and _parse(row["sent_at"]) > now - RESEND_INTERVAL:
+                return None
+
+            code = new_code()
+            conn.execute(
+                "INSERT INTO email_changes (user_id, new_email, code_hash,"
+                " expires_at, attempts, sent_at) VALUES (?, ?, ?, ?, 0, ?)"
+                " ON CONFLICT(user_id) DO UPDATE SET"
+                " new_email = excluded.new_email,"
+                " code_hash = excluded.code_hash,"
+                " expires_at = excluded.expires_at, attempts = 0,"
+                " sent_at = excluded.sent_at",
+                (user_id, new_email, _hash(code), _iso(now + CODE_TTL),
+                 _iso(now)))
+            conn.commit()
+            return code
+
+    async def confirm_email_change(self, user_id: str,
+                                   code: str) -> Optional[str]:
+        """Apply a pending change. Returns the new address, or None."""
+        return await self._run(self._confirm_email_change_sync, user_id,
+                               (code or "").strip())
+
+    def _confirm_email_change_sync(self, user_id: str,
+                                   code: str) -> Optional[str]:
+        now = _now()
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT new_email, code_hash, expires_at, attempts"
+                " FROM email_changes WHERE user_id = ?", (user_id,)).fetchone()
+            if row is None:
+                return None
+            if _parse(row["expires_at"]) <= now or row["attempts"] >= MAX_CODE_ATTEMPTS:
+                conn.execute("DELETE FROM email_changes WHERE user_id = ?",
+                             (user_id,))
+                conn.commit()
+                return None
+            if not secrets.compare_digest(row["code_hash"], _hash(code)):
+                conn.execute(
+                    "UPDATE email_changes SET attempts = attempts + 1"
+                    " WHERE user_id = ?", (user_id,))
+                conn.commit()
+                return None
+
+            try:
+                conn.execute("UPDATE users SET email = ? WHERE id = ?",
+                             (row["new_email"], user_id))
+            except sqlite3.IntegrityError:
+                # Somebody claimed the address between asking and confirming.
+                conn.execute("DELETE FROM email_changes WHERE user_id = ?",
+                             (user_id,))
+                conn.commit()
+                return None
+            conn.execute("DELETE FROM email_changes WHERE user_id = ?",
+                         (user_id,))
+            conn.commit()
+            logger.info("Account %s changed address", user_id)
+            return row["new_email"]
+
     # ── Housekeeping ─────────────────────────────────────────────────────
 
     async def sweep(self) -> int:
@@ -319,8 +496,10 @@ class Accounts:
                              (now,)).rowcount
             b = conn.execute("DELETE FROM sessions WHERE expires_at <= ?",
                              (now,)).rowcount
+            c = conn.execute("DELETE FROM email_changes WHERE expires_at <= ?",
+                             (now,)).rowcount
             conn.commit()
-            return a + b
+            return a + b + c
 
     async def count_users(self) -> int:
         return await self._run(self._count_users_sync)

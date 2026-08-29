@@ -105,12 +105,22 @@ ALLOWED_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".opus", ".aac",
 # refusals cost more wall-clock than the parallelism saved.
 CONCURRENCY = int(os.environ.get("SHAZAM_CONCURRENCY", "4"))
 KEEP_AUDIO_DAYS = int(os.environ.get("KEEP_AUDIO_DAYS", "14"))
+# Avatars are stored inline as data URIs rather than as files: there is one
+# per account, they are small, and a file store means a path, a sweeper and a
+# way to serve it. This caps what "small" means.
+MAX_AVATAR_BYTES = int(os.environ.get("MAX_AVATAR_BYTES", str(200 * 1024)))
 # Downloads are kept far longer than set audio, and for a different reason.
 # Set audio is a byproduct — it exists so the waveform can be scrubbed. A
 # downloaded track is a record you went looking for, and on this server it is
 # also what gets shared back to Soulseek in return for what you take. Sweeping
 # it on the same short schedule would empty the share every fortnight.
 KEEP_DOWNLOADS_DAYS = int(os.environ.get("KEEP_DOWNLOADS_DAYS", "180"))
+# Where this instance lives, for links that leave the app. Falls back to the
+# first allowed origin, which in every real deployment is the public address —
+# guessing from the request Host header instead would let anyone who can reach
+# the API mint an invitation pointing at a site they control.
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
+
 ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
     "ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8000").split(",")
     if o.strip()]
@@ -748,6 +758,154 @@ async def logout_everywhere(http: Request, response: Response,
     ended = await accounts.end_all_sessions(user["id"])
     clear_session_cookie(response)
     return {"authenticated": False, "sessions_ended": ended}
+
+
+# ── Profile ──────────────────────────────────────────────────────────────
+
+class ProfileRequest(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    avatar: Optional[str] = None
+
+
+class EmailChangeRequest(BaseModel):
+    email: str
+
+
+class EmailConfirmRequest(BaseModel):
+    code: str
+
+
+@app.get("/api/profile")
+async def get_profile(user: Dict[str, Any] = Depends(current_user)):
+    profile = await accounts.profile(user["id"])
+    if profile is None:
+        raise HTTPException(status_code=404, detail="No such account")
+    return profile
+
+
+@app.patch("/api/profile")
+async def patch_profile(request: ProfileRequest,
+                        user: Dict[str, Any] = Depends(current_user)):
+    """Name and avatar. Not the address — that has to be proved."""
+    if request.avatar and len(request.avatar) > MAX_AVATAR_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="That image is too large. Around 200 KB is the limit.")
+    await accounts.update_profile(
+        user["id"],
+        first_name=(request.first_name or "").strip()[:80]
+        if request.first_name is not None else None,
+        last_name=(request.last_name or "").strip()[:80]
+        if request.last_name is not None else None,
+        avatar=request.avatar)
+    return await accounts.profile(user["id"])
+
+
+@app.post("/api/profile/email")
+async def request_email_change(request: EmailChangeRequest, http: Request,
+                               user: Dict[str, Any] = Depends(current_user)):
+    """Send a code to the address being moved to.
+
+    To the new one, not the old: the claim being made is that this mailbox is
+    reachable and yours. Verifying the old address would prove nothing about
+    the new one, and a typo would then lock the account behind an inbox
+    nobody reads.
+    """
+    email = normalise_email(request.email)
+    if not looks_like_email(email):
+        raise HTTPException(status_code=400, detail="That is not an email address")
+    if not mail.configured():
+        raise HTTPException(status_code=503,
+                            detail="This server cannot send email yet.")
+    if not verify_limiter.allow(client_key(http)):
+        raise HTTPException(status_code=429, detail="Too many attempts.")
+
+    code = await accounts.start_email_change(user["id"], email)
+    if code is not None:
+        try:
+            await mail.send_login_code(
+                email, code, minutes=int(CODE_TTL.total_seconds() // 60))
+        except mail.MailError:
+            pass
+    # Identical either way: whether the address is already taken is not this
+    # endpoint's to report.
+    return {"sent": True}
+
+
+@app.post("/api/profile/email/confirm")
+async def confirm_email_change(request: EmailConfirmRequest, http: Request,
+                               user: Dict[str, Any] = Depends(current_user)):
+    if not verify_limiter.allow(client_key(http)):
+        raise HTTPException(status_code=429, detail="Too many attempts.")
+    changed = await accounts.confirm_email_change(user["id"], request.code)
+    if changed is None:
+        raise HTTPException(status_code=400,
+                            detail="That code is wrong or has expired.")
+    return {"email": changed}
+
+
+# ── Sharing ──────────────────────────────────────────────────────────────
+
+class ShareRequest(BaseModel):
+    email: Optional[str] = None
+
+
+@app.post("/api/sets/{set_id}/share")
+async def share_set(set_id: str, request: ShareRequest,
+                    user: Dict[str, Any] = Depends(current_user)):
+    """Create an invitation to copy one of your sets, and optionally mail it."""
+    profile = await accounts.profile(user["id"]) or {}
+    from_name = profile.get("display_name") or "Someone"
+    to_email = normalise_email(request.email or "")
+    if to_email and not looks_like_email(to_email):
+        raise HTTPException(status_code=400, detail="That is not an email address")
+
+    token = await library.create_share(set_id, user_id=user["id"],
+                                       from_name=from_name, to_email=to_email)
+    if token is None:
+        raise HTTPException(status_code=404, detail="Set not found")
+
+    base = PUBLIC_URL or (ALLOWED_ORIGINS[0] if ALLOWED_ORIGINS else "")
+    link = f"{base}/shared/{token}"
+    sent = False
+    if to_email and mail.configured():
+        details = await library.peek_share(token) or {}
+        try:
+            await mail.send_share(to_email, from_name,
+                                  details.get("title", "a tracklist"), link,
+                                  details.get("track_count", 0))
+            sent = True
+        except mail.MailError:
+            # The link still works; the invitation just has to be passed on
+            # by hand. Reporting success here would be a lie.
+            pass
+    return {"token": token, "link": link, "emailed": sent}
+
+
+@app.get("/api/shares/{token}")
+async def peek_share(token: str):
+    """What is behind an invitation. Deliberately open.
+
+    Someone who has not signed in yet has to be able to see what they are
+    being offered before being asked to make an account for it. It reveals a
+    title, a track count and a first name — which is what the person sharing
+    it chose to send.
+    """
+    details = await library.peek_share(token)
+    if details is None:
+        raise HTTPException(status_code=404,
+                            detail="That invitation has expired or never existed")
+    return details
+
+
+@app.post("/api/shares/{token}/claim")
+async def claim_share(token: str, user: Dict[str, Any] = Depends(current_user)):
+    result = await library.claim_share(token, user_id=user["id"])
+    if result is None:
+        raise HTTPException(status_code=404,
+                            detail="That invitation no longer points anywhere")
+    return result
 
 
 # ── Sets ─────────────────────────────────────────────────────────────────

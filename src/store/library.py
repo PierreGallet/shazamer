@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS sets (
     source_kind  TEXT DEFAULT 'upload',
     uploader     TEXT DEFAULT '',
     audio_path   TEXT DEFAULT '',
+    shared_by    TEXT DEFAULT '',
+    shared_from  TEXT DEFAULT '',
     quality      TEXT DEFAULT '',
     duration     REAL DEFAULT 0,
     waveform     TEXT DEFAULT '[]',
@@ -125,6 +127,25 @@ CREATE TABLE IF NOT EXISTS crate (
     PRIMARY KEY (track_key, user_id)
 );
 
+-- An invitation to take a copy of a set.
+--
+-- A copy, not a view: the recipient gets their own set with their own stars
+-- and their own right to delete it, and the sender cannot see what they do
+-- with it or take it back. That is the simplest thing to reason about, and
+-- the only one with no way to surprise either side later.
+CREATE TABLE IF NOT EXISTS shares (
+    token       TEXT PRIMARY KEY,
+    set_id      TEXT NOT NULL,
+    from_user   TEXT NOT NULL,
+    from_name   TEXT DEFAULT '',
+    to_email    TEXT DEFAULT '',
+    created_at  TEXT NOT NULL,
+    claimed_at  TEXT,
+    claimed_by  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_shares_set ON shares(set_id);
+
 CREATE TABLE IF NOT EXISTS watches (
     id           TEXT PRIMARY KEY,
     url          TEXT NOT NULL,
@@ -174,6 +195,11 @@ class Library:
         ("crate", "user_id", "TEXT DEFAULT ''"),
         ("watches", "user_id", "TEXT DEFAULT ''"),
         ("downloads", "user_id", "TEXT DEFAULT ''"),
+        # Who passed this set on, kept on the copy so it can say so.
+        ("sets", "shared_by", "TEXT DEFAULT ''"),
+        # Which invitation produced this copy, so following the same link
+        # twice returns the copy already made rather than a second one.
+        ("sets", "shared_from", "TEXT DEFAULT ''"),
     )
 
     async def adopt_orphans(self, user_id: str) -> int:
@@ -785,6 +811,131 @@ class Library:
         return {"artist": row["artist"] or "", "title": row["title"] or "",
                 "isrc": row["isrc"] or ""}
 
+    # ── Sharing ──────────────────────────────────────────────────────────
+
+    async def create_share(self, set_id: str, *, user_id: str,
+                           from_name: str, to_email: str = "") -> Optional[str]:
+        """Mint an invitation to copy one of your sets. Returns its token."""
+        import secrets
+
+        if await self.get_set(set_id, user_id=user_id) is None:
+            return None                 # not yours, or not there
+        token = secrets.token_urlsafe(12)
+        await self._run(self._create_share_sync, token, set_id, user_id,
+                        from_name, to_email)
+        return token
+
+    def _create_share_sync(self, token, set_id, user_id, from_name,
+                           to_email) -> None:
+        with closing(self._connect()) as conn:
+            conn.execute(
+                "INSERT INTO shares (token, set_id, from_user, from_name,"
+                " to_email, created_at) VALUES (?,?,?,?,?,?)",
+                (token, set_id, user_id, from_name, to_email, _now()))
+            conn.commit()
+
+    async def peek_share(self, token: str) -> Optional[Dict[str, Any]]:
+        """What is behind an invitation, without claiming it.
+
+        So the page someone lands on can say what they are being offered
+        before asking them to sign in for it.
+        """
+        return await self._run(self._peek_share_sync, token)
+
+    def _peek_share_sync(self, token: str) -> Optional[Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT s.token, s.set_id, s.from_name, s.claimed_at,"
+                " t.title, t.duration,"
+                " (SELECT COUNT(*) FROM tracks WHERE set_id = t.id) AS track_count"
+                " FROM shares s JOIN sets t ON t.id = s.set_id"
+                " WHERE s.token = ?", (token,)).fetchone()
+        if row is None:
+            return None
+        return {"token": row["token"], "title": row["title"],
+                "duration": row["duration"], "track_count": row["track_count"],
+                "from_name": row["from_name"],
+                "already_claimed": bool(row["claimed_at"])}
+
+    async def claim_share(self, token: str, *,
+                          user_id: str) -> Optional[Dict[str, Any]]:
+        """Copy the shared set into `user_id`'s library.
+
+        A copy rather than a grant of access: the recipient gets their own
+        row, their own stars, and the right to delete it — and the sender
+        cannot see what they do with it or take it back.
+
+        The audio is deliberately *not* copied. It is a byproduct kept so the
+        waveform can be scrubbed, it is swept on a timer anyway, and
+        duplicating a 69 MB file for every share would fill the disk to give
+        each person their own copy of the same bytes. The tracklist, the
+        waveform and the timings — everything the set actually is — come
+        across.
+
+        Claiming twice returns the copy already made rather than a second one.
+        """
+        return await self._run(self._claim_share_sync, token, user_id)
+
+    def _claim_share_sync(self, token: str,
+                          user_id: str) -> Optional[Dict[str, Any]]:
+        import secrets
+
+        with closing(self._connect()) as conn:
+            share = conn.execute("SELECT * FROM shares WHERE token = ?",
+                                 (token,)).fetchone()
+            if share is None:
+                return None
+            if share["from_user"] == user_id:
+                return {"set_id": share["set_id"], "already_yours": True}
+
+            existing = conn.execute(
+                "SELECT id FROM sets WHERE user_id = ? AND shared_from = ?",
+                (user_id, token)).fetchone() if _has_column(
+                    conn, "sets", "shared_from") else None
+            if existing:
+                return {"set_id": existing["id"], "already_claimed": True}
+
+            source = conn.execute("SELECT * FROM sets WHERE id = ?",
+                                  (share["set_id"],)).fetchone()
+            if source is None:
+                return None             # the sender deleted it since
+
+            new_id = secrets.token_hex(8)
+            columns = [k for k in source.keys() if k != "id"]
+            values = {k: source[k] for k in columns}
+            values["user_id"] = user_id
+            values["shared_by"] = share["from_name"] or ""
+            # Not the audio: see the docstring. The copy plays nothing until
+            # its owner re-analyses the source, which the UI offers.
+            values["audio_path"] = ""
+            values["created_at"] = _now()
+            if "shared_from" in values:
+                values["shared_from"] = token
+
+            names = ", ".join(["id"] + list(values))
+            marks = ", ".join(["?"] * (len(values) + 1))
+            conn.execute(f"INSERT INTO sets ({names}) VALUES ({marks})",
+                         (new_id, *values.values()))
+
+            rows = conn.execute("SELECT * FROM tracks WHERE set_id = ?"
+                                " ORDER BY position", (share["set_id"],)).fetchall()
+            if rows:
+                keep = [k for k in rows[0].keys() if k != "id"]
+                names = ", ".join(keep)
+                marks = ", ".join(["?"] * len(keep))
+                conn.executemany(
+                    f"INSERT INTO tracks ({names}) VALUES ({marks})",
+                    [tuple(new_id if k == "set_id" else r[k] for k in keep)
+                     for r in rows])
+
+            conn.execute(
+                "UPDATE shares SET claimed_at = ?, claimed_by = ?"
+                " WHERE token = ? AND claimed_at IS NULL",
+                (_now(), user_id, token))
+            conn.commit()
+            logger.info("Share %s copied to %s as %s", token, user_id, new_id)
+            return {"set_id": new_id, "from_name": share["from_name"]}
+
     # ── Watches ──────────────────────────────────────────────────────────
 
     async def add_watch(self, watch_id: str, url: str, title: str,
@@ -890,9 +1041,16 @@ def _set_row(r: sqlite3.Row) -> Dict[str, Any]:
         "audio_path": r["audio_path"],
         "stats": json.loads(r["stats"] or "{}"),
         "created_at": r["created_at"],
+        # Who passed it on, when it came from somebody else. Guarded like the
+        # rest: a database written before sharing existed has no column.
+        "shared_by": r["shared_by"] if "shared_by" in keys else "",
         "track_count": r["track_count"] if "track_count" in keys else None,
         "identified_count": r["identified_count"] if "identified_count" in keys else None,
     }
+
+
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(r[1] == column for r in conn.execute(f"PRAGMA table_info({table})"))
 
 
 def _track_row(r: sqlite3.Row, starred: set) -> Dict[str, Any]:

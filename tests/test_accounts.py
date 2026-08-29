@@ -344,3 +344,120 @@ async def test_the_worker_can_act_on_a_download_it_was_handed(library):
     signature = inspect.signature(library.get_download)
     assert signature.parameters["user_id"].default is inspect.Parameter.empty, (
         "user_id must stay required; a default is how a request path forgets")
+
+
+# ── Profile ──────────────────────────────────────────────────────────────
+
+async def test_a_display_name_never_leaks_the_whole_address():
+    """"Shared by pierre" is friendly; the full address is not ours to pass on.
+
+    A share reaches someone who may forward it again, so whatever the name
+    resolves to travels further than the person who set it expects.
+    """
+    from src.store.accounts import display_name
+
+    assert display_name({"first_name": "Pierre", "last_name": "Gallet"}) == \
+        "Pierre Gallet"
+    assert display_name({"email": "pierre.gallet@hotmail.fr"}) == "pierre.gallet"
+    assert "@" not in display_name({"email": "pierre.gallet@hotmail.fr"})
+
+
+async def test_changing_an_address_is_proved_on_the_new_one(accounts):
+    """A typo must not lock someone out of their own account."""
+    code = await accounts.start_login("old@b.com")
+    user = await accounts.verify_login("old@b.com", code)
+
+    change = await accounts.start_email_change(user["id"], "new@b.com")
+    assert change is not None
+
+    # Until it is confirmed, nothing has moved.
+    assert (await accounts.profile(user["id"]))["email"] == "old@b.com"
+    assert (await accounts.profile(user["id"]))["pending_email"] == "new@b.com"
+
+    assert await accounts.confirm_email_change(user["id"], "000000") is None
+    assert (await accounts.profile(user["id"]))["email"] == "old@b.com"
+
+    assert await accounts.confirm_email_change(user["id"], change) == "new@b.com"
+    assert (await accounts.profile(user["id"]))["email"] == "new@b.com"
+
+
+async def test_an_address_someone_else_holds_cannot_be_taken(accounts):
+    first = await accounts.verify_login(
+        "a@b.com", await accounts.start_login("a@b.com"))
+    await accounts.verify_login("b@b.com", await accounts.start_login("b@b.com"))
+
+    assert await accounts.start_email_change(first["id"], "b@b.com") is None
+    assert (await accounts.profile(first["id"]))["email"] == "a@b.com"
+
+
+# ── Sharing ──────────────────────────────────────────────────────────────
+
+def _shared_set():
+    return {"duration": 60.0, "waveform": [1, 2], "stats": {},
+            "tracks": [{"index": 1, "start": 0, "end": 60, "identified": True,
+                        "key": "a::x", "title": "X", "artist": "A"}]}
+
+
+async def test_a_shared_set_becomes_the_recipient_s_own(library):
+    """A copy, not a window onto someone else's library.
+
+    Which means the sender cannot take it back, cannot see what is done with
+    it, and deleting theirs leaves the other intact. Every one of those is a
+    property somebody would otherwise be surprised by.
+    """
+    await library.save_set("s1", "A Night Out", _shared_set(), user_id="alice",
+                           audio_path="/tmp/alice.mp3")
+    token = await library.create_share("s1", user_id="alice",
+                                       from_name="Alice")
+    claimed = await library.claim_share(token, user_id="bob")
+
+    assert claimed["set_id"] != "s1", "bob got a pointer, not a copy"
+    theirs = await library.get_set(claimed["set_id"], user_id="bob")
+    assert theirs["title"] == "A Night Out"
+    assert len(theirs["tracks"]) == 1
+    assert theirs["shared_by"] == "Alice"
+    assert not theirs["audio_path"], (
+        "the audio was copied; it is a byproduct swept on a timer and "
+        "duplicating it per share fills the disk")
+
+    await library.delete_set("s1", user_id="alice")
+    assert await library.get_set(claimed["set_id"], user_id="bob") is not None
+
+
+async def test_following_the_same_invitation_twice_makes_one_copy(library):
+    await library.save_set("s1", "Set", _shared_set(), user_id="alice")
+    token = await library.create_share("s1", user_id="alice", from_name="Alice")
+
+    first = await library.claim_share(token, user_id="bob")
+    second = await library.claim_share(token, user_id="bob")
+
+    assert first["set_id"] == second["set_id"]
+    assert len(await library.list_sets(user_id="bob")) == 1
+
+
+async def test_a_set_you_do_not_own_cannot_be_shared(library):
+    await library.save_set("s1", "Set", _shared_set(), user_id="alice")
+    assert await library.create_share("s1", user_id="bob",
+                                      from_name="Bob") is None
+
+
+async def test_the_sender_claiming_their_own_share_changes_nothing(library):
+    await library.save_set("s1", "Set", _shared_set(), user_id="alice")
+    token = await library.create_share("s1", user_id="alice", from_name="Alice")
+
+    result = await library.claim_share(token, user_id="alice")
+    assert result["set_id"] == "s1"
+    assert len(await library.list_sets(user_id="alice")) == 1, (
+        "sharing with yourself duplicated the set")
+
+
+async def test_an_invitation_can_be_read_without_signing_in(library):
+    """The landing page has to say what is on offer before asking for an account."""
+    await library.save_set("s1", "A Night Out", _shared_set(), user_id="alice")
+    token = await library.create_share("s1", user_id="alice", from_name="Alice")
+
+    peek = await library.peek_share(token)
+    assert peek["title"] == "A Night Out"
+    assert peek["from_name"] == "Alice"
+    assert peek["track_count"] == 1
+    assert await library.peek_share("not-a-token") is None

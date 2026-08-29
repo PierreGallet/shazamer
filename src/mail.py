@@ -81,6 +81,56 @@ def _build(to: str, code: str, minutes: int) -> EmailMessage:
     return message
 
 
+def _build_share(to: str, from_name: str, title: str, link: str,
+                 tracks: int) -> EmailMessage:
+    message = EmailMessage()
+    message["Subject"] = f"{from_name} shared a tracklist with you"
+    message["From"] = formataddr((MAIL_FROM_NAME, MAIL_FROM))
+    message["To"] = to
+
+    message.set_content(
+        f"{from_name} shared a tracklist with you on Shazamer:\n\n"
+        f"  {title}\n"
+        f"  {tracks} tracks\n\n"
+        f"{link}\n\n"
+        "Opening it puts a copy in your own library — yours to keep, star and "
+        "delete, whatever they do with theirs.\n"
+    )
+    message.add_alternative(
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,"
+        "'Segoe UI',sans-serif;max-width:460px;color:#1a1714\">"
+        f"<p style=\"font-size:15px;margin:0 0 6px\">"
+        f"<strong>{from_name}</strong> shared a tracklist with you.</p>"
+        f"<p style=\"font-size:19px;font-weight:700;margin:0 0 2px\">{title}</p>"
+        f"<p style=\"font-size:13px;color:#675f58;margin:0 0 22px\">"
+        f"{tracks} tracks</p>"
+        f"<p style=\"margin:0 0 22px\"><a href=\"{link}\" "
+        "style=\"display:inline-block;background:#ff5500;color:#fff;"
+        "text-decoration:none;padding:11px 18px;border-radius:8px;"
+        "font-weight:600;font-size:14px\">Open the tracklist</a></p>"
+        "<p style=\"font-size:13px;color:#675f58;margin:0\">"
+        "Opening it puts a copy in your own library — yours to keep, star and "
+        "delete, whatever they do with theirs.</p></div>",
+        subtype="html")
+    return message
+
+
+async def send_share(to: str, from_name: str, title: str, link: str,
+                     tracks: int) -> None:
+    """Tell someone a tracklist is waiting for them."""
+    if not configured():
+        logger.warning("SMTP is not configured — share link for %s is %s",
+                       to, link)
+        return
+    message = _build_share(to, from_name, title, link, tracks)
+    try:
+        await asyncio.get_running_loop().run_in_executor(
+            None, _send_blocking, message)
+    except Exception as exc:                   # noqa: BLE001 - reported below
+        logger.error("Could not send a share to %s: %s", to, exc)
+        raise MailError(str(exc)) from exc
+
+
 def _send_blocking(message: EmailMessage) -> None:
     context = ssl.create_default_context()
     if SMTP_SSL:
