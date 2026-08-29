@@ -39,6 +39,7 @@ from pydantic import BaseModel
 
 from src.acquire import resolve as acquire_resolve
 from src.acquire.slskd import SlskdClient, SlskdError, search_query
+from src.core import dedupe
 from src.core.pipeline import AnalyzeConfig, Pipeline
 from src.enrich import preview as preview_lookup
 from src.export import formats as export_formats
@@ -363,6 +364,22 @@ async def run_analysis(task_id: str, path: Path, title: str, *,
             str(path), on_progress=on_progress)
 
         set_id = set_id or task_id
+
+        # Before filing it: if these bytes are already on disk under another
+        # set, share one copy. Re-analysing a mix — to pick up a fix, or
+        # because the first run went badly — otherwise keeps both, and that
+        # was 44% of this install's set audio.
+        #
+        # A hard link, so each set keeps its own path and the kernel counts
+        # the references. Deleting one set unlinks one name; the bytes go
+        # when the last set holding them does.
+        try:
+            if path.parent == MEDIA_DIR:
+                dedupe.link_if_duplicate(MEDIA_DIR, path)
+        except Exception:                      # noqa: BLE001 - never fatal
+            # Saving disk is not worth failing an analysis that worked.
+            logger.debug("Deduplication skipped", exc_info=True)
+
         await library.save_set(
             set_id, title, result.to_dict(),
             # Off the task, not off a session: this finishes in the worker,
