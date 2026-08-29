@@ -22,6 +22,11 @@ services:
       - REDIS_URL=redis://redis:6379
       # Accounts. The worker gets them too: it never serves a request, but it
       # saves sets, and a set has an owner.
+      # Where this instance lives, for links that leave the app — a share
+      # invitation has to point somewhere reachable. Not derived from the
+      # request Host header: trusting that would let anyone who can reach the
+      # API mint an invitation pointing at a site they control.
+      - PUBLIC_URL=${PUBLIC_URL:-}
       - AUTH_ENABLED=${AUTH_ENABLED:-1}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -124,6 +129,11 @@ services:
       - REDIS_URL=redis://redis:6379
       # Accounts. The worker gets them too: it never serves a request, but it
       # saves sets, and a set has an owner.
+      # Where this instance lives, for links that leave the app — a share
+      # invitation has to point somewhere reachable. Not derived from the
+      # request Host header: trusting that would let anyone who can reach the
+      # API mint an invitation pointing at a site they control.
+      - PUBLIC_URL=${PUBLIC_URL:-}
       - AUTH_ENABLED=${AUTH_ENABLED:-1}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
