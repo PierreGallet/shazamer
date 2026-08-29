@@ -1,5 +1,6 @@
-import { For, Show, createResource, createSignal } from "solid-js";
-import type { SoulseekCandidate, Track } from "../lib/api";
+import { For, Show, createEffect, createResource, createSignal,
+         onCleanup } from "solid-js";
+import type { Download, SoulseekCandidate, Track } from "../lib/api";
 import GetTrack from "./GetTrack";
 import { api, formatBytes } from "../lib/api";
 
@@ -30,6 +31,39 @@ export default function AcquirePanel(props: Props) {
 
   let dialog: HTMLDialogElement | undefined;
 
+  /**
+   * The transfer we started, followed to the end.
+   *
+   * Followed because "Queued" and nothing else is the state this feature was
+   * reported broken in: a transfer that had finished, one sitting behind
+   * forty people in a peer's queue, and one whose peer never answered all
+   * looked identical. Soulseek queues are genuinely slow, so the answer is to
+   * say what is happening rather than to hurry it.
+   */
+  const [started, setStarted] = createSignal<number | null>(null);
+  const [progress, setProgress] = createSignal<Download | null>(null);
+  let timer: number | undefined;
+
+  onCleanup(() => window.clearTimeout(timer));
+
+  createEffect(() => {
+    const id = started();
+    if (id === null) return;
+    const tick = async () => {
+      try {
+        const state = await api.download(id);
+        setProgress(state);
+        if (state.status !== "ready" && state.status !== "failed") {
+          timer = window.setTimeout(tick, 3000);
+        }
+      } catch {
+        // A blip should not abandon a transfer that may still be running.
+        timer = window.setTimeout(tick, 6000);
+      }
+    };
+    timer = window.setTimeout(tick, 500);
+  });
+
   /** Open first, search second: twenty seconds of nothing happening after a
    *  click reads as a dead button. */
   function openPicker() {
@@ -56,13 +90,38 @@ export default function AcquirePanel(props: Props) {
     }
   }
 
+  /**
+   * Take one candidate, through the same path as the one-click button.
+   *
+   * The direct slskd call this used to make queued the transfer and stopped
+   * there: the file arrived on the server, in slskd's own folder, with
+   * nothing to move it, tag it or hand it to the browser. It downloaded
+   * successfully and there was no way to get it — which is worse than
+   * failing, because it looks like it worked.
+   *
+   * Going through /api/acquire/track gives the transfer a row to report
+   * against, and the runner behind it verifies the audio, tags it, and puts
+   * it where the download endpoint can serve it.
+   */
   async function enqueue(candidate: SoulseekCandidate) {
     setQueued({ ...queued(), [candidate.full_path]: true });
+    setError("");
     try {
-      await api.soulseekDownload(candidate);
+      const { download_id } = await api.acquireTrack({
+        key: props.track.key,
+        artist: props.track.artist,
+        title: props.track.title,
+        label: props.track.label,
+        year: props.track.year,
+        album: props.track.album,
+        genre: props.track.genre,
+        chosen: candidate,
+      });
+      setStarted(download_id);
+      dialog?.close();
     } catch (err) {
       setQueued({ ...queued(), [candidate.full_path]: false });
-      setError(err instanceof Error ? err.message : "Could not queue the download");
+      setError(err instanceof Error ? err.message : "Could not start the fetch");
     }
   }
 
@@ -99,23 +158,22 @@ export default function AcquirePanel(props: Props) {
               </a>
             )}
           </For>
-        </div>
 
-        <Show when={sources()!.soulseek_configured}>
-          {/* A card among the others, because that is what it is: another
-              place the record might be. The difference is that this one can
-              hand you the file rather than a page to buy it on. */}
-          <div class="acquire-grid acquire-grid-p2p">
+          {/* In the same grid as the rest, because it is the same kind of
+              thing: another place the record might be. It opens a dialog
+              rather than a tab only because this one can hand you the file. */}
+          <Show when={sources()!.soulseek_configured}>
             <button class="acquire-card acquire-card-action" onClick={openPicker}>
               <div class="acquire-card-top">
                 <span class="acquire-name">Soulseek</span>
                 <span class="chip chip-accent">p2p</span>
               </div>
               <div class="tiny muted">MP3 320 or lossless, from other people</div>
-              <div class="tiny faint">Pick from the best matches</div>
+              <div class="tiny faint">Pick from what people are sharing</div>
             </button>
-          </div>
-        </Show>
+          </Show>
+        </div>
+
 
         <dialog class="picker" ref={dialog} onClose={() => setCandidates(null)}>
           <div class="picker-head">
@@ -201,6 +259,38 @@ export default function AcquirePanel(props: Props) {
           </Show>
         </dialog>
 
+      </Show>
+
+      <Show when={progress()}>
+        {(state) => (
+          <div class="acquire-progress">
+            <div class="row">
+              <span
+                class="chip"
+                classList={{
+                  "chip-accent": state().status === "ready",
+                  "chip-warn": state().status === "failed",
+                }}
+              >
+                {state().status}
+              </span>
+              <span class="tiny muted">{state().message}</span>
+              <Show when={state().status === "ready"}>
+                <a class="btn btn-primary btn-sm"
+                   href={api.downloadFileUrl(state().id)}
+                   download="">
+                  Save the file
+                </a>
+              </Show>
+            </div>
+            <Show when={state().progress > 0 && state().status !== "ready"}>
+              <div class="progress-track">
+                <div class="progress-fill"
+                     style={{ width: `${state().progress}%` }} />
+              </div>
+            </Show>
+          </div>
+        )}
       </Show>
 
       <Show when={error()}>

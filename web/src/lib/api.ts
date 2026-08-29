@@ -225,6 +225,15 @@ export const api = {
   logout: () => request<{ authenticated: boolean }>("/api/auth/logout",
     { method: "POST" }),
 
+  /** Where a queued Soulseek transfer has got to. */
+  soulseekTransfer: (username: string, filename: string) =>
+    request<{
+      known: boolean; state?: string; finished?: boolean; failed?: boolean;
+      percent?: number; transferred?: number; size?: number; speed?: number;
+      queue_position?: number | null; remaining_seconds?: number | null;
+    }>(`/api/acquire/soulseek/transfer?username=${encodeURIComponent(username)}`
+       + `&filename=${encodeURIComponent(filename)}`),
+
   /** Where the excerpt lives. A plain function rather than a request, so the
    *  player can start inside the click that asked for it — awaiting anything
    *  first ends the gesture and Chrome declines to play. */

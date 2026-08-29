@@ -315,30 +315,94 @@ async def test_a_search_waits_for_the_peers_to_be_handed_over(monkeypatch):
     assert found[0].username == "peer"
 
 
-async def test_an_empty_array_with_peers_counted_is_fetched_directly(monkeypatch):
-    """A completed search that still reports an empty array is asked again.
+async def test_a_search_that_runs_long_is_stopped_and_read(monkeypatch):
+    """A slow search should cost the stragglers, not the whole result.
 
-    Reporting "nobody is sharing this" while the same payload says
-    twenty-six peers answered is the failure worth ruling out.
+    The response array only fills when the search completes, so waiting for a
+    deadline and giving up returns nothing at all. Stopping it forces
+    completion and hands over everyone who answered in time.
+
+    The stop needs a JSON body — without one slskd replies 415, the search
+    keeps running, and the outcome reads as "nobody is sharing this" when in
+    fact twenty-three people were.
     """
     from src.acquire.slskd import SlskdClient
+
+    state = {"stopped": False, "puts": []}
 
     async def fake_request(self, method, path, **kwargs):
         if method == "POST":
             return {"id": "s1"}
         if method == "DELETE":
             return {}
-        if path.endswith("/responses"):
-            return [{
-                "username": "peer", "hasFreeUploadSlot": True,
-                "uploadSpeed": 900_000, "queueLength": 0,
-                "files": [{"filename": "Alan Dixon - Acid Drop.mp3",
-                           "size": 12_000_000, "bitRate": 320, "length": 380}],
-            }]
-        return {"state": "Completed", "responseCount": 1, "responses": []}
+        if method == "PUT":
+            state["puts"].append(kwargs.get("json"))
+            state["stopped"] = True
+            return {}
+        if state["stopped"]:
+            return {
+                "state": "Completed, Cancelled", "responseCount": 1,
+                "responses": [{
+                    "username": "peer", "hasFreeUploadSlot": True,
+                    "uploadSpeed": 900_000, "queueLength": 0,
+                    "files": [{"filename": "Alan Dixon - Acid Drop.mp3",
+                               "size": 12_000_000, "bitRate": 320,
+                               "length": 380}],
+                }],
+            }
+        # Never completes on its own.
+        return {"state": "InProgress", "responseCount": 23, "responses": []}
 
     monkeypatch.setattr(SlskdClient, "_request", fake_request)
     monkeypatch.setattr("asyncio.sleep", _instant)
 
-    found = await SlskdClient(base_url="http://x", api_key="k").search("Acid Drop")
+    found = await SlskdClient(base_url="http://x", api_key="k").search(
+        "Acid Drop", wait=4.0)
+
+    assert state["stopped"], "a search that never completes was never stopped"
+    assert state["puts"] == [{}], "the stop must carry a body or slskd 415s"
     assert found and found[0].username == "peer"
+
+
+def test_the_query_keeps_words_whole():
+    """Stripping an accent must leave a word, not a hole.
+
+    NFKD decomposes é into e plus a combining mark, so removing marks turns
+    "cohérent" into "coherent". It does not decompose ø, æ, ß, ł or đ at all —
+    those are letters in their own right — so the same pass would turn "Møme"
+    into "M me" and match nothing. They are transliterated first.
+    """
+    from src.acquire.slskd import search_query
+
+    assert search_query("cohérent", "") == "coherent"
+    assert search_query("Møme", "") == "Mome"
+    assert search_query("Straße", "") == "Strasse"
+    assert search_query("Łukasz", "") == "Lukasz"
+    assert search_query("Sigur Rós", "") == "Sigur Ros"
+    # And a hyphen separates rather than joins.
+    assert search_query("hip-hop", "world") == "hip hop world"
+
+
+def test_the_query_drops_what_a_filename_will_not_match():
+    """Peers match a plain substring, so a mix suffix costs the whole result.
+
+    Measured on the live network: "Todd Terry & Sound Design Bounce to the
+    Beat (Chris Stussy Remix)" found 9 files; without the suffix, 166.
+    Ranking still prefers extended mixes — but only among candidates the
+    search returned.
+    """
+    from src.acquire.slskd import search_query
+
+    assert search_query("Todd Terry & Sound Design",
+                        "Bounce to the Beat (Chris Stussy Remix)") == \
+        "Todd Terry Sound Design Bounce to the Beat"
+    assert search_query("Ivan Gough & Feenixpawl",
+                        "In My Mind (feat. Georgi Kay) [Axwell Mix]") == \
+        "Ivan Gough Feenixpawl In My Mind"
+
+
+def test_a_fully_bracketed_title_still_searches_for_something():
+    """Otherwise the query is empty, which matches everything."""
+    from src.acquire.slskd import search_query
+
+    assert search_query("X", "(Untitled)").strip()

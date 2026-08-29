@@ -1073,6 +1073,28 @@ async def soulseek_download(request: SoulseekDownloadRequest):
         raise HTTPException(status_code=503, detail=str(exc))
 
 
+@app.get("/api/acquire/soulseek/transfer")
+async def soulseek_transfer(username: str, filename: str,
+                            user: Dict[str, Any] = Depends(current_user)):
+    """How a queued Soulseek download is getting on.
+
+    Without this the interface said "Queued" and stopped, so a transfer that
+    had finished looked exactly like one that was stuck behind forty people —
+    and a peer that never answered looked the same again.
+
+    Answers 200 with `known: false` rather than 404 when slskd has no record
+    of it: a transfer it has forgotten is not an error, it is one that ended
+    long enough ago to be swept.
+    """
+    try:
+        state = await SlskdClient().transfer_state(username, filename)
+    except SlskdError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    if state is None:
+        return {"known": False}
+    return {"known": True, **state}
+
+
 @app.get("/api/acquire/candidates")
 async def acquire_candidates(artist: str, title: str,
                              limit: int = Query(5, ge=1, le=20)):

@@ -24,7 +24,9 @@ import asyncio
 import logging
 import os
 import re
+import unicodedata
 import uuid
+from urllib.parse import quote
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
@@ -324,15 +326,25 @@ class SlskdClient:
 
         responses = payload.get("responses") or []
         if not responses and payload.get("responseCount"):
-            # Peers answered but the array came back empty — ask for them
-            # directly rather than reporting that nobody is sharing it.
+            # Peers answered but the array is still empty, which means the
+            # search has not finished. Stopping it forces completion and
+            # hands over everything that arrived — so a slow search costs you
+            # the stragglers rather than the whole result.
+            #
+            # PUT needs a body. Without one slskd answers 415 and the search
+            # keeps running, which is how this looked like "no peers" rather
+            # than "not finished yet".
+            logger.info("Search still running after %.0fs; taking the %s "
+                        "response(s) already in", wait,
+                        payload.get("responseCount"))
             try:
-                fetched = await self._request(
-                    "GET", f"/searches/{search_id}/responses")
-                if isinstance(fetched, list):
-                    responses = fetched
-            except SlskdError:
-                pass
+                await self._request("PUT", f"/searches/{search_id}", json={})
+                await asyncio.sleep(1.0)
+                payload = await self._request(
+                    "GET", f"/searches/{search_id}?includeResponses=true")
+                responses = payload.get("responses") or []
+            except SlskdError as exc:
+                logger.warning("Could not stop search %s: %s", search_id, exc)
 
         candidates: List[Candidate] = []
         for response in responses:
@@ -356,6 +368,49 @@ class SlskdClient:
 
         candidates.sort(key=lambda c: c.score, reverse=True)
         return candidates
+
+    async def transfer_state(self, username: str,
+                             filename: str) -> Optional[Dict[str, Any]]:
+        """Where one download has got to, or None if slskd has forgotten it.
+
+        slskd tracks transfers per peer, so this is a lookup rather than a
+        subscription. Everything the interface needs is here — state, percent,
+        speed, and how far down the queue we are — and none of it was being
+        read, so a download that finished looked identical to one that hung.
+        """
+        try:
+            peers = await self._request(
+                "GET", f"/transfers/downloads/{quote(username, safe='')}")
+        except SlskdError:
+            return None
+        if not isinstance(peers, dict):
+            return None
+
+        for directory in peers.get("directories") or []:
+            for entry in directory.get("files") or []:
+                if entry.get("filename") != filename:
+                    continue
+                state = str(entry.get("state") or "")
+                size = int(entry.get("size") or 0)
+                done = int(entry.get("bytesTransferred") or 0)
+                return {
+                    "state": state,
+                    # Its own field rather than derived from the state string:
+                    # slskd spells states as "Completed, Succeeded" and
+                    # "Completed, Errored", and the second word is the one
+                    # that matters.
+                    "finished": "succeeded" in state.lower(),
+                    "failed": any(word in state.lower() for word in
+                                  ("errored", "cancelled", "rejected",
+                                   "timedout")),
+                    "percent": float(entry.get("percentComplete") or 0.0),
+                    "transferred": done,
+                    "size": size,
+                    "speed": float(entry.get("averageSpeed") or 0.0),
+                    "queue_position": entry.get("placeInQueue"),
+                    "remaining_seconds": entry.get("remainingTime"),
+                }
+        return None
 
     async def enqueue(self, candidate: Candidate) -> Dict[str, Any]:
         """Queue a download. Returns immediately; transfer runs in slskd."""
@@ -447,16 +502,66 @@ class SlskdClient:
         return out
 
 
+# Everything a peer's filename is unlikely to spell the way we were given it.
+# Peers match a plain substring against their own filenames, so each of these
+# left in the query is a chance to match nothing at all.
+_BRACKETED = re.compile(r"[\(\[\{][^\)\]\}]*[\)\]\}]")
+_FEATURING = re.compile(r"\b(feat|ft|featuring|with)\b.*", re.IGNORECASE)
+# Everything that is not a letter, a digit or a space.
+_NON_WORD = re.compile(r"[^0-9A-Za-z ]+")
+
+# Letters that NFKD will not decompose, because they are letters in their own
+# right rather than a base plus an accent. Without these, stripping what is
+# left of them deletes the letter instead of replacing it: "Møme" becomes
+# "M me" and matches nothing. An accent removed has to leave a word behind.
+_TRANSLITERATE = {
+    "ø": "o", "Ø": "O", "æ": "ae", "Æ": "AE", "œ": "oe", "Œ": "OE",
+    "ß": "ss", "ł": "l", "Ł": "L", "đ": "d", "Đ": "D", "ð": "d", "Ð": "D",
+    "þ": "th", "Þ": "TH", "ħ": "h", "Ħ": "H", "ı": "i", "ŋ": "n", "Ŋ": "N",
+    # Not letters, but they hold words together and dropping them fuses two
+    # into one: "hip-hop" must not become "hiphop".
+    "-": " ", "–": " ", "—": " ", "/": " ", "\\": " ", "_": " ",
+}
+
+
 def search_query(artist: str, title: str) -> str:
     """Build the search string Soulseek responds best to.
 
-    Peers index by filename, so punctuation and mix suffixes hurt more than
-    they help — "artist title" finds what "Artist - Title (Original Mix)"
-    misses.
+    Peers index by filename and match a plain substring, so anything in the
+    query that a filename might spell differently costs the whole result
+    rather than narrowing it. What Shazam hands over is full of exactly that:
+    "(Extended Mix)", "[Axwell Mix]", "(feat. Georgi Kay)", ampersands between
+    artists — none of which a given uploader is obliged to have written.
 
-    Whitespace is collapsed at the end: stripping punctuation from a name like
+    Measured against the live network, on tracks from real sets:
+
+        Todd Terry & Sound Design — Bounce to the Beat (Chris Stussy Remix)
+            with the suffix     9 results
+            without           166
+
+        Ivan Gough & Feenixpawl — In My Mind (feat. Georgi Kay) [Axwell Mix]
+            with               60
+            without           193
+
+    Dropping the mix name does not mean settling for the wrong version:
+    ranking still prefers extended mixes on length and penalises radio edits,
+    and it can only do that over candidates the search actually returned.
+
+    Whitespace is collapsed last: stripping punctuation from a name like
     "Fred again.." leaves a run of spaces, and slskd forwards the query
-    verbatim to peers whose matching is a plain substring test.
+    verbatim.
     """
-    stripped = _JUNK.sub(" ", f"{artist} {title}")
-    return re.sub(r"\s+", " ", stripped).strip()
+    text = f"{artist} {title}"
+    text = _BRACKETED.sub(" ", text)
+    text = _FEATURING.sub(" ", text)
+    # Then every remaining character that is not a letter, a digit or a space.
+    # Apostrophes, ampersands, accents, slashes, quotes — each one is a way
+    # for the query to differ from a filename that holds the very track we
+    # want. Names are folded to ASCII first, so "Irène" finds "Irene".
+    folded = "".join(_TRANSLITERATE.get(c, c) for c in text)
+    folded = unicodedata.normalize("NFKD", folded)
+    folded = "".join(c for c in folded if not unicodedata.combining(c))
+    cleaned = re.sub(r"\s+", " ", _NON_WORD.sub(" ", folded)).strip()
+    # Never return nothing: a title that is entirely bracketed would otherwise
+    # search for the empty string, which matches everything.
+    return cleaned or re.sub(r"\s+", " ", _JUNK.sub(" ", f"{artist} {title}")).strip()

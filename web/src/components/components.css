@@ -488,3 +488,11 @@
   margin-top: 0.85rem; padding-top: 0.85rem;
   border-top: 1px solid var(--line);
 }
+
+/* The transfer we started, followed under the source cards. Soulseek queues
+   are slow enough that a silent "Queued" reads as broken. */
+.acquire-progress {
+  display: flex; flex-direction: column; gap: 0.5rem;
+  margin-top: 0.7rem; padding-top: 0.7rem;
+  border-top: 1px solid var(--line);
+}
