@@ -39,13 +39,13 @@ DEPLOY_SERVICE="${DEPLOY_SERVICE:-shazamer_app}"
 LOCK_FILE="${DEPLOY_LOCK:-/tmp/deploy-${DEPLOY_SERVICE}.lock}"
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
-  holder=$(cat "$LOCK_FILE" 2>/dev/null || echo "?")
-  echo ">> Another deploy of $DEPLOY_SERVICE is already running (pid $holder)."
+  echo ">> Another deploy of $DEPLOY_SERVICE is already running."
   echo "   Not starting a second one — they would fight over the same"
-  echo "   services and Swarm would reject both."
-  exit 75          # EX_TEMPFAIL: try again, nothing is wrong
+  echo "   services, and Swarm rejects both with 'update out of sequence'."
+  echo "   Wait for it to finish; nothing is wrong. Running deploys:"
+  pgrep -af "$(basename "$0")" | grep -v "^$$ " || true
+  exit 75          # EX_TEMPFAIL
 fi
-echo $$ >&9
 
 DEPLOY_LOG_DIR="${DEPLOY_LOG_DIR:-$HOME/deploy-logs}"
 DEPLOY_METRICS_DIR="${DEPLOY_METRICS_DIR:-$HOME/node_exporter_textfile}"
