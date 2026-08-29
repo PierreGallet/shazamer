@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.2](https://github.com/PierreGallet/shazamer/compare/v1.15.1...v1.15.2) (2026-08-29)
+
+
+### Bug Fixes
+
+* **acquire:** import time, and stop stubbing the thing under test ([eb743bb](https://github.com/PierreGallet/shazamer/commit/eb743bbefbe28cc627c132d0ea91737eb47f9f67))
+
 ## [1.15.1](https://github.com/PierreGallet/shazamer/compare/v1.15.0...v1.15.1) (2026-08-29)
 
 
