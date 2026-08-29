@@ -108,6 +108,32 @@ export default function SharedSet() {
                     Sign in and it becomes your own copy — yours to keep, star
                     and delete, whatever they do with theirs.
                   </p>
+
+                  {/* What the thing is. Someone arriving here has been sent a
+                      link by a friend and has never heard of any of this; an
+                      account is a lot to ask of a page that only says "sign
+                      in". */}
+                  <div class="shared-what">
+                    <div class="tiny">
+                      <strong>Shazamer</strong> works out what is playing in a
+                      DJ set.
+                    </div>
+                    <ul class="shared-list tiny faint">
+                      <li>
+                        Paste a YouTube or SoundCloud link — it comes back with
+                        every record in the mix
+                      </li>
+                      <li>
+                        Timestamped, with BPM and key, on a waveform you can
+                        scrub through
+                      </li>
+                      <li>
+                        Unidentified stretches stay visible, because that is
+                        where the dubs are
+                      </li>
+                      <li>Every track links out to where you can buy it</li>
+                    </ul>
+                  </div>
                 </div>
 
                 <SignIn onSignedIn={recheck} bare />

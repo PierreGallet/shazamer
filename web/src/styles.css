@@ -375,3 +375,15 @@ h3 { font-size: 0.95rem; font-weight: 700; }
 .share-link { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.9rem; }
 .share-link input { flex: 1; font-size: 0.8rem; }
 .share-note { margin-top: 0.9rem; }
+
+/* What Shazamer is, on the page a stranger lands on. They were sent a link by
+   a friend and have never heard of any of this — an account is a lot to ask
+   of a page that only says "sign in". */
+.shared-what {
+  display: flex; flex-direction: column; gap: 0.5rem;
+  padding: 0.85rem 0 0.2rem;
+}
+.shared-list {
+  margin: 0; padding-left: 1.1rem;
+  display: flex; flex-direction: column; gap: 0.3rem; line-height: 1.45;
+}

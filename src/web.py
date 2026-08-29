@@ -126,6 +126,10 @@ MIN_FREE_DISK_GB = float(os.environ.get("MIN_FREE_DISK_GB", "5"))
 # per account, they are small, and a file store means a path, a sweeper and a
 # way to serve it. This caps what "small" means.
 MAX_AVATAR_BYTES = int(os.environ.get("MAX_AVATAR_BYTES", str(200 * 1024)))
+# How many Soulseek results reach the browser. A popular record brings
+# hundreds, and the point of the list is to choose from it rather than to read
+# all of it — but the cap is reported, not applied quietly.
+SEARCH_RESULT_CAP = int(os.environ.get("SEARCH_RESULT_CAP", "60"))
 # Downloads are kept far longer than set audio, and for a different reason.
 # Set audio is a byproduct — it exists so the waveform can be scrubbed. A
 # downloaded track is a record you went looking for, and on this server it is
@@ -1260,7 +1264,8 @@ async def star_track(request: StarRequest, user: Dict[str, Any] = Depends(curren
 # ── Acquisition ──────────────────────────────────────────────────────────
 
 @app.get("/api/acquire/sources")
-async def acquisition_sources(artist: str = "", title: str = "", isrc: str = ""):
+async def acquisition_sources(artist: str = "", title: str = "", isrc: str = "",
+                              user: Dict[str, Any] = Depends(current_user)):
     sources = acquire_resolve.resolve(
         artist, title, isrc=isrc,
         soulseek_configured=acquire_resolve.soulseek_configured())
@@ -1269,7 +1274,7 @@ async def acquisition_sources(artist: str = "", title: str = "", isrc: str = "")
 
 
 @app.get("/api/acquire/soulseek/status")
-async def soulseek_status():
+async def soulseek_status(user: Dict[str, Any] = Depends(current_user)):
     client = SlskdClient()
     if not client.configured:
         return {"configured": False, "reachable": False,
@@ -1278,7 +1283,7 @@ async def soulseek_status():
 
 
 @app.post("/api/acquire/soulseek/search")
-async def soulseek_search(request: SoulseekSearchRequest):
+async def soulseek_search(request: SoulseekSearchRequest, user: Dict[str, Any] = Depends(current_user)):
     query = request.query or search_query(request.artist, request.title)
     if not query.strip():
         raise HTTPException(status_code=400, detail="Nothing to search for")
@@ -1286,11 +1291,17 @@ async def soulseek_search(request: SoulseekSearchRequest):
         candidates = await SlskdClient().search(query)
     except SlskdError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
-    return {"query": query, "candidates": [c.to_dict() for c in candidates[:40]]}
+    # Capped so a popular record does not ship a thousand rows to the
+    # browser. Reported rather than applied silently: a list that stops at
+    # forty without saying so reads as "that is all there is".
+    shown = candidates[:SEARCH_RESULT_CAP]
+    return {"query": query, "total": len(candidates),
+            "truncated": len(candidates) > len(shown),
+            "candidates": [c.to_dict() for c in shown]}
 
 
 @app.post("/api/acquire/soulseek/download")
-async def soulseek_download(request: SoulseekDownloadRequest):
+async def soulseek_download(request: SoulseekDownloadRequest, user: Dict[str, Any] = Depends(current_user)):
     from src.acquire.slskd import Candidate
     candidate = Candidate(
         username=request.username, filename=request.filename, size=request.size,
@@ -1325,9 +1336,28 @@ async def soulseek_transfer(username: str, filename: str,
     return {"known": True, **state}
 
 
+@app.get("/api/acquire/query")
+async def acquire_query(artist: str, title: str,
+                        user: Dict[str, Any] = Depends(current_user)):
+    """What would be asked of Soulseek for this track.
+
+    Its own endpoint because it has to be on screen *before* the search
+    finishes — a Soulseek search takes twenty seconds, and the query is the
+    first thing worth knowing when the answer comes back thin. Costs nothing:
+    it is string handling, and no peer is contacted.
+
+    Built here rather than in the browser so there is one implementation. Two
+    would drift, and the one on screen would stop being the one that was sent.
+    """
+    from src.acquire.slskd import search_query
+
+    return {"query": search_query(artist, title)}
+
+
 @app.get("/api/acquire/candidates")
 async def acquire_candidates(artist: str, title: str,
-                             limit: int = Query(5, ge=1, le=20)):
+                             limit: int = Query(5, ge=1, le=20),
+                             user: Dict[str, Any] = Depends(current_user)):
     """The best few Soulseek matches, ranked, without downloading anything.
 
     Shown before fetching because the difference that matters most — extended

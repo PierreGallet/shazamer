@@ -2,7 +2,7 @@ import { For, Show, createEffect, createResource, createSignal,
          onCleanup } from "solid-js";
 import type { Download, SoulseekCandidate, Track } from "../lib/api";
 import GetTrack from "./GetTrack";
-import { api, formatBytes } from "../lib/api";
+import { api, formatBytes, formatSpeed } from "../lib/api";
 
 /**
  * Where to get one track.
@@ -81,6 +81,13 @@ export default function AcquirePanel(props: Props) {
     setQuery("");
     setError("");
     dialog?.showModal();
+    // Asked for separately and first: it is string handling, so it lands
+    // immediately, while the search itself takes about twenty seconds. The
+    // query is the first thing worth knowing when the answer is thin, and
+    // knowing it only afterwards is knowing it too late.
+    void api.soulseekQuery(props.track.artist, props.track.title)
+      .then((r) => setQuery(r.query))
+      .catch(() => {});
     void searchSoulseek();
   }
 
@@ -197,6 +204,10 @@ export default function AcquirePanel(props: Props) {
               <Show when={query()}>
                 <div class="tiny faint">
                   searched for <span class="mono">{query()}</span>
+                  <Show when={candidates()}>
+                    {" · "}{candidates()!.length} result
+                    {candidates()!.length === 1 ? "" : "s"}
+                  </Show>
                 </div>
               </Show>
             </div>
@@ -227,7 +238,11 @@ export default function AcquirePanel(props: Props) {
               }
             >
               <div class="candidates">
-                <For each={candidates()!.slice(0, 5)}>
+                {/* All of them. Ranking puts the best first, but the whole
+                    reason to open this rather than press Get is to overrule
+                    the ranking — and you cannot overrule what you cannot
+                    see. */}
+                <For each={candidates()!}>
                   {(candidate) => (
                     <div class="candidate">
                       <span
@@ -241,6 +256,18 @@ export default function AcquirePanel(props: Props) {
                       </span>
                       <span class="tiny faint mono">
                         {formatBytes(candidate.size)}
+                      </span>
+                      <span class="tiny faint">{candidate.duration_label}</span>
+                      {/* Who is sharing it and how fast they upload. On
+                          Soulseek that decides whether a file arrives in ten
+                          seconds or ten minutes — a free slot on a fast line
+                          beats a marginally better rip behind forty people. */}
+                      <span class="tiny faint candidate-peer"
+                            title={`Shared by ${candidate.username}`}>
+                        {candidate.username}
+                      </span>
+                      <span class="tiny faint mono">
+                        {formatSpeed(candidate.upload_speed)}
                       </span>
                       <span
                         class="tiny"

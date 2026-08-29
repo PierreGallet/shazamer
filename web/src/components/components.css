@@ -524,3 +524,22 @@
   /* The row is tight enough already on a phone. */
   .preview-scrub input[type="range"] { width: 56px; }
 }
+
+/* The picker lists every result now, and a popular record brings sixty. A
+   scroller inside the dialog rather than a taller dialog: the head has the
+   query in it and the footer has the one-click button, and both should stay
+   put while the list moves. */
+.picker .candidates {
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.candidate-peer {
+  max-width: 96px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sharing from the list, not only from inside a set: passing one on is a
+   thing you decide while scanning the library, and making it a two-step
+   detour through the set is the reason it would go unused. */
+.set-card-share { display: flex; align-items: center; }

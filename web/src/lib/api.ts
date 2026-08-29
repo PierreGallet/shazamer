@@ -407,6 +407,13 @@ export const api = {
     request<{ configured: boolean; reachable: boolean; hint?: string }>(
       "/api/acquire/soulseek/status",
     ),
+  /** What will be asked of Soulseek, without asking it. Shown while the
+   *  search runs, which is twenty seconds of otherwise blank screen. */
+  soulseekQuery: (artist: string, title: string) => {
+    const q = new URLSearchParams({ artist, title });
+    return request<{ query: string }>(`/api/acquire/query?${q}`);
+  },
+
   soulseekSearch: (artist: string, title: string) =>
     request<{ query: string; candidates: SoulseekCandidate[] }>(
       "/api/acquire/soulseek/search",
@@ -541,6 +548,18 @@ export function formatDuration(seconds: number): string {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return m ? `${h} h ${m}` : `${h} h`;
+}
+
+/** A peer's upload speed, as Soulseek reports it: bytes per second.
+ *
+ *  Worth showing next to a candidate because it decides whether the file
+ *  arrives in ten seconds or ten minutes, which usually matters more than a
+ *  marginal difference in the rip. */
+export function formatSpeed(bytesPerSecond: number): string {
+  if (!bytesPerSecond) return "—";
+  const kb = bytesPerSecond / 1024;
+  if (kb < 1024) return `${Math.round(kb)} kB/s`;
+  return `${(kb / 1024).toFixed(1)} MB/s`;
 }
 
 export function formatBytes(bytes: number): string {

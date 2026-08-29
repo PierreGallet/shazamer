@@ -89,12 +89,17 @@ def _build_share(to: str, from_name: str, title: str, link: str,
     message["To"] = to
 
     message.set_content(
-        f"{from_name} shared a tracklist with you on Shazamer:\n\n"
+        f"{from_name} shared a tracklist with you:\n\n"
         f"  {title}\n"
-        f"  {tracks} tracks\n\n"
+        f"  {tracks} tracks, with timestamps\n\n"
         f"{link}\n\n"
-        "Opening it puts a copy in your own library — yours to keep, star and "
-        "delete, whatever they do with theirs.\n"
+        "Shazamer works out what is playing in a DJ set. Give it a YouTube or "
+        "SoundCloud link and it comes back with every record in it, when each "
+        "one starts, its BPM and its key — and where to buy the ones you "
+        "want.\n\n"
+        "Opening the link puts this tracklist in your own library, yours to "
+        "keep and star and delete, whatever they do with theirs. You can "
+        "analyse your own sets from there.\n"
     )
     message.add_alternative(
         "<div style=\"font-family:-apple-system,BlinkMacSystemFont,"
@@ -103,14 +108,26 @@ def _build_share(to: str, from_name: str, title: str, link: str,
         f"<strong>{from_name}</strong> shared a tracklist with you.</p>"
         f"<p style=\"font-size:19px;font-weight:700;margin:0 0 2px\">{title}</p>"
         f"<p style=\"font-size:13px;color:#675f58;margin:0 0 22px\">"
-        f"{tracks} tracks</p>"
+        f"{tracks} tracks, with timestamps</p>"
         f"<p style=\"margin:0 0 22px\"><a href=\"{link}\" "
         "style=\"display:inline-block;background:#ff5500;color:#fff;"
         "text-decoration:none;padding:11px 18px;border-radius:8px;"
         "font-weight:600;font-size:14px\">Open the tracklist</a></p>"
-        "<p style=\"font-size:13px;color:#675f58;margin:0\">"
+        "<p style=\"font-size:13px;color:#675f58;margin:0 0 20px;"
+        "line-height:1.5\">"
         "Opening it puts a copy in your own library — yours to keep, star and "
-        "delete, whatever they do with theirs.</p></div>",
+        "delete, whatever they do with theirs.</p>"
+        # What the thing is, for someone who has never heard of it. A link
+        # with no explanation is a link people do not click.
+        "<div style=\"border-top:1px solid #e6e1db;padding-top:18px\">"
+        "<p style=\"font-size:13px;color:#1a1714;margin:0 0 6px;"
+        "font-weight:600\">What Shazamer is</p>"
+        "<p style=\"font-size:13px;color:#675f58;margin:0;line-height:1.5\">"
+        "It works out what is playing in a DJ set. Give it a YouTube or "
+        "SoundCloud link and it comes back with every record in it, when each "
+        "one starts, its BPM and its key \u2014 and where to buy the ones you "
+        "want. You can analyse your own sets once you are in."
+        "</p></div></div>",
         subtype="html")
     return message
 

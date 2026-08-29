@@ -1,4 +1,5 @@
 import { For, Show, createResource, createSignal } from "solid-js";
+import ShareSet from "./ShareSet";
 import { api, formatDuration } from "../lib/api";
 
 /**
@@ -107,6 +108,10 @@ export default function Library(props: Props) {
                       <Show when={item.quality}>
                         <span>·</span><span class="mono">{item.quality}</span>
                       </Show>
+                      <Show when={item.shared_by}>
+                        <span>·</span>
+                        <span>shared by {item.shared_by}</span>
+                      </Show>
                       <Show when={!item.has_audio}>
                         <span>·</span>
                         <span>
@@ -116,6 +121,13 @@ export default function Library(props: Props) {
                         </span>
                       </Show>
                     </div>
+                  </div>
+
+                  {/* Stops the click reaching the card, which would open the
+                      set underneath the dialog. */}
+                  <div class="set-card-share"
+                       onClick={(e) => e.stopPropagation()}>
+                    <ShareSet setId={item.id} title={item.title} />
                   </div>
 
                   <div class="set-card-meta">

@@ -578,3 +578,43 @@ def test_space_is_reclaimed_oldest_first_and_only_when_short(tmp_path,
     web._sweep_for_space(0.000001)
     remaining = {p.name for p in media.iterdir()}
     assert "old.mp3" not in remaining, "the newest was taken instead"
+
+
+async def test_soulseek_endpoints_need_a_session(client, monkeypatch):
+    """Anonymous callers must not be able to work the server's Soulseek.
+
+    Six of them were open, including the one that queues a download. Someone
+    who could reach the API could make this machine search and fetch on their
+    behalf, from an account that is not theirs, onto a disk that is not
+    theirs.
+    """
+    import importlib
+
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    monkeypatch.setenv("SLSKD_URL", "http://slskd:5030")
+    import src.auth as auth_mod
+    importlib.reload(auth_mod)
+    import src.web as web
+    importlib.reload(web)
+
+    from httpx import ASGITransport, AsyncClient
+    transport = ASGITransport(app=web.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        for method, path in (
+            ("GET", "/api/acquire/sources?artist=A&title=B"),
+            ("GET", "/api/acquire/soulseek/status"),
+            ("GET", "/api/acquire/candidates?artist=A&title=B"),
+            ("GET", "/api/acquire/query?artist=A&title=B"),
+            ("POST", "/api/acquire/soulseek/search"),
+            ("POST", "/api/acquire/soulseek/download"),
+            ("POST", "/api/acquire/track"),
+        ):
+            response = await (c.get(path) if method == "GET"
+                              else c.post(path, json={}))
+            assert response.status_code in (401, 422), (
+                f"{method} {path} answered {response.status_code} "
+                "with no session")
+
+    monkeypatch.undo()
+    importlib.reload(auth_mod)
+    importlib.reload(web)
