@@ -1,5 +1,6 @@
 import { useSearchParams } from "@solidjs/router";
 import { For, Show, createEffect, createResource, createSignal } from "solid-js";
+import ShareSet from "./ShareSet";
 import { api, formatDuration, formatTime } from "../lib/api";
 import Player from "./Player";
 import TrackList from "./TrackList";
@@ -146,6 +147,15 @@ export default function SetView(props: Props) {
                     <span>·</span>
                     <span class="mono">{data().quality}</span>
                   </Show>
+                  {/* Where it came from, when it came from somebody. Worth
+                      keeping visible: a library of thirty sets is hard to
+                      place otherwise, and it is the only trace of the share. */}
+                  <Show when={data().shared_by}>
+                    <span>·</span>
+                    <span class="chip chip-accent">
+                      shared by {data().shared_by}
+                    </span>
+                  </Show>
                   <Show when={data().stats.elapsed_seconds}>
                     <span>·</span>
                     <button
@@ -160,6 +170,10 @@ export default function SetView(props: Props) {
               </div>
               <div class="spacer" />
               <div class="export-menu">
+                {/* Ahead of the exports: passing a set to someone is a
+                    different kind of act from saving a file, and the exports
+                    are a row of near-identical buttons to get lost in. */}
+                <ShareSet setId={props.setId} title={data().title} />
                 <For each={EXPORTS}>
                   {(item) => (
                     <a

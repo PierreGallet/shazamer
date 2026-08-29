@@ -9,7 +9,15 @@ import { api, ApiError } from "../lib/api";
  * kept visible in step two so a typo is obvious before waiting for a mail
  * that is never coming.
  */
-export function SignIn(props: { onSignedIn: () => void }) {
+export function SignIn(props: {
+  onSignedIn: () => void;
+  /** Render the form alone, without the page wrapper or the heading.
+   *
+   *  For embedding under something that has already said what signing in is
+   *  for — a shared tracklist explains itself far better than "Sign in to
+   *  Shazamer" does. */
+  bare?: boolean;
+}) {
   const [step, setStep] = createSignal<"email" | "code">("email");
   const [email, setEmail] = createSignal("");
   const [code, setCode] = createSignal("");
@@ -56,21 +64,25 @@ export function SignIn(props: { onSignedIn: () => void }) {
   }
 
   return (
-    <div class="signin-wrap">
-      <div class="signin">
-        <svg class="brand-mark signin-mark" viewBox="0 0 24 24"
-             width="34" height="34" fill="currentColor" aria-hidden="true">
-          <rect x="3" y="10" width="2.4" height="4" rx="1.2" />
-          <rect x="8" y="6.5" width="2.4" height="11" rx="1.2" />
-          <rect x="13" y="4" width="2.4" height="16" rx="1.2" />
-          <rect x="18" y="8.5" width="2.4" height="7" rx="1.2" />
-        </svg>
+    <div classList={{ "signin-wrap": !props.bare }}>
+      <div classList={{ signin: true, "signin-bare": !!props.bare }}>
+        <Show when={!props.bare}>
+          <svg class="brand-mark signin-mark" viewBox="0 0 24 24"
+               width="34" height="34" fill="currentColor" aria-hidden="true">
+            <rect x="3" y="10" width="2.4" height="4" rx="1.2" />
+            <rect x="8" y="6.5" width="2.4" height="11" rx="1.2" />
+            <rect x="13" y="4" width="2.4" height="16" rx="1.2" />
+            <rect x="18" y="8.5" width="2.4" height="7" rx="1.2" />
+          </svg>
+        </Show>
 
         <Show when={step() === "email"}>
-          <h1 class="signin-title">Sign in to Shazamer</h1>
-          <p class="signin-sub">
-            No password. We send a code to your inbox.
-          </p>
+          <Show when={!props.bare}>
+            <h1 class="signin-title">Sign in to Shazamer</h1>
+            <p class="signin-sub">
+              No password. We send a code to your inbox.
+            </p>
+          </Show>
           <form onSubmit={sendCode}>
             <input
               ref={emailInput}

@@ -56,6 +56,8 @@ export interface SetStats {
 }
 
 export interface SetSummary {
+  /** Set when this copy came from somebody else. */
+  shared_by?: string;
   id: string;
   title: string;
   source_url: string;
@@ -172,6 +174,18 @@ export interface ChannelEntry {
   thumbnail: string;
 }
 
+export interface Profile {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  avatar: string;
+  display_name: string;
+  created_at: string;
+  /** An address change waiting on its code, so the page can say so. */
+  pending_email: string | null;
+}
+
 export interface AuthState {
   authenticated: boolean;
   auth_required: boolean;
@@ -224,6 +238,53 @@ export const api = {
 
   logout: () => request<{ authenticated: boolean }>("/api/auth/logout",
     { method: "POST" }),
+
+  profile: () => request<Profile>("/api/profile"),
+
+  saveProfile: (fields: Partial<Pick<Profile,
+    "first_name" | "last_name" | "avatar">>) =>
+    request<Profile>("/api/profile", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+    }),
+
+  requestEmailChange: (email: string) =>
+    request<{ sent: boolean }>("/api/profile/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    }),
+
+  confirmEmailChange: (code: string) =>
+    request<{ email: string }>("/api/profile/email/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    }),
+
+  logoutEverywhere: () =>
+    request<{ sessions_ended: number }>("/api/auth/logout-everywhere",
+      { method: "POST" }),
+
+  shareSet: (setId: string, email?: string) =>
+    request<{ token: string; link: string; emailed: boolean }>(
+      `/api/sets/${setId}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email || null }),
+      }),
+
+  /** What is behind an invitation. Readable without an account. */
+  peekShare: (token: string) =>
+    request<{
+      token: string; title: string; duration: number;
+      track_count: number; from_name: string; already_claimed: boolean;
+    }>(`/api/shares/${encodeURIComponent(token)}`),
+
+  claimShare: (token: string) =>
+    request<{ set_id: string; from_name?: string; already_yours?: boolean }>(
+      `/api/shares/${encodeURIComponent(token)}/claim`, { method: "POST" }),
 
   /** Where a queued Soulseek transfer has got to. */
   soulseekTransfer: (username: string, filename: string) =>

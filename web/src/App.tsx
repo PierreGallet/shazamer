@@ -6,6 +6,8 @@ import Library from "./components/Library";
 import SetView from "./components/SetView";
 import Watches from "./components/Watches";
 import { SignIn } from "./components/SignIn";
+import Profile from "./components/Profile";
+import SharedSet from "./components/SharedSet";
 import { api } from "./lib/api";
 
 /**
@@ -100,6 +102,7 @@ function Shell(props: ParentProps) {
         {/* Only when there is a session to end. With accounts off the server
             says so and this never appears. */}
         <Show when={me()?.auth_required && me()?.authenticated}>
+          <A class="nav-item nav-docs" href="/profile">Profile</A>
           <button class="nav-item nav-docs" type="button"
                   title={me()!.email}
                   onClick={async () => {
@@ -197,6 +200,16 @@ export default function App() {
    */
   const [auth, { refetch }] = createResource(() => api.me());
 
+  // An invitation has to open for someone with no account — that is the whole
+  // point of it — so it is routed before the gate rather than behind it.
+  if (window.location.pathname.startsWith("/shared/")) {
+    return (
+      <Router>
+        <Route path="/shared/:token" component={SharedSet} />
+      </Router>
+    );
+  }
+
   return (
     <Show when={auth()} fallback={<div class="boot" />}>
       <Show when={auth()!.authenticated} fallback={<SignIn onSignedIn={refetch} />}>
@@ -217,6 +230,7 @@ function AppRoutes() {
       <Route path="/sets/:id" component={SetRoute} />
       <Route path="/crate" component={Crate} />
       <Route path="/following" component={Watches} />
+      <Route path="/profile" component={Profile} />
       <Route path="*" component={NotFound} />
     </Router>
   );
