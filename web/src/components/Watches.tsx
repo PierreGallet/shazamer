@@ -93,8 +93,10 @@ export default function Watches() {
             <div class="empty" style={{ "margin-top": "1.5rem" }}>
               <div class="empty-title">Not following anyone yet</div>
               <div class="small">
-                Follow the channels you dig through and check them for new mixes
-                instead of hunting manually.
+                Paste a YouTube channel, a SoundCloud artist or a Mixcloud
+                series. New uploads are checked four times a day and analysed
+                on their own, so a set you would have missed is waiting in
+                your library instead of needing to be hunted for.
               </div>
             </div>
           </Show>

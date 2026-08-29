@@ -461,3 +461,25 @@ async def test_an_invitation_can_be_read_without_signing_in(library):
     assert peek["from_name"] == "Alice"
     assert peek["track_count"] == 1
     assert await library.peek_share("not-a-token") is None
+
+
+async def test_a_recurring_track_can_be_traced_to_its_sets(library):
+    """The strongest signal this tool produces has to lead somewhere.
+
+    "Showing up across your sets" was a count on a card that answered
+    nothing: which sets, and at what moment, had no way to be asked.
+    """
+    payload = {"duration": 600.0, "waveform": [], "stats": {}, "tracks": [
+        {"index": 1, "start": 120, "end": 400, "identified": True,
+         "key": "a::x", "title": "X", "artist": "A"}]}
+    await library.save_set("s1", "First Night", payload, user_id="alice")
+    await library.save_set("s2", "Second Night", payload, user_id="alice")
+    await library.save_set("s3", "Theirs", payload, user_id="bob")
+
+    found = await library.appearances("a::x", user_id="alice")
+    assert [a["set_title"] for a in found] == ["Second Night", "First Night"]
+    assert found[0]["start_label"] == "00:02:00"
+    assert all(a["set_id"] for a in found), "no way to open the set"
+
+    # And it stays each person's own signal.
+    assert len(await library.appearances("a::x", user_id="bob")) == 1

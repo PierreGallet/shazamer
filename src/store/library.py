@@ -481,6 +481,37 @@ class Library:
             "camelot": r["camelot"], "set_count": r["set_count"],
         } for r in rows]
 
+    async def appearances(self, track_key: str, *,
+                          user_id: str) -> List[Dict[str, Any]]:
+        """Every set of yours this record turns up in, and when.
+
+        The point of surfacing a track that recurs is that you keep hearing
+        it; the next question is always which sets, and at what moment. That
+        had no answer — the card carrying the signal was a plain div.
+        """
+        return await self._run(self._appearances_sync, track_key, user_id)
+
+    def _appearances_sync(self, track_key: str,
+                          user_id: str) -> List[Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT t.set_id, t.start, t.end, s.title AS set_title,"
+                " s.created_at"
+                " FROM tracks t JOIN sets s ON s.id = t.set_id"
+                " WHERE t.track_key = ? AND s.user_id = ?"
+                # rowid breaks the tie. `created_at` has second resolution, so
+                # two sets saved in the same second sort arbitrarily — and an
+                # import writes a batch of them in one go. rowid is insertion
+                # order, which is the intent when the timestamps agree.
+                " ORDER BY s.created_at DESC, s.rowid DESC, t.start",
+                (track_key, user_id)).fetchall()
+        return [{
+            "set_id": r["set_id"], "set_title": r["set_title"],
+            "start": r["start"], "start_label": format_timestamp(r["start"]),
+            "duration": round(r["end"] - r["start"], 1),
+            "created_at": r["created_at"],
+        } for r in rows]
+
     async def search_tracks(self, query: str = "", *, user_id: str,
                             bpm_min: Optional[float] = None,
                             bpm_max: Optional[float] = None,
@@ -492,7 +523,8 @@ class Library:
 
     def _search_sync(self, query, bpm_min, bpm_max, camelot, starred_only,
                      limit, user_id):
-        sql = ["SELECT t.*, s.title AS set_title FROM tracks t"
+        sql = ["SELECT t.*, s.title AS set_title, s.id AS set_id"
+               " FROM tracks t"
                " JOIN sets s ON s.id = t.set_id"
                " WHERE t.identified = 1 AND s.user_id = ?"]
         params: List[Any] = [user_id]
@@ -521,6 +553,7 @@ class Library:
         for r in rows:
             item = _track_row(r, starred)
             item["set_title"] = r["set_title"]
+            item["set_id"] = r["set_id"]
             out.append(item)
         return out
 

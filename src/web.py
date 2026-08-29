@@ -1247,6 +1247,19 @@ async def stream_track_preview(track_key: str,
     )
 
 
+@app.get("/api/library/appearances")
+async def track_appearances(key: str,
+                            user: Dict[str, Any] = Depends(current_user)):
+    """Which of your sets a record turns up in, and at what moment.
+
+    A track appearing across several sets is the strongest signal this tool
+    produces — and until now it was a number on a card that led nowhere.
+    """
+    if not key:
+        raise HTTPException(status_code=400, detail="A track key is required")
+    return await library.appearances(key, user_id=user["id"])
+
+
 @app.get("/api/library/crate")
 async def get_crate(user: Dict[str, Any] = Depends(current_user)):
     return await library.crate(user_id=user["id"])

@@ -75,11 +75,12 @@ export default function Crate() {
           <Show when={!results.loading}>
             <div class="empty">
               <div class="empty-title">
-                {starredOnly() ? "Your crate is empty" : "Nothing matches"}
+                {starredOnly() ? "Nothing starred yet" : "Nothing matches"}
               </div>
               <div class="small">
                 {starredOnly()
-                  ? "Star tracks from a set and they collect here."
+                  ? "Star a track in any set and it collects here — filterable "
+                    + "by BPM and key, which is how you build a run."
                   : "Loosen the filters and try again."}
               </div>
             </div>
@@ -112,7 +113,7 @@ export default function Crate() {
                 <div class="track-actions">
                   <button
                     class="btn-icon on"
-                    title="Remove from crate"
+                    title="Remove from starred"
                     onClick={() => unstar(track.key, track.title, track.artist)}
                   >
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"

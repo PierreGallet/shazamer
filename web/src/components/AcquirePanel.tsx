@@ -257,7 +257,11 @@ export default function AcquirePanel(props: Props) {
                       <span class="tiny faint mono candidate-num">
                         {formatBytes(candidate.size)}
                       </span>
-                      <span class="tiny faint mono candidate-num">
+                      {/* Length. The one field that separates an extended
+                          mix from a radio edit, which is the difference this
+                          list exists to show. */}
+                      <span class="tiny mono candidate-num candidate-length"
+                            title="Length">
                         {candidate.duration_label}
                       </span>
                       {/* Who is sharing it and how fast they upload. On

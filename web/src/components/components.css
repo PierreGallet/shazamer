@@ -392,6 +392,8 @@
   text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .candidate-slot { white-space: nowrap; }
+/* The deciding field, so it is not the faintest thing in the row. */
+.candidate .candidate-length { color: var(--text-dim); }
 .candidate .btn { justify-self: end; }
 
 @media (max-width: 640px) {
@@ -406,8 +408,11 @@
   }
   .candidate > :nth-child(1) { grid-area: quality; }
   .candidate > :nth-child(2) { grid-area: name; }
-  .candidate > :nth-child(3) { grid-area: size; }
-  .candidate > :nth-child(4) { display: none; }   /* length, least useful here */
+  /* Length, not size. It is the field that separates an extended mix from a
+     radio edit, which is the difference this list exists to show — and the
+     megabytes only say the same thing less directly. */
+  .candidate > :nth-child(3) { display: none; }   /* size */
+  .candidate > :nth-child(4) { grid-area: size; }
   .candidate > :nth-child(5) { grid-area: peer; }
   .candidate > :nth-child(6) { grid-area: speed; }
   .candidate > :nth-child(7) { display: none; }   /* queue depth */
@@ -607,4 +612,25 @@
 
 @media (max-width: 640px) {
   .download-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 0.4rem; }
+}
+
+/* Where a recurring record turns up. The card carrying the strongest signal
+   this tool produces used to be a plain div — the number said "four of your
+   sets" and there was no way to ask which four. */
+.recurring-card { font: inherit; text-align: left; cursor: pointer; width: 100%; }
+.appearances { display: flex; flex-direction: column; gap: 0.3rem; }
+.appearance {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.8rem; padding: 0.5rem 0.6rem;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: inherit; text-decoration: none;
+}
+.appearance:hover {
+  border-color: var(--accent-line); background: var(--surface-3);
+  text-decoration: none;
+}
+.appearance-title {
+  font-size: 0.85rem; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }

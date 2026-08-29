@@ -24,7 +24,7 @@ import { api } from "./lib/api";
 const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Analyse" },
   { href: "/library", label: "Library" },
-  { href: "/crate", label: "Crate" },
+  { href: "/crate", label: "Starred" },
   { href: "/downloads", label: "Downloads" },
   { href: "/following", label: "Following" },
 ];

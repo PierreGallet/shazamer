@@ -107,6 +107,7 @@ export interface LibraryTrack {
   set_count: number;
   starred?: boolean;
   set_title?: string;
+  set_id?: string;
 }
 
 export interface AcquisitionSource {
@@ -372,6 +373,13 @@ export const api = {
 
   recurring: (minSets = 2) =>
     request<LibraryTrack[]>(`/api/library/recurring?min_sets=${minSets}`),
+  /** Which of your sets a record turns up in, and when. */
+  appearances: (key: string) =>
+    request<Array<{
+      set_id: string; set_title: string;
+      start: number; start_label: string; duration: number;
+    }>>(`/api/library/appearances?key=${encodeURIComponent(key)}`),
+
   searchLibrary: (params: {
     q?: string;
     bpmMin?: number;

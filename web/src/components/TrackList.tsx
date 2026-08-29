@@ -322,7 +322,7 @@ export default function TrackList(props: Props) {
                   <button
                     class="btn-icon"
                     classList={{ on: isStarred(track) }}
-                    title={isStarred(track) ? "Remove from crate" : "Add to crate"}
+                    title={isStarred(track) ? "Remove from starred" : "Star it"}
                     onClick={(e) => toggleStar(track, e)}
                   >
                     <svg viewBox="0 0 24 24" width="15" height="15"
