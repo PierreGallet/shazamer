@@ -374,7 +374,7 @@
   display: grid;
   grid-template-columns:
     auto              /* format and bitrate */
-    minmax(0, 1fr)    /* filename */
+    minmax(22rem, 1fr) /* filename — the field the choice is actually made on */
     3.6rem            /* size */
     2.8rem            /* length */
     5.5rem            /* who is sharing it */
@@ -419,9 +419,13 @@
   .candidate > :nth-child(8) { grid-area: button; }
 }
 .candidate-file {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* No ellipsis inside the picker: the row is wide enough and the list
+     scrolls, so the end of a filename — which is where the mix name lives —
+     is readable rather than replaced by three dots. */
+  white-space: nowrap;
   color: var(--text-dim);
 }
+.acquire-grid .candidate-file { overflow: hidden; text-overflow: ellipsis; }
 
 /* ── Library ────────────────────────────────────────────────────────── */
 .set-list { display: flex; flex-direction: column; gap: 0.5rem; }
@@ -512,7 +516,12 @@
 /* A native <dialog>: focus trapping, Escape to close and a backdrop, none of
    which is worth hand-rolling. */
 .picker {
-  width: min(680px, calc(100vw - 2rem));
+  /* Wide. The filename is the field that decides between two candidates —
+     "(Extended Mix)", "(Radio Edit)", the label, the year, whether somebody
+     ripped it from YouTube — and at 680px it was the one field truncated to
+     nothing. Nearly the whole viewport, because the alternative is a list you
+     cannot read. */
+  width: min(1180px, calc(100vw - 2rem));
   padding: 1rem 1.1rem 1.1rem;
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -576,9 +585,20 @@
    query in it and the footer has the one-click button, and both should stay
    put while the list moves. */
 .picker .candidates {
-  max-height: min(52vh, 420px);
-  overflow-y: auto;
+  max-height: min(58vh, 460px);
+  /* Both axes. Even at 1180px a Soulseek path can be two hundred characters,
+     so the row keeps its real width and the list scrolls sideways rather than
+     eliding the part that distinguishes one file from another. */
+  overflow: auto;
   overscroll-behavior: contain;
+}
+.picker .candidate { min-width: 60rem; }
+@media (max-width: 720px) {
+  /* Stacked on a phone, where a 60rem row would scroll past the point of
+     being usable. The layout below already reflows; it just needs its width
+     back. */
+  .picker .candidate { min-width: 0; }
+  .picker .candidate-file { white-space: normal; word-break: break-word; }
 }
 .candidate-peer {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -648,3 +668,11 @@
    ones that do are the interesting ones. */
 .btn-icon.good { color: var(--ok, #4ade80); background: rgba(74, 222, 128, 0.12); }
 .btn-icon.bad { color: var(--crit, #ff6b5a); background: rgba(255, 107, 90, 0.12); }
+
+/* A finding that contradicts something already on screen — the declared
+   bitrate — so it reads as a warning rather than as one more fact. */
+.chip-warn {
+  background: color-mix(in srgb, var(--warn, #d97706) 14%, transparent);
+  border-color: color-mix(in srgb, var(--warn, #d97706) 38%, transparent);
+  color: var(--warn, #d97706);
+}

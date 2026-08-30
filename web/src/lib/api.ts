@@ -207,6 +207,11 @@ export interface Download {
    *  because those are not equally trustworthy. */
   style_source?: "tag" | "discogs" | "";
   analysed_at?: string;
+  /** Where the encoder stopped storing anything, in Hz. */
+  cutoff_hz?: number;
+  /** Set only when the declared bitrate and the audio disagree. A sentence,
+   *  not a flag: "declares 320 kbps, but the audio stops at 16.1 kHz". */
+  quality_note?: string;
 }
 
 export interface SweepReport {

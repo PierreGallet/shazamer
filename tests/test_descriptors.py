@@ -337,3 +337,184 @@ async def test_a_file_that_is_not_audio_yields_nothing_and_does_not_raise(tmp_pa
     broken = tmp_path / "truncated.mp3"
     broken.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff" * 400)
     assert audio_descriptors.describe(broken) is None
+
+
+# ── Declared bitrate against the audio ────────────────────────────────────
+
+@pytest.mark.parametrize("label, expected", [
+    ("MP3 320 kbps", (320, False)),
+    ("MP3 128 kbps", (128, False)),
+    ("FLAC 16-bit 44.1 kHz", (0, True)),
+    ("WAV 24-bit 48.0 kHz", (0, True)),
+    ("MP3", (0, False)),
+    ("", (0, False)),
+])
+def test_the_declared_quality_is_read_back_out_of_its_own_label(label, expected):
+    """Parsed from the stored label rather than kept as a second column.
+
+    The label is what the peer claimed and it is already recorded. A duplicate
+    is one more thing that can disagree with the original.
+    """
+    from src.acquire.describe import _declared_quality
+
+    assert _declared_quality(label) == expected
+
+
+def test_a_quiet_recording_is_not_accused_of_being_a_transcode():
+    """A ceiling, never a verdict.
+
+    A recording with genuinely no high content is indistinguishable from a
+    128 kbps transcode, and calling it one would be a confident lie. The
+    message says "consistent with N at best", which is true of both.
+    """
+    from src.core.bitrate import assess
+
+    import numpy as np
+    import soundfile as sf
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as folder:
+        # A pure 200 Hz tone: no content anywhere near the cutoff region.
+        t = np.linspace(0, 30, 44100 * 30, endpoint=False)
+        path = Path(folder) / "quiet.wav"
+        sf.write(str(path), (0.4 * np.sin(2 * np.pi * 200 * t)).astype("float32"),
+                 44100)
+
+        _found, note = assess(path, declared_bitrate=320, lossless=False)
+        if note:
+            assert "at best" in note, f"stated as a verdict, not a ceiling: {note}"
+            assert "is a" not in note
+
+
+def test_too_little_audio_is_not_measured(tmp_path):
+    """Ten seconds is the floor.
+
+    Less than that is one phrase, and a phrase with no cymbals in it looks
+    exactly like a transcode.
+    """
+    import numpy as np
+    import soundfile as sf
+    from src.core.bitrate import cutoff_hz
+
+    short = tmp_path / "short.wav"
+    t = np.linspace(0, 5, 44100 * 5, endpoint=False)
+    sf.write(str(short), (0.4 * np.sin(2 * np.pi * 440 * t)).astype("float32"),
+             44100)
+    assert cutoff_hz(short) is None
+
+
+def test_an_unreadable_file_yields_nothing_and_raises_nothing(tmp_path):
+    from src.core.bitrate import assess, cutoff_hz
+
+    broken = tmp_path / "broken.mp3"
+    broken.write_bytes(b"\x00" * 512)
+    assert cutoff_hz(broken) is None
+    assert assess(broken, 320, False) == (None, "")
+
+
+def test_the_detector_finds_a_lowpass_that_was_actually_applied():
+    """Tests the detector, not the encoder.
+
+    A brick wall at 16 kHz, applied directly, is what a lossy codec leaves
+    behind — and unlike an encode it is deterministic, so this runs everywhere
+    and cannot drift with an ffmpeg version.
+
+    Encoding a fixture and expecting a cutoff does not work: LAME's lowpass is
+    content-dependent. On dense broadband material at 128 kbps it keeps the
+    whole band. That belongs in an integration test against real music, and in
+    the module's docstring as a limitation, not here.
+    """
+    import numpy as np
+    import soundfile as sf
+    import tempfile
+    from pathlib import Path
+    from src.core.bitrate import cutoff_hz
+
+    rng = np.random.default_rng(3)
+    seconds, sr = 30, 44100
+    noise = rng.standard_normal(sr * seconds)
+
+    with tempfile.TemporaryDirectory() as folder:
+        for wall in (16_000, 20_000):
+            spectrum = np.fft.rfft(noise)
+            spectrum[np.fft.rfftfreq(noise.size, 1 / sr) > wall] = 0
+            filtered = np.fft.irfft(spectrum, n=noise.size)
+            filtered = (filtered / np.abs(filtered).max() * 0.8).astype("float32")
+
+            path = Path(folder) / f"wall_{wall}.wav"
+            sf.write(str(path), filtered, sr)
+            found = cutoff_hz(path)
+            assert found is not None
+            assert abs(found - wall) < 400, (
+                f"wall at {wall} Hz, detector says {found:.0f} Hz")
+
+
+def test_a_declared_rate_above_what_the_audio_supports_is_flagged():
+    """The rule, exercised without an encoder in the loop."""
+    import numpy as np
+    import soundfile as sf
+    import tempfile
+    from pathlib import Path
+    from src.core.bitrate import assess
+
+    rng = np.random.default_rng(4)
+    sr, seconds = 44100, 30
+    noise = rng.standard_normal(sr * seconds)
+    spectrum = np.fft.rfft(noise)
+    spectrum[np.fft.rfftfreq(noise.size, 1 / sr) > 16_000] = 0
+    walled = np.fft.irfft(spectrum, n=noise.size)
+    walled = (walled / np.abs(walled).max() * 0.8).astype("float32")
+
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "walled.wav"
+        sf.write(str(path), walled, sr)
+
+        _c, note = assess(path, declared_bitrate=320, lossless=False)
+        assert "320" in note and "at best" in note, note
+
+        # The same audio declaring 128 is telling the truth.
+        _c, honest = assess(path, declared_bitrate=128, lossless=False)
+        assert honest == "", honest
+
+        # And as a lossless file it is a fake FLAC.
+        _c, lossless_note = assess(path, 0, lossless=True)
+        assert "lossy source" in lossless_note, lossless_note
+
+
+@pytest.mark.integration
+async def test_a_transcode_of_real_music_is_caught(tmp_path):
+    """AC-1.2 against real music, which is the only place this is calibrated.
+
+    Needs a real recording: a synthetic one does not make LAME lowpass. Set
+    SHAZAMER_MUSIC_FIXTURE to any music file to run it. Skipped otherwise
+    rather than replaced by something that would pass for the wrong reason.
+    """
+    import os
+    import subprocess
+
+    from src.core.bitrate import assess
+
+    source = os.environ.get("SHAZAMER_MUSIC_FIXTURE", "")
+    if not source or not Path(source).exists():
+        pytest.skip("set SHAZAMER_MUSIC_FIXTURE to a real music file")
+
+    master = tmp_path / "master.wav"
+    subprocess.run(["ffmpeg", "-y", "-v", "quiet", "-t", "60", "-i", source,
+                    "-ar", "44100", "-ac", "2", str(master)], check=True)
+
+    def encode(src, dst, kbps):
+        subprocess.run(["ffmpeg", "-y", "-v", "quiet", "-i", str(src),
+                        "-codec:a", "libmp3lame", "-b:a", f"{kbps}k", str(dst)],
+                       check=True)
+
+    honest, low, fraud = (tmp_path / n for n in
+                          ("h320.mp3", "l128.mp3", "f320.mp3"))
+    encode(master, honest, 320)
+    encode(master, low, 128)
+    encode(low, fraud, 320)
+
+    assert honest.stat().st_size == fraud.stat().st_size, (
+        "the fixture no longer shows why a size check cannot do this")
+    assert assess(honest, 320, False)[1] == "", "the honest 320 was flagged"
+    assert "at best" in assess(fraud, 320, False)[1]

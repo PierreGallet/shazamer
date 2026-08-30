@@ -28,7 +28,7 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,11 @@ class AcquiredFile:
     verified: bool
     verified_as: str = ""
     note: str = ""
+    # Where the encoder stopped storing anything, in Hz, and what that says
+    # about the bitrate the file declares. Empty when the two agree, which is
+    # the ordinary case — a note here is a finding.
+    cutoff_hz: Optional[float] = None
+    quality_note: str = ""
 
 
 def safe_filename(artist: str, title: str, extension: str) -> str:
@@ -132,10 +137,27 @@ def tag(path: Path, meta: Dict[str, Any]) -> bool:
         return False
 
 
+def _assess_quality(source: Path, declared_bitrate: int,
+                    lossless: bool) -> Tuple[Optional[float], str]:
+    """Measure the audio against the header, and never let it raise.
+
+    A file we cannot read is a file with no finding, not a failed download.
+    """
+    try:
+        from ..core.bitrate import assess
+
+        return assess(source, declared_bitrate, lossless)
+    except Exception as exc:            # noqa: BLE001
+        logger.debug("Could not assess the quality of %s: %s", source.name, exc)
+        return None, ""
+
+
 async def collect(source: Path, destination_dir: Path, artist: str, title: str,
                   identifier=None, expected_key: str = "",
                   meta: Optional[Dict[str, Any]] = None,
-                  require_verification: bool = False) -> AcquiredFile:
+                  require_verification: bool = False,
+                  declared_bitrate: int = 0,
+                  lossless: bool = False) -> AcquiredFile:
     """Name, tag and file a downloaded track, saying what it sounds like.
 
     The fingerprint is a **label, not a gate**. It used to reject: a file
@@ -168,6 +190,11 @@ async def collect(source: Path, destination_dir: Path, artist: str, title: str,
                 f"The file sounds like {heard}, not {artist} — {title}."
             )
 
+    # The declared bitrate is what the peer's header says; this is what the
+    # audio says. Under a second, and it never changes what happens next — the
+    # file is saved either way and this rides along as a sentence.
+    cutoff, quality_note = _assess_quality(source, declared_bitrate, lossless)
+
     destination_dir.mkdir(parents=True, exist_ok=True)
     target = destination_dir / safe_filename(artist, title, source.suffix)
     if target.exists():
@@ -184,4 +211,5 @@ async def collect(source: Path, destination_dir: Path, artist: str, title: str,
     return AcquiredFile(
         path=target, verified=verified, verified_as=actually,
         note="" if verified else "not fingerprint-verified",
+        cutoff_hz=cutoff, quality_note=quality_note,
     )

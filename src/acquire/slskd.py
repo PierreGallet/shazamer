@@ -30,11 +30,12 @@ import uuid
 from urllib.parse import quote
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-_LOSSLESS = {"flac", "wav", "aiff", "aif", "alac"}
+LOSSLESS = {"flac", "wav", "aiff", "aif", "alac"}
+_LOSSLESS = LOSSLESS          # the older private name, still used below
 
 # What "best" means depends on where the file is going, so it is a choice
 # rather than a constant.
@@ -81,11 +82,32 @@ _SHORT_HINT = re.compile(
 # is normal — so this is generous, and measures stalling rather than duration.
 STALL_SECONDS = float(os.environ.get("SLSKD_STALL_SECONDS", "600"))
 
+# How long a *queued* transfer may sit at the same position before it is
+# abandoned. Much longer than the stall timeout, because waiting in a queue is
+# not stalling — it is the normal state of a Soulseek download, and being forty
+# deep behind somebody on ADSL can take an hour.
+#
+# This is a fix, not a knob: at 0% in a queue the percentage cannot move, so
+# the stall rule was killing perfectly healthy queued transfers after ten
+# minutes and reporting "the peer is probably gone" about a peer who was fine.
+QUEUE_PATIENCE = float(os.environ.get("SLSKD_QUEUE_PATIENCE", "3600"))
+
 _JUNK = re.compile(r"[_\-\.]+")
 
 
 class SlskdError(RuntimeError):
     pass
+
+
+def _ordinal(position: Optional[int]) -> str:
+    """"3rd", "21st". Read by a person waiting, so it should read like English."""
+    if position is None:
+        return ""
+    if 10 <= position % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(position % 10, "th")
+    return f"{position}{suffix}"
 
 
 @dataclass(frozen=True)
@@ -460,7 +482,7 @@ class SlskdClient:
 
         started = time.monotonic()
         last_change = started
-        last_seen = -1.0
+        last_signal: Tuple[float, Optional[int]] = (-1.0, None)
 
         while True:
             entry = await self.transfer(username, filename)
@@ -473,8 +495,15 @@ class SlskdClient:
 
             state = (entry.get("state") or "").lower()
             percent = float(entry.get("percent") or 0)
+            # How far down the peer's queue we are. Reported by slskd and,
+            # until now, thrown away — which is why a queued download showed
+            # "0%" for as long as it lasted with nothing to say whether it was
+            # moving.
+            place = entry.get("placeInQueue")
+            position = int(place) if isinstance(place, (int, float)) else None
+            queued = "queued" in state
             if on_progress:
-                on_progress(percent, state)
+                on_progress(percent, state, position)
 
             if "completed" in state and "succeeded" in state:
                 return entry
@@ -482,9 +511,21 @@ class SlskdClient:
                    ("cancelled", "errored", "rejected", "timedout", "failed")):
                 raise SlskdError(f"Transfer failed: {entry.get('state')}")
 
-            if percent > last_seen:
-                last_seen, last_change = percent, time.monotonic()
-            elif time.monotonic() - last_change > STALL_SECONDS:
+            # Moving up a queue is progress, exactly as much as a percentage
+            # is. Measuring only the percentage meant a transfer climbing from
+            # 40th to 3rd looked identical to a dead one.
+            signal = (percent, position)
+            patience = QUEUE_PATIENCE if queued else STALL_SECONDS
+            if signal != last_signal:
+                last_signal, last_change = signal, time.monotonic()
+            elif time.monotonic() - last_change > patience:
+                if queued:
+                    raise SlskdError(
+                        f"Still {_ordinal(position)} in {username}'s queue after "
+                        f"{patience // 60:.0f} minutes without moving."
+                        if position else
+                        f"Queued by {username} for {patience // 60:.0f} minutes "
+                        f"without moving.")
                 raise SlskdError(
                     f"Transfer stalled at {percent:.0f}% for "
                     f"{STALL_SECONDS // 60} minutes. The peer is probably gone."
