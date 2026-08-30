@@ -51,10 +51,27 @@ from src.core.segment import (Segment, confirmation_times,   # noqa: E402
 SR = 22050
 HALF = 30.0                 # seconds either side of a spliced cut
 
-# Far apart enough that each pair is certainly two different records.
-SPLICES: Sequence[Tuple[int, int]] = (
-    (300, 1500), (600, 2100), (900, 2700), (1200, 3000), (1800, 2400),
-)
+def splices(duration: float, count: int) -> List[Tuple[int, int]]:
+    """Pairs of passages far enough apart to be certainly different records.
+
+    Generated rather than listed, because a handful of hand-picked pairs is not
+    enough to tell a real improvement from a reshuffle. Judging the tempo term
+    on five splices showed a mean of 0.31s against 0.30s while individual cases
+    moved by up to 0.77s in both directions — which is to say it showed
+    nothing.
+
+    Each pair is separated by roughly half the set, and the pairs are spread
+    evenly, so no region dominates.
+    """
+    usable = duration - HALF
+    apart = usable / 2
+    out: List[Tuple[int, int]] = []
+    for i in range(count):
+        a = HALF + (usable - apart - HALF) * i / max(1, count - 1)
+        b = a + apart
+        if b + HALF <= duration:
+            out.append((int(a), int(b)))
+    return out
 
 
 def _spectral_only(features: FeatureSet) -> np.ndarray:
@@ -92,16 +109,17 @@ def _features_of(samples: np.ndarray) -> FeatureSet:
     return feats.finish()
 
 
-def measure_boundaries(audio: np.ndarray) -> None:
+def measure_boundaries(audio: np.ndarray, count: int = 5,
+                       quiet: bool = False) -> Tuple[List[float], List[float]]:
     total = len(audio) / SR
-    print(f"\nBoundary accuracy — cuts known to the sample\n")
-    print(f"  {'splice':>18} {'spectral only':>15} {'with harmony':>14}")
+    print(f"\nBoundary accuracy — {count} cuts known to the sample\n")
+    if not quiet:
+        print(f"  {'splice':>18} {'spectral only':>15} {'with harmony':>14}")
 
     before: List[float] = []
     after: List[float] = []
-    for a, b in SPLICES:
+    for a, b in splices(total, count):
         if b + HALF > total:
-            print(f"  {a:>6}s+{b:<6}s   skipped, set is only {total:.0f}s")
             continue
         clip = np.concatenate([audio[int(a * SR):int((a + HALF) * SR)],
                                audio[int(b * SR):int((b + HALF) * SR)]])
@@ -111,13 +129,18 @@ def measure_boundaries(audio: np.ndarray) -> None:
         new = abs(refine_boundary(features, novelty_curve(features), lo, hi) - HALF)
         before.append(old)
         after.append(new)
-        print(f"  {a:>6}s+{b:<6}s {old:14.2f}s {new:13.2f}s")
+        if not quiet:
+            print(f"  {a:>6}s+{b:<6}s {old:14.2f}s {new:13.2f}s")
 
     if not before:
         print("  Nothing measurable — the set is too short for these splices.")
-        return
+        return [], []
     print(f"\n  {'mean':>18} {np.mean(before):14.2f}s {np.mean(after):13.2f}s")
     print(f"  {'median':>18} {np.median(before):14.2f}s {np.median(after):13.2f}s")
+    print(f"  {'within 0.5s':>18} {sum(1 for x in before if x <= 0.5):13}/"
+          f"{len(before)} {sum(1 for x in after if x <= 0.5):12}/{len(after)}")
+    print(f"  {'worst':>18} {max(before):14.2f}s {max(after):13.2f}s")
+    return before, after
 
 
 def measure_placement(features: FeatureSet, segments: Sequence[Segment],
@@ -191,6 +214,12 @@ async def main() -> int:
     parser.add_argument("--boundaries", action="store_true")
     parser.add_argument("--placement", action="store_true")
     parser.add_argument("--segment-span", type=float, default=180.0)
+    parser.add_argument("--splices", type=int, default=5,
+                        help="How many spliced cuts to measure. Five is enough "
+                             "to see a large effect and not enough to judge a "
+                             "small one")
+    parser.add_argument("--quiet", action="store_true",
+                        help="Totals only, no per-splice rows")
     args = parser.parse_args()
 
     if not Path(args.audio).exists():
@@ -206,7 +235,7 @@ async def main() -> int:
         return 2
 
     if both or args.boundaries:
-        measure_boundaries(audio)
+        measure_boundaries(audio, args.splices, args.quiet)
     if both or args.placement:
         features = _features_of(audio)
         measure_placement(features, _even_segments(duration, args.segment_span))
