@@ -1117,3 +1117,143 @@ def test_a_set_analysed_before_chroma_existed_still_segments():
     assert old.chroma.shape == (12, 0)
     assert harmonic_novelty(old).size == 0
     assert novelty_curve(old).size == 500
+
+
+def _blended_features(duration: float, blends, sample_rate: int = 22050):
+    """A FeatureSet whose harmony is still except inside `blends`.
+
+    Built directly rather than from audio: this is about how a placement rule
+    reads a curve, and generating minutes of convincing music to produce one
+    would test the generator.
+    """
+    import numpy as np
+    from src.core.features import CHROMA_POOL, FeatureSet
+
+    hop = 512
+    rate = sample_rate / hop / CHROMA_POOL
+    m = int(duration * rate)
+    chroma = np.zeros((12, m), dtype=np.float32)
+    chroma[0] = 1.0                      # one chord, held
+    for start, end in blends:
+        for i in range(int(start * rate), min(m, int(end * rate))):
+            # A second record over the first: different pitch classes, so the
+            # harmony either side of any point inside differs.
+            chroma[(i // 3) % 12, i] = 1.0
+    frames = int(duration * sample_rate / hop)
+    return FeatureSet(
+        centroid=np.full(frames, 2000.0, dtype=np.float32),
+        rms=np.full(frames, 0.2, dtype=np.float32),
+        sample_rate=sample_rate, hop_length=hop, duration=duration,
+        chroma=chroma)
+
+
+def test_a_probe_steps_out_of_a_breakdown_it_would_have_landed_in():
+    """The scarcest thing in the system, no longer placed by arithmetic alone.
+
+    Probes already at 20 s and 280 s, so the widest gap in this segment is dead
+    centre — and dead centre is a breakdown, where the chords drop out and a
+    fingerprinter is handed almost nothing. The probe steps to the nearest
+    point that is still comfortably separated and where a record is playing.
+
+    Recorded before the change: the old rule puts it at exactly 150 s.
+    """
+    from src.core.segment import Segment, confirmation_times
+
+    segment = Segment(start=0, end=300, key="a::x", payload={},
+                      votes=1, probes=1, matched=1)
+    features = _blended_features(300.0, [(130.0, 170.0)])
+
+    blind = confirmation_times(segment, [20.0, 280.0], wanted=2)
+    aware = confirmation_times(segment, [20.0, 280.0], wanted=2,
+                               features=features)
+
+    assert blind == [150.0], f"fixture drifted: old rule gave {blind}"
+    assert aware, "stability cost a probe, which it must never do"
+    assert not 130.0 <= aware[0] <= 170.0, (
+        f"probe placed at {aware[0]:.1f}s, inside the breakdown at 130-170s")
+
+
+def test_stability_cannot_rescue_a_segment_that_is_mostly_blend():
+    """The limit of a tie-break, stated rather than discovered later.
+
+    Separation stays a hard constraint, so a probe can only move among
+    positions that are already well separated. When the blend covers all of
+    them — here it runs from 120 s to the end of a 200 s segment, with the
+    only other probe at the start — there is nowhere better to go and the
+    probe lands in it anyway.
+
+    That is the accepted cost of not letting stability veto a position: a
+    mediocre probe is visible, and a missing one reads as "weak evidence" for
+    a track nobody actually looked at.
+    """
+    from src.core.segment import Segment, confirmation_times
+
+    segment = Segment(start=0, end=200, key="a::x", payload={},
+                      votes=1, probes=1, matched=1)
+    features = _blended_features(200.0, [(120.0, 200.0)])
+
+    aware = confirmation_times(segment, [20.0], wanted=2, features=features)
+    assert aware and aware[0] >= 120.0, (
+        "the fixture no longer demonstrates the limit it documents")
+
+
+def test_stability_never_costs_a_probe():
+    """Independence is a constraint, not a preference.
+
+    A rule that returned fewer probes when it disliked the audio would surface
+    as "weak evidence" for a track we simply declined to look at — worse than
+    a mediocre position, because the mediocre position is visible and the
+    missing probe is not.
+    """
+    from src.core.segment import Segment, confirmation_times
+
+    features = _blended_features(300.0, [(40.0, 90.0), (150.0, 260.0)])
+    for end in (60.0, 90.0, 140.0, 200.0, 300.0):
+        for taken in ([], [10.0], [10.0, 55.0], [30.0, 120.0, 210.0]):
+            segment = Segment(start=0, end=end, key="a::x", payload={},
+                              votes=1, probes=1, matched=1)
+            blind = confirmation_times(segment, taken, wanted=3)
+            aware = confirmation_times(segment, taken, wanted=3,
+                                       features=features)
+            assert len(aware) >= len(blind), (
+                f"end={end} taken={taken}: {len(aware)} probes with features, "
+                f"{len(blind)} without")
+            for a in aware:
+                for b in taken + [x for x in aware if x != a]:
+                    assert abs(a - b) >= 6.0 - 1e-6, (
+                        f"probes at {a} and {b} are not independent")
+
+
+def test_placement_without_features_is_unchanged():
+    """Every existing caller and every cached FeatureSet takes this path."""
+    from src.core.segment import Segment, confirmation_times
+
+    cases = [
+        (Segment(start=0, end=240, key="a::x", payload={}, votes=1, probes=1,
+                 matched=1), [30.0], 3),
+        (Segment(start=100, end=160, key="a::x", payload={}, votes=1, probes=1,
+                 matched=1), [110.0], 2),
+        (Segment(start=0, end=40, key="a::x", payload={}, votes=1, probes=1,
+                 matched=1), [], 2),
+    ]
+    # Recorded by running the implementation that predates stability, not
+    # derived — the point is to catch a drift, and a value computed from the
+    # new rule would agree with it by construction.
+    expected = [[132.0, 234.0], [154.0], [6.0]]
+    for (segment, taken, wanted), want in zip(cases, expected):
+        assert confirmation_times(segment, taken, wanted) == want
+
+
+def test_a_set_with_no_chroma_places_probes_the_old_way():
+    """Every set analysed before 2026-08-30 has an empty chroma array."""
+    import numpy as np
+    from src.core.features import FeatureSet
+    from src.core.segment import Segment, confirmation_times
+
+    old = FeatureSet(centroid=np.full(4000, 2000.0, dtype=np.float32),
+                     rms=np.full(4000, 0.2, dtype=np.float32),
+                     sample_rate=22050, hop_length=512, duration=93.0)
+    segment = Segment(start=0, end=240, key="a::x", payload={},
+                      votes=1, probes=1, matched=1)
+    assert (confirmation_times(segment, [30.0], 3, features=old)
+            == confirmation_times(segment, [30.0], 3))

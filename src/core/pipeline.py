@@ -14,7 +14,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ..identify.base import Identifier, TrackMatch
 from . import audio as audio_io
-from .features import StreamingFeatures, estimate_bpm, estimate_key
+from .features import (FeatureSet, StreamingFeatures, estimate_bpm,
+                       estimate_key)
 from .segment import (ProbeResult, Segment, auto_interval, auto_min_segment,
                       coalesce, confirmation_times, drop_unsupported,
                       grid_probes, merge_probes, spectral_boundaries)
@@ -215,7 +216,7 @@ class Pipeline:
 
         # ── Stage 4: confirm the thin ones ────────────────────────────────
         segments = await self._confirm_segments(path, segments, results, report,
-                                                min_segment)
+                                                min_segment, features)
 
         # Before the boundaries are refined: a segment the probe did not
         # really hear should not have one placed around it.
@@ -477,7 +478,9 @@ class Pipeline:
 
     async def _confirm_segments(self, path: str, segments: List[Segment],
                                 probes: List[ProbeResult], report: ProgressFn,
-                                min_segment: float) -> List[Segment]:
+                                min_segment: float,
+                                features: Optional[FeatureSet] = None
+                                ) -> List[Segment]:
         """Re-probe segments that rest on too little evidence.
 
         A track found by a single probe reports 100% agreement, because it
@@ -503,7 +506,8 @@ class Pipeline:
             if not segment.identified:
                 continue                # nothing to confirm; a gap is a gap
             for t in confirmation_times(segment, probed_at, wanted,
-                                         self.config.probe_duration):
+                                         self.config.probe_duration,
+                                         features=features):
                 plan.append((index, t))
 
         if not plan:
