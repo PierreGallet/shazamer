@@ -22,8 +22,12 @@ SLSKD_DOWNLOADS = Path(os.environ.get("SLSKD_DOWNLOADS_DIR", "/downloads"))
 
 # Rejecting a mismatched file is the default: a wrong record filed under the
 # right name is worse than no record, because it is found out at the decks.
+# Off. The fingerprint labels a download; it does not decide whether you may
+# have it. You asked for the file and Soulseek delivered it — refusing to
+# hand it over on the strength of twelve seconds of audio is this program
+# overruling its user about their own download.
 REQUIRE_VERIFICATION = os.environ.get("ACQUIRE_REQUIRE_VERIFICATION",
-                                      "true").lower() != "false"
+                                      "false").lower() == "true"
 
 
 async def rank_candidates(artist: str, title: str, limit: int = 5,
@@ -207,8 +211,18 @@ async def acquire_track(library, destination: Path, track_key: str,
             require_verification=REQUIRE_VERIFICATION,
         )
 
-        await note("ready",
-                   "Ready" if acquired.verified else "Ready (unverified)",
+        # Ready either way. The fingerprint's verdict rides along in the
+        # message, because "this sounds like a mix of three other records" is
+        # worth knowing before you load it — and worth nothing if it stops you
+        # having the file you asked for.
+        if acquired.verified:
+            message = "Ready"
+        elif acquired.verified_as:
+            message = f"Ready — but this sounds like {acquired.verified_as}"
+        else:
+            message = "Ready — could not confirm what this is"
+
+        await note("ready", message,
                    local_path=str(acquired.path),
                    verified=1 if acquired.verified else 0, progress=100)
         logger.info("Acquired %s - %s -> %s", artist, title, acquired.path.name)

@@ -135,12 +135,26 @@ def tag(path: Path, meta: Dict[str, Any]) -> bool:
 async def collect(source: Path, destination_dir: Path, artist: str, title: str,
                   identifier=None, expected_key: str = "",
                   meta: Optional[Dict[str, Any]] = None,
-                  require_verification: bool = True) -> AcquiredFile:
-    """Verify, name, tag and file a downloaded track.
+                  require_verification: bool = False) -> AcquiredFile:
+    """Name, tag and file a downloaded track, saying what it sounds like.
 
-    `require_verification` decides what happens to a file whose fingerprint
-    does not match. Rejecting is the default: a wrong file filed under the
-    right name is worse than no file, because it is discovered at the decks.
+    The fingerprint is a **label, not a gate**. It used to reject: a file
+    whose audio did not match the name it was fetched under was deleted and
+    reported as a failure.
+
+    That was wrong, and for a reason worth writing down. You asked for the
+    file, Soulseek gave you the file, and then this refused to hand it over on
+    the strength of twelve seconds of audio and its own opinion. Being right
+    about the content does not make it right to decide on your behalf — and it
+    was not always right either: one probe at a fixed offset rejected files
+    whose opening or breakdown happens not to fingerprint.
+
+    So the check still runs and its verdict is recorded, because "this is
+    actually a DJ mix somebody labelled as one track" is worth knowing. It no
+    longer stops you having the file.
+
+    `require_verification` stays for a caller that genuinely wants the old
+    behaviour, off by default.
     """
     if not source.exists():
         raise FileNotFoundError(f"slskd reported a file that is not there: {source}")
@@ -149,20 +163,9 @@ async def collect(source: Path, destination_dir: Path, artist: str, title: str,
     if identifier is not None and expected_key:
         verified, actually = await verify(source, identifier, expected_key)
         if not verified and require_verification:
-            # The comparison is on keys, so the message has to be too when
-            # they disagree while reading the same. Otherwise it says "the
-            # file is Alan Dixon — Acid Drop, not Alan Dixon — Acid Drop",
-            # which sounds like a bug in the check rather than a mismatch it
-            # correctly found.
             heard = actually or "unrecognisable"
-            detail = (f"The file is {heard}, not {artist} — {title}."
-                      if heard.lower() != f"{artist} — {title}".lower()
-                      else f"The file identifies as {heard}, which does not "
-                           f"match the track this was queued for "
-                           f"({expected_key}).")
             raise VerificationFailed(
-                f"{detail} Soulseek filenames are whatever the uploader "
-                f"typed, so this one was wrong."
+                f"The file sounds like {heard}, not {artist} — {title}."
             )
 
     destination_dir.mkdir(parents=True, exist_ok=True)

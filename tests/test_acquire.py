@@ -187,21 +187,36 @@ async def test_a_verified_file_is_renamed_and_tagged(audio_file, tmp_path):
     assert tags["date"] == ["2018"]
 
 
-async def test_a_mislabelled_file_is_refused(audio_file, tmp_path):
-    """Soulseek filenames are whatever the uploader typed.
+async def test_a_mislabelled_file_is_kept_and_labelled(audio_file, tmp_path):
+    """The fingerprint labels a download; it does not decide you may have it.
 
-    A wrong record filed under the right name is worse than no record: it is
-    found out at the decks.
+    This used to raise and delete the file. That was the program overruling
+    its user about a file they asked for and Soulseek delivered, on the
+    strength of twelve seconds of audio — and it was not reliably right
+    either, since plenty of a record fingerprints as nothing.
+
+    So the verdict is recorded and the file is kept.
     """
+    got = await collect(
+        audio_file, tmp_path / "out", "Skee Mask", "Rev8617",
+        identifier=StubIdentifier("Rick Astley", "Never Gonna Give You Up"),
+        expected_key=normalize_key("Skee Mask", "Rev8617"),
+    )
+
+    assert got.path.exists(), "the file was thrown away"
+    assert got.verified is False, "a mismatch must still be recorded"
+
+
+async def test_the_old_gate_is_still_available(audio_file, tmp_path):
+    """Kept for a caller that genuinely wants a refusal, off by default."""
     with pytest.raises(VerificationFailed) as raised:
         await collect(
             audio_file, tmp_path / "out", "Skee Mask", "Rev8617",
             identifier=StubIdentifier("Rick Astley", "Never Gonna Give You Up"),
             expected_key=normalize_key("Skee Mask", "Rev8617"),
+            require_verification=True,
         )
-
     assert "Rick Astley" in str(raised.value)
-    assert not (tmp_path / "out").exists() or not any((tmp_path / "out").iterdir())
 
 
 async def test_verification_can_be_waived(audio_file, tmp_path):
@@ -638,3 +653,82 @@ async def test_a_failure_keeps_its_reason(tmp_path, monkeypatch):
     assert "Downloading" not in row["message"], (
         f"the reason was overwritten by a progress write: {row['message']!r}")
     assert "not under" in row["message"], row["message"]
+
+
+async def test_the_download_is_always_yours_to_save(tmp_path, monkeypatch):
+    """A fetched file must always end up saveable, whatever it sounds like.
+
+    Reported from use: a download that completed was refused at the last step
+    because the fingerprint disagreed with the filename, and there was no way
+    to take it anyway. The file existed, on the server, and the program would
+    not hand it over.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    from src.acquire import runner as runner_module
+    from src.acquire.runner import acquire_track
+    from src.acquire.slskd import Candidate, SlskdClient
+    from src.identify.base import TrackMatch
+    from src.store.library import Library
+
+    library = Library(tmp_path / "lib.db")
+    key = "andre zimmer::the quest"
+    download_id = await library.start_download(key, "Andre Zimmer", "The Quest",
+                                               user_id="u1")
+
+    fetched = tmp_path / "slskd" / "Andre Zimmer - The Quest.wav"
+    fetched.parent.mkdir()
+    t = np.linspace(0, 60.0, 44100 * 60, endpoint=False)
+    sf.write(str(fetched), (0.2 * np.sin(2 * np.pi * 220 * t)).astype("float32"),
+             44100)
+    monkeypatch.setattr(runner_module, "SLSKD_DOWNLOADS", fetched.parent)
+
+    candidate = Candidate(
+        username="peer", filename="@@p\\x\\Andre Zimmer - The Quest.wav",
+        size=fetched.stat().st_size, extension="wav", bitrate=320,
+        sample_rate=None, bit_depth=None, length=60, queue_length=0,
+        free_slot=True, upload_speed=1, score=1.0)
+
+    class Disagrees:
+        """Names something else, as Shazam did on the real file."""
+        name = "stub"
+
+        async def identify(self, _wav):
+            return TrackMatch(title="C Sharp", artist="The Quest",
+                              provider="stub")
+
+    class StubClient(SlskdClient):
+        def __init__(self):
+            super().__init__(base_url="http://stub", api_key="k")
+
+        async def _request(self, method, path, **kwargs):
+            if method == "POST" and path == "/searches":
+                return {"id": "s1"}
+            if path.startswith("/searches"):
+                return {"state": "Completed", "responseCount": 1, "responses": [{
+                    "username": "peer", "hasFreeUploadSlot": True,
+                    "uploadSpeed": 1, "queueLength": 0,
+                    "files": [{"filename": candidate.filename,
+                               "size": candidate.size, "bitRate": 320,
+                               "length": 60}]}]}
+            if path.startswith("/transfers/downloads"):
+                if method == "POST":
+                    return {"queued": True}
+                return [{"username": "peer", "directories": [{"files": [{
+                    "filename": candidate.filename,
+                    "state": "Completed, Succeeded", "percentComplete": 100,
+                    "bytesTransferred": candidate.size, "size": candidate.size,
+                    "averageSpeed": 1, "localPath": str(fetched)}]}]}]
+            return {}
+
+    row = await acquire_track(
+        library, tmp_path / "out", key, "Andre Zimmer", "The Quest",
+        download_id=download_id, client=StubClient(), identifier=Disagrees())
+
+    assert row["status"] == "ready", (
+        f"a completed download was refused: {row['message']}")
+    assert row["available"], "the file is not there to save"
+    assert row["verified"] is False, "the disagreement was not recorded"
+    assert "The Quest" in row["message"], (
+        f"the message does not say what it sounds like: {row['message']!r}")
