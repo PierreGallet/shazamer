@@ -395,6 +395,22 @@ export const api = {
 
   recurring: (minSets = 2) =>
     request<LibraryTrack[]>(`/api/library/recurring?min_sets=${minSets}`),
+  /** Say whether an identification is right or wrong.
+   *
+   *  Both verdicts, because only one of them is not data: a rule that drops
+   *  every wrong answer also drops some right ones, and with no right ones
+   *  recorded there is no way to see that it did. */
+  rateTrack: (setId: string, position: number, verdict: "right" | "wrong") =>
+    request<{ recorded: boolean; verdict: string }>(
+      `/api/sets/${setId}/tracks/${position}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ verdict }),
+      }),
+
+  setFeedback: (setId: string) =>
+    request<Record<string, "right" | "wrong">>(`/api/sets/${setId}/feedback`),
+
   /** Which of your sets a record turns up in, and when. */
   appearances: (key: string) =>
     request<Array<{

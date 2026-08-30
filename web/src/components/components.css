@@ -642,3 +642,9 @@
   padding-top: 0.6rem; margin-top: 0.5rem;
   border-top: 1px solid var(--line);
 }
+
+/* A verdict on an identification. Muted until given, so the row is not two
+   loud opinions waiting to be had — most tracks never get judged, and the
+   ones that do are the interesting ones. */
+.btn-icon.good { color: var(--ok, #4ade80); background: rgba(74, 222, 128, 0.12); }
+.btn-icon.bad { color: var(--crit, #ff6b5a); background: rgba(255, 107, 90, 0.12); }

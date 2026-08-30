@@ -127,6 +127,37 @@ CREATE TABLE IF NOT EXISTS crate (
     PRIMARY KEY (track_key, user_id)
 );
 
+-- What a human said about an identification.
+--
+-- Both verdicts, not only the rejections. A pile of "this is wrong" cannot
+-- measure a rule: any rule that kills every wrong answer also kills some
+-- right ones, and without the right ones recorded there is no way to see it.
+-- The one useful piece of feedback this project has had worked precisely
+-- because it named which findings were good as well as which were invented.
+--
+-- The segment's measurable properties are frozen here at the moment of the
+-- verdict. Re-analysing the set changes them, and a label attached to numbers
+-- that have since moved is worse than no label.
+CREATE TABLE IF NOT EXISTS track_feedback (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       TEXT NOT NULL DEFAULT '',
+    set_id        TEXT NOT NULL,
+    position      INTEGER NOT NULL,
+    track_key     TEXT DEFAULT '',
+    verdict       TEXT NOT NULL,          -- 'right' or 'wrong'
+    -- The features a rule could be built on, as they were.
+    span          REAL DEFAULT 0,
+    start         REAL DEFAULT 0,
+    strength      TEXT DEFAULT '',
+    confidence    REAL DEFAULT 0,
+    set_duration  REAL DEFAULT 0,
+    note          TEXT DEFAULT '',
+    created_at    TEXT NOT NULL,
+    UNIQUE (user_id, set_id, position)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_verdict ON track_feedback(verdict);
+
 -- An invitation to take a copy of a set.
 --
 -- A copy, not a view: the recipient gets their own set with their own stars
@@ -852,6 +883,75 @@ class Library:
             return None
         return {"artist": row["artist"] or "", "title": row["title"] or "",
                 "isrc": row["isrc"] or ""}
+
+    # ── Feedback on an identification ────────────────────────────────────
+
+    async def record_feedback(self, set_id: str, position: int, verdict: str,
+                              *, user_id: str, note: str = "") -> bool:
+        """Record that a human called an identification right or wrong.
+
+        Stores the segment's measurable properties alongside the verdict, so a
+        rule can be tested against them later. Re-analysing the set moves those
+        numbers, and a label attached to numbers that have since changed is
+        worse than no label.
+
+        Replaces an earlier verdict on the same track: people change their
+        minds, and two contradictory labels on one segment is not data.
+        """
+        if verdict not in ("right", "wrong"):
+            return False
+        return await self._run(self._record_feedback_sync, set_id, position,
+                               verdict, user_id, note)
+
+    def _record_feedback_sync(self, set_id: str, position: int, verdict: str,
+                              user_id: str, note: str) -> bool:
+        with closing(self._connect()) as conn:
+            track = conn.execute(
+                "SELECT t.track_key, t.start, t.end, t.strength, t.confidence,"
+                " s.duration"
+                " FROM tracks t JOIN sets s ON s.id = t.set_id"
+                " WHERE t.set_id = ? AND t.position = ? AND s.user_id = ?",
+                (set_id, position, user_id)).fetchone()
+            if track is None:
+                return False
+            conn.execute(
+                "INSERT INTO track_feedback (user_id, set_id, position,"
+                " track_key, verdict, span, start, strength, confidence,"
+                " set_duration, note, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+                " ON CONFLICT(user_id, set_id, position) DO UPDATE SET"
+                " verdict = excluded.verdict, note = excluded.note,"
+                " created_at = excluded.created_at",
+                (user_id, set_id, position, track["track_key"], verdict,
+                 round(track["end"] - track["start"], 3), track["start"],
+                 track["strength"] or "", track["confidence"] or 0,
+                 track["duration"] or 0, note, _now()))
+            conn.commit()
+            return True
+
+    async def feedback_for(self, set_id: str, *,
+                           user_id: str) -> Dict[int, str]:
+        """Verdicts already given on this set, by track position."""
+        return await self._run(self._feedback_for_sync, set_id, user_id)
+
+    def _feedback_for_sync(self, set_id: str, user_id: str) -> Dict[int, str]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT position, verdict FROM track_feedback"
+                " WHERE set_id = ? AND user_id = ?",
+                (set_id, user_id)).fetchall()
+        return {r["position"]: r["verdict"] for r in rows}
+
+    async def all_feedback(self) -> List[Dict[str, Any]]:
+        """Every label, for measuring a rule against. Unscoped deliberately —
+        this is for offline analysis, not for a request path."""
+        return await self._run(self._all_feedback_sync)
+
+    def _all_feedback_sync(self) -> List[Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT * FROM track_feedback ORDER BY created_at").fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
 
     # ── Sharing ──────────────────────────────────────────────────────────
 

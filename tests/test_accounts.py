@@ -483,3 +483,73 @@ async def test_a_recurring_track_can_be_traced_to_its_sets(library):
 
     # And it stays each person's own signal.
     assert len(await library.appearances("a::x", user_id="bob")) == 1
+
+
+async def test_a_verdict_freezes_the_numbers_it_was_given_about(library):
+    """A label attached to figures that have since moved is worse than none.
+
+    Re-analysing a set changes every segment's span, strength and confidence.
+    If the label pointed at the row rather than at the numbers, the dataset
+    would quietly rewrite itself and any rule measured against it would be
+    measured against the present rather than against what was judged.
+    """
+    payload = {"duration": 58.4, "waveform": [], "stats": {}, "tracks": [
+        {"index": 1, "start": 0, "end": 8.3, "identified": True,
+         "key": "a::x", "title": "X", "artist": "A", "strength": "weak",
+         "confidence": 1.0},
+        {"index": 2, "start": 8.3, "end": 14.3, "identified": True,
+         "key": "b::y", "title": "Y", "artist": "B", "strength": "weak",
+         "confidence": 1.0}]}
+    await library.save_set("s1", "A reel", payload, user_id="alice")
+
+    assert await library.record_feedback("s1", 1, "right", user_id="alice")
+    assert await library.record_feedback("s1", 2, "wrong", user_id="alice")
+
+    labels = await library.all_feedback()
+    assert {r["verdict"] for r in labels} == {"right", "wrong"}
+    good = next(r for r in labels if r["verdict"] == "right")
+    assert good["span"] == pytest.approx(8.3), "the span was not captured"
+    assert good["set_duration"] == pytest.approx(58.4)
+
+    # Re-analysed with different spans: the stored labels do not move.
+    payload["tracks"][0]["end"] = 30.0
+    await library.save_set("s1", "A reel", payload, user_id="alice")
+    still = next(r for r in await library.all_feedback()
+                 if r["verdict"] == "right")
+    assert still["span"] == pytest.approx(8.3)
+
+
+async def test_changing_your_mind_replaces_the_verdict(library):
+    """Two contradictory labels on one segment is not data."""
+    payload = {"duration": 60.0, "waveform": [], "stats": {}, "tracks": [
+        {"index": 1, "start": 0, "end": 60, "identified": True,
+         "key": "a::x", "title": "X", "artist": "A"}]}
+    await library.save_set("s1", "Set", payload, user_id="alice")
+
+    await library.record_feedback("s1", 1, "wrong", user_id="alice")
+    await library.record_feedback("s1", 1, "right", user_id="alice")
+
+    labels = await library.all_feedback()
+    assert len(labels) == 1
+    assert labels[0]["verdict"] == "right"
+
+
+async def test_a_verdict_on_someone_else_s_set_is_refused(library):
+    payload = {"duration": 60.0, "waveform": [], "stats": {}, "tracks": [
+        {"index": 1, "start": 0, "end": 60, "identified": True,
+         "key": "a::x", "title": "X", "artist": "A"}]}
+    await library.save_set("s1", "Theirs", payload, user_id="bob")
+
+    assert await library.record_feedback("s1", 1, "wrong",
+                                         user_id="alice") is False
+    assert await library.all_feedback() == []
+
+
+async def test_an_invented_verdict_is_refused(library):
+    payload = {"duration": 60.0, "waveform": [], "stats": {}, "tracks": [
+        {"index": 1, "start": 0, "end": 60, "identified": True,
+         "key": "a::x", "title": "X", "artist": "A"}]}
+    await library.save_set("s1", "Set", payload, user_id="alice")
+
+    assert await library.record_feedback("s1", 1, "maybe",
+                                         user_id="alice") is False

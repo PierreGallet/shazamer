@@ -16,8 +16,8 @@ from ..identify.base import Identifier, TrackMatch
 from . import audio as audio_io
 from .features import StreamingFeatures, estimate_bpm, estimate_key
 from .segment import (ProbeResult, Segment, auto_interval, auto_min_segment,
-                      coalesce, confirmation_times, grid_probes, merge_probes,
-                      spectral_boundaries)
+                      coalesce, confirmation_times, drop_unsupported,
+                      grid_probes, merge_probes, spectral_boundaries)
 from .timecode import format_timestamp
 
 logger = logging.getLogger(__name__)
@@ -216,6 +216,12 @@ class Pipeline:
         # ── Stage 4: confirm the thin ones ────────────────────────────────
         segments = await self._confirm_segments(path, segments, results, report,
                                                 min_segment)
+
+        # Before the boundaries are refined: a segment the probe did not
+        # really hear should not have one placed around it.
+        segments = coalesce(
+            drop_unsupported(segments, self.config.probe_duration),
+            min_segment)
 
         # ── Stage 5: find the boundaries by asking ────────────────────────
         segments = await self._bisect_boundaries(path, segments, report)

@@ -19,6 +19,8 @@ interface Props {
   onSelect: (index: number) => void;
   /** Called just before a reference excerpt starts, so the set can be paused. */
   onPreviewStart?: () => void;
+  /** The set these tracks belong to, so a verdict can be recorded. */
+  setId?: string;
 }
 
 export default function TrackList(props: Props) {
@@ -27,6 +29,46 @@ export default function TrackList(props: Props) {
   // Which row is playing its excerpt, so only that one shows a scrubber and
   // starting one stops the rest.
   const [previewKey, setPreviewKey] = createSignal<string | null>(null);
+
+  /**
+   * Verdicts on the identifications, by track position.
+   *
+   * They do not change the tracklist — nothing here can correct Shazam. What
+   * they buy is a labelled set of segments, so a heuristic can be measured
+   * against real cases instead of guessed at. The one rule this project has
+   * that was not a guess came from exactly six of these.
+   */
+  const [rated, setRated] = createSignal<Record<number, "right" | "wrong">>({});
+
+  createEffect(() => {
+    const id = props.setId;
+    if (!id) return;
+    void api.setFeedback(id).then((got) => {
+      const byPosition: Record<number, "right" | "wrong"> = {};
+      for (const [position, verdict] of Object.entries(got)) {
+        byPosition[Number(position)] = verdict;
+      }
+      setRated(byPosition);
+    }).catch(() => {});
+  });
+
+  async function rate(track: Track, verdict: "right" | "wrong",
+                      event: MouseEvent) {
+    event.stopPropagation();
+    const id = props.setId;
+    if (!id) return;
+    // Clicking the verdict already given takes it back, so a misclick is one
+    // click to undo rather than a label that has to be believed.
+    const next = rated()[track.index] === verdict ? undefined : verdict;
+    setRated({ ...rated(), [track.index]: next as "right" | "wrong" });
+    if (next) {
+      try {
+        await api.rateTrack(id, track.index, next);
+      } catch {
+        setRated({ ...rated(), [track.index]: undefined as never });
+      }
+    }
+  }
 
   /**
    * Keep the playing row in view.
@@ -163,14 +205,17 @@ export default function TrackList(props: Props) {
                     {track.camelot}
                   </span>
                 </Show>
-                <Show when={track.identified && track.strength &&
-                            track.strength !== "strong"}>
-                  {/* Only the shaky ones are flagged. Marking every track
-                      would turn the signal into wallpaper — what a digger
-                      needs to see is which findings not to trust. */}
+                <Show when={track.identified && track.strength}>
+                  {/* Every identified track carries its confidence, including
+                      the solid ones. Flagging only the shaky ones left the
+                      rest ambiguous: an unmarked row could be well-evidenced
+                      or simply old, and on a set where three findings in six
+                      were invented, knowing which three are solid matters as
+                      much as knowing which are not. */}
                   <span
                     class="chip"
                     classList={{
+                      "chip-key": track.strength === "strong",
                       "chip-warn": track.strength === "medium",
                       "chip-crit": track.strength === "weak",
                     }}
@@ -184,13 +229,45 @@ export default function TrackList(props: Props) {
                           "fails on breakdowns and unreleased passages."
                     }
                   >
-                    {track.strength === "weak" ? "unsure" : "likely"}
+                    {track.strength === "weak" ? "unsure"
+                      : track.strength === "medium" ? "likely" : "solid"}
                   </span>
                 </Show>
               </div>
 
               <div class="track-actions" onClick={(e) => e.stopPropagation()}>
                 <Show when={track.identified}>
+                  {/* Right or wrong. Not to fix the tracklist — nothing here
+                      can correct Shazam — but so a heuristic can be measured
+                      against real cases. Shown only where there is a claim to
+                      judge. */}
+                  <Show when={props.setId && track.identified}>
+                    <button
+                      class="btn-icon"
+                      classList={{ good: rated()[track.index] === "right" }}
+                      title="This identification is right"
+                      onClick={(e) => rate(track, "right", e)}
+                    >
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+                           stroke="currentColor" stroke-width="2.4"
+                           stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 12.5l5 5L20 6.5" />
+                      </svg>
+                    </button>
+                    <button
+                      class="btn-icon"
+                      classList={{ bad: rated()[track.index] === "wrong" }}
+                      title="This is not the right track"
+                      onClick={(e) => rate(track, "wrong", e)}
+                    >
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+                           stroke="currentColor" stroke-width="2.4"
+                           stroke-linecap="round">
+                        <path d="M6 6l12 12M18 6L6 18" />
+                      </svg>
+                    </button>
+                  </Show>
+
                   <PreviewButton
                     trackKey={track.key}
                     onStart={() => {

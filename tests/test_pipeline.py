@@ -905,3 +905,68 @@ async def test_a_probe_reports_when_the_music_played_not_when_reading_began():
     # asked about the whole file rather than stopping six seconds short.
     assert result.tracks[-1].end == pytest.approx(120.0, abs=0.5)
     assert seen, "no probes were made"
+
+
+def test_a_segment_shorter_than_the_probe_window_is_not_evidence():
+    """A probe hears twelve seconds. A three-second segment is not what it heard.
+
+    From a reported reel whose real contents were known. Every invented
+    finding sat under half a probe window; every real one above two thirds:
+
+        8.3s (70%) real · 6.0s (50%) invented · 20.8s (173%) real
+        5.0s (42%) invented · 3.4s (28%) invented · 14.9s (124%) real
+
+    The reason, not the threshold, is what makes this worth acting on: when a
+    segment is shorter than the window, most of what the fingerprinter heard
+    lies outside it, so the name is evidence about the neighbours.
+    """
+    from src.core.segment import Segment, drop_unsupported
+
+    reel = [
+        Segment(start=0, end=8.3, key="zimmer::quest", payload={"title": "Q"},
+                votes=1, probes=1, matched=1),
+        Segment(start=8.3, end=14.3, key="loud::body", payload={"title": "B"},
+                votes=1, probes=1, matched=1),
+        Segment(start=14.3, end=35.1, key="atst::golden", payload={"title": "G"},
+                votes=3, probes=3, matched=3),
+        Segment(start=35.1, end=40.1, key="sellens::back", payload={"title": "B"},
+                votes=1, probes=1, matched=1),
+        Segment(start=40.1, end=43.5, key="tanya::deep", payload={"title": "D"},
+                votes=1, probes=1, matched=1),
+        Segment(start=43.5, end=58.4, key="jansons::boxed", payload={"title": "X"},
+                votes=2, probes=2, matched=2),
+    ]
+    kept = [s.key for s in drop_unsupported(reel, probe_duration=12.0)]
+
+    assert kept == ["zimmer::quest", None, "atst::golden", None, None,
+                    "jansons::boxed"], kept
+
+
+def test_two_probes_agreeing_survive_however_short_the_segment():
+    """Six data points is not a law, so corroboration overrides the rule.
+
+    A stretch two independent probes name the same way is a real finding
+    whatever its length, and deleting one would be worse than leaving a wrong
+    label on screen — a wrong label is visible and a deletion is not.
+    """
+    from src.core.segment import Segment, drop_unsupported
+
+    short_but_corroborated = Segment(
+        start=0, end=4.0, key="a::x", payload={"title": "X"},
+        votes=2, probes=2, matched=2)
+    kept = drop_unsupported([short_but_corroborated], probe_duration=12.0)
+    assert kept[0].key == "a::x"
+
+
+def test_a_normal_set_is_untouched():
+    """Tracks run minutes; the rule must never fire there."""
+    from src.core.segment import Segment, drop_unsupported
+
+    set_segments = [
+        Segment(start=0, end=300, key="a::x", payload={"title": "X"},
+                votes=1, probes=1, matched=1),
+        Segment(start=300, end=480, key="b::y", payload={"title": "Y"},
+                votes=1, probes=1, matched=1),
+    ]
+    kept = [s.key for s in drop_unsupported(set_segments, probe_duration=12.0)]
+    assert kept == ["a::x", "b::y"]

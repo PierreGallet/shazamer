@@ -308,6 +308,7 @@ export default function SetView(props: Props) {
                    that makes this check useless, so starting one stops the
                    other. */
                 onPreviewStart={() => audio()?.pause()}
+                setId={props.setId}
               />
             </div>
 

@@ -1264,6 +1264,45 @@ async def stream_track_preview(track_key: str,
     )
 
 
+class FeedbackRequest(BaseModel):
+    verdict: str                       # "right" or "wrong"
+    note: Optional[str] = None
+
+
+@app.post("/api/sets/{set_id}/tracks/{position}/feedback")
+async def track_feedback(set_id: str, position: int,
+                         request: FeedbackRequest,
+                         user: Dict[str, Any] = Depends(current_user)):
+    """Say whether an identification is right or wrong.
+
+    Both verdicts, because only one of them is not data. A rule that kills
+    every wrong answer also kills some right ones, and without the right ones
+    recorded there is no way to see that it did.
+
+    This does not change the tracklist. Nothing here can correct Shazam — the
+    identification is theirs. What a verdict does is make our own heuristics
+    measurable: the one piece of feedback this project has had proved that
+    every invented match sat under half a probe window, and that became a
+    rule. Labels are how the next one gets found rather than guessed.
+    """
+    if request.verdict not in ("right", "wrong"):
+        raise HTTPException(status_code=400,
+                            detail="verdict must be 'right' or 'wrong'")
+    ok = await library.record_feedback(
+        set_id, position, request.verdict, user_id=user["id"],
+        note=(request.note or "")[:500])
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such track in that set")
+    return {"recorded": True, "verdict": request.verdict}
+
+
+@app.get("/api/sets/{set_id}/feedback")
+async def set_feedback(set_id: str,
+                       user: Dict[str, Any] = Depends(current_user)):
+    """Verdicts already given on this set, so the interface can show them."""
+    return await library.feedback_for(set_id, user_id=user["id"])
+
+
 @app.get("/api/library/appearances")
 async def track_appearances(key: str,
                             user: Dict[str, Any] = Depends(current_user)):

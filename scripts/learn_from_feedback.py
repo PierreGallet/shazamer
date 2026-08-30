@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""What the verdicts say about which identifications to trust.
+
+This reproduces, from stored labels, the thing that actually improved the
+algorithm once: a person said which findings on one set were real and which
+were invented, the segments' properties were laid side by side, and the
+difference between the two groups turned out to be obvious. That difference
+became a rule.
+
+It found this, on a fifty-eight second reel:
+
+    span    share of a 12s probe window   verdict
+     8.3s              70%                real
+     6.0s              50%                invented
+    20.8s             173%                real
+     5.0s              42%                invented
+     3.4s              28%                invented
+    14.9s             124%                real
+
+Every invented answer sat under half a probe window. A segment shorter than
+the window is named on evidence that is mostly about its neighbours, so the
+name is not evidence about the segment — which is a reason, not a fitted
+threshold, and that is why it was worth acting on.
+
+What this does NOT do is retrain anything. The identification is Shazam's and
+cannot be corrected from here. What labels buy is the ability to *measure* our
+own heuristics instead of guessing at them.
+
+    python scripts/learn_from_feedback.py
+    python scripts/learn_from_feedback.py --probe-window 12
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import sys
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Sequence, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.store.library import Library  # noqa: E402
+
+
+def _summarise(values: Sequence[float]) -> str:
+    if not values:
+        return "—"
+    ordered = sorted(values)
+    middle = ordered[len(ordered) // 2]
+    return f"{min(ordered):.2f} … {middle:.2f} … {max(ordered):.2f}"
+
+
+def _separation(right: Sequence[float], wrong: Sequence[float]) -> float:
+    """How cleanly a feature splits the two groups, 0 to 1.
+
+    The share of (right, wrong) pairs that are the right way round — which is
+    the area under the ROC curve, computed the plain way because these are
+    tens of points, not millions. 1.0 means every real finding scores above
+    every invented one; 0.5 means the feature says nothing.
+    """
+    if not right or not wrong:
+        return 0.5
+    wins = sum(1 for r in right for w in wrong if r > w)
+    ties = sum(1 for r in right for w in wrong if r == w)
+    return (wins + 0.5 * ties) / (len(right) * len(wrong))
+
+
+def _best_threshold(right: Sequence[float],
+                    wrong: Sequence[float]) -> Tuple[float, int, int]:
+    """A cut that keeps the real findings and drops the invented ones.
+
+    Returns (threshold, real kept, invented dropped). Chosen to lose no real
+    finding first, and only then to drop as many invented ones as it can:
+    deleting somebody's correct track is a worse failure than leaving a wrong
+    one on screen, because the wrong one is visible and the deletion is not.
+    """
+    if not right or not wrong:
+        return 0.0, len(right), 0
+    best = (min(right), len(right), 0)
+    for cut in sorted(set(list(right) + list(wrong))):
+        kept = sum(1 for r in right if r >= cut)
+        dropped = sum(1 for w in wrong if w < cut)
+        if kept == len(right) and dropped > best[2]:
+            best = (cut, kept, dropped)
+    return best
+
+
+async def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data-dir", default=None)
+    parser.add_argument("--probe-window", type=float, default=12.0,
+                        help="Seconds the fingerprinter is handed")
+    args = parser.parse_args()
+
+    root = Path(args.data_dir) if args.data_dir else Path("data")
+    library = Library(root / "library.db")
+    labels = await library.all_feedback()
+
+    if not labels:
+        print("No verdicts recorded yet.")
+        print("Mark a few tracks right or wrong on a set you know, then run "
+              "this again.")
+        return 0
+
+    right = [r for r in labels if r["verdict"] == "right"]
+    wrong = [r for r in labels if r["verdict"] == "wrong"]
+    print(f"{len(labels)} verdict(s): {len(right)} real, {len(wrong)} invented,"
+          f" across {len({r['set_id'] for r in labels})} set(s)")
+
+    if not right or not wrong:
+        # Said plainly rather than producing a confident-looking table from
+        # one side of the question.
+        missing = "invented" if right else "real"
+        print(f"\nOnly one kind of verdict so far. Nothing can be measured "
+              f"until some findings are marked {missing} too — a rule that "
+              f"drops every wrong answer also drops some right ones, and with "
+              f"no right ones recorded there is no way to see that it did.")
+        return 0
+
+    features: Dict[str, Callable[[Dict[str, Any]], float]] = {
+        "span (s)": lambda r: float(r["span"] or 0),
+        "span / probe window": lambda r: float(r["span"] or 0) / args.probe_window,
+        "span / set length": lambda r: (float(r["span"] or 0)
+                                        / max(float(r["set_duration"] or 1), 1)),
+        "confidence": lambda r: float(r["confidence"] or 0),
+        "strength rank": lambda r: {"weak": 1.0, "medium": 2.0,
+                                    "strong": 3.0}.get(r["strength"] or "", 0.0),
+        "start (s)": lambda r: float(r["start"] or 0),
+    }
+
+    print(f"\n{'feature':22} {'real':>22} {'invented':>22}   sep   rule")
+    ranked: List[Tuple[float, str, str]] = []
+    for name, extract in features.items():
+        r_values = [extract(r) for r in right]
+        w_values = [extract(r) for r in wrong]
+        sep = _separation(r_values, w_values)
+        cut, kept, dropped = _best_threshold(r_values, w_values)
+        rule = (f"≥ {cut:.2f} keeps {kept}/{len(right)}, drops "
+                f"{dropped}/{len(wrong)}") if dropped else "no clean cut"
+        print(f"  {name:20} {_summarise(r_values):>22} "
+              f"{_summarise(w_values):>22}  {sep:.2f}  {rule}")
+        ranked.append((sep, name, rule))
+
+    ranked.sort(reverse=True)
+    top_sep, top_name, top_rule = ranked[0]
+    print()
+    if top_sep >= 0.9 and "no clean cut" not in top_rule:
+        print(f"Strongest signal: {top_name} ({top_sep:.2f}). {top_rule}.")
+        print("Worth acting on only if there is a *reason* it separates —")
+        print("a threshold fitted to a handful of points is a coincidence "
+              "until it has one.")
+    else:
+        print(f"Nothing separates cleanly yet (best: {top_name} at "
+              f"{top_sep:.2f}).")
+        print("More verdicts, or the difference is not in these features.")
+
+    if len(labels) < 20:
+        print(f"\n{len(labels)} labels is few. Treat all of the above as a "
+              f"hypothesis to check, not a finding.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(main()))

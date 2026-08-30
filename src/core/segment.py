@@ -309,6 +309,55 @@ def coalesce(segments: List[Segment], min_segment: float = 20.0) -> List[Segment
     return _absorb_slivers(_bridge_gaps(segments), min_segment)
 
 
+def drop_unsupported(segments: List[Segment], probe_duration: float,
+                     threshold: float = 0.6) -> List[Segment]:
+    """Unname a segment the probe did not really hear.
+
+    The fingerprinter is handed a window — twelve seconds by default. When a
+    segment is shorter than that window, most of what was heard lies outside
+    the segment, so the name it came back with is evidence about the
+    neighbours rather than about this stretch.
+
+    On a set this never fires: tracks run minutes and segments dwarf the
+    window. On a reel it is the whole problem. Measured against a
+    fifty-eight second reel whose real contents were known:
+
+        span   share of the window   verdict
+        8.3s          70%            correct
+        6.0s          50%            invented
+       20.8s         173%            correct
+        5.0s          42%            invented
+        3.4s          28%            invented
+       14.9s         124%            correct
+
+    Every wrong answer sat below half a window, every right one above two
+    thirds. Six data points is not a law, so this only unnames a segment that
+    is *also* backed by a single probe — a stretch two probes agree on is a
+    real finding however short it is.
+
+    Unnamed rather than deleted: the stretch stays in the tracklist as a gap,
+    which is true and useful. The user who reported this wanted exactly that —
+    a track Shazam could not find should read as not found, not as somebody
+    else's record.
+    """
+    if probe_duration <= 0:
+        return segments
+    floor = probe_duration * threshold
+    for segment in segments:
+        if not segment.identified:
+            continue
+        if segment.duration >= floor or segment.votes > 1:
+            continue
+        logger.info("Unnaming %s at %.1fs: %.1fs is under %.0f%% of a %.0fs "
+                    "probe window, on one probe",
+                    segment.key, segment.start, segment.duration,
+                    threshold * 100, probe_duration)
+        segment.key = None
+        segment.payload = None
+        segment.votes = 0
+    return segments
+
+
 def _bridge_gaps(segments: List[Segment]) -> List[Segment]:
     """Close an unidentified gap when the same track sits on both sides.
 
