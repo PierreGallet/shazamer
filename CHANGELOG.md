@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0](https://github.com/PierreGallet/shazamer/compare/v1.24.0...v1.25.0) (2026-08-30)
+
+
+### Features
+
+* **acquire:** measure the bitrate instead of quoting it, and show the queue ([#77](https://github.com/PierreGallet/shazamer/issues/77)) ([4c5b212](https://github.com/PierreGallet/shazamer/commit/4c5b212b73fff8e37752dc75e1c3aaaefdb34486)), closes [#76](https://github.com/PierreGallet/shazamer/issues/76)
+
 ## [1.24.0](https://github.com/PierreGallet/shazamer/compare/v1.23.0...v1.24.0) (2026-08-30)
 
 
