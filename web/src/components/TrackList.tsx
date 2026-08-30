@@ -2,6 +2,7 @@ import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import type { Track } from "../lib/api";
 import { api, formatTime } from "../lib/api";
 import AcquirePanel from "./AcquirePanel";
+import PreviewButton from "./PreviewButton";
 
 /**
  * The tracklist, following playback.
@@ -23,81 +24,9 @@ interface Props {
 export default function TrackList(props: Props) {
   const [expanded, setExpanded] = createSignal<number | null>(null);
   const [starred, setStarred] = createSignal<Record<string, boolean>>({});
-
-  /**
-   * Checking a match by ear.
-   *
-   * A tracklist is a set of claims. The only way to check one is to hear the
-   * record next to the moment it was claimed for, which is why this plays the
-   * *reference* — the set itself is already a click away on the waveform.
-   *
-   * One element, reused. Several would let two excerpts overlap, and the one
-   * thing this must never do is make two records play at once while you are
-   * trying to decide whether they are the same record.
-   */
+  // Which row is playing its excerpt, so only that one shows a scrubber and
+  // starting one stops the rest.
   const [previewKey, setPreviewKey] = createSignal<string | null>(null);
-  const [previewBusy, setPreviewBusy] = createSignal<string | null>(null);
-  const [noPreview, setNoPreview] = createSignal<Record<string, boolean>>({});
-  // Position and length of the excerpt playing, so it can be scrubbed. Read
-  // off the element rather than counted with a timer: a timer drifts, and it
-  // keeps running when the audio stalls on a slow connection.
-  const [at, setAt] = createSignal(0);
-  const [span, setSpan] = createSignal(0);
-  let previewAudio: HTMLAudioElement | undefined;
-
-  onCleanup(() => previewAudio?.pause());
-
-  function stopPreview() {
-    previewAudio?.pause();
-    setPreviewKey(null);
-    setAt(0);
-    setSpan(0);
-  }
-
-  function seekPreview(seconds: number) {
-    if (previewAudio) {
-      previewAudio.currentTime = seconds;
-      setAt(seconds);
-    }
-  }
-
-  function togglePreview(track: Track, event: MouseEvent) {
-    event.stopPropagation();
-    if (previewKey() === track.key) {
-      stopPreview();
-      return;
-    }
-    stopPreview();
-    props.onPreviewStart?.();
-
-    // Deliberately not async up to play(). An `await` here — even a fast one
-    // asking the server where the audio is — ends the user gesture, and
-    // Chrome then declines to start playback with no error the page can see.
-    // The address is predictable, so nothing needs asking first: the server
-    // looks the excerpt up behind it and answers 404 when there is none.
-    if (!previewAudio) previewAudio = new Audio();
-    previewAudio.src = api.trackPreviewUrl(track.key);
-    previewAudio.ontimeupdate = () => setAt(previewAudio!.currentTime);
-    previewAudio.onloadedmetadata = () => setSpan(previewAudio!.duration || 0);
-    previewAudio.onended = () => stopPreview();
-    previewAudio.onerror = () => {
-      setNoPreview({ ...noPreview(), [track.key]: true });
-      setPreviewBusy(null);
-      setPreviewKey(null);
-    };
-
-    setPreviewBusy(track.key);
-    previewAudio
-      .play()
-      .then(() => {
-        setPreviewKey(track.key);
-        setPreviewBusy(null);
-      })
-      .catch(() => {
-        setNoPreview({ ...noPreview(), [track.key]: true });
-        setPreviewBusy(null);
-      });
-  }
 
   /**
    * Keep the playing row in view.
@@ -262,62 +191,16 @@ export default function TrackList(props: Props) {
 
               <div class="track-actions" onClick={(e) => e.stopPropagation()}>
                 <Show when={track.identified}>
-                  <button
-                    class="btn-icon"
-                    classList={{
-                      on: previewKey() === track.key,
-                      muted: noPreview()[track.key],
+                  <PreviewButton
+                    trackKey={track.key}
+                    onStart={() => {
+                      // The set and the excerpt at once is the one thing that
+                      // makes checking a match by ear useless.
+                      props.onPreviewStart?.();
+                      setPreviewKey(track.key);
                     }}
-                    disabled={previewBusy() === track.key}
-                    title={
-                      noPreview()[track.key]
-                        ? "No excerpt of this record is available"
-                        : previewKey() === track.key
-                          ? "Stop"
-                          : "Hear the record, to check the match"
-                    }
-                    onClick={(e) => togglePreview(track, e)}
-                  >
-                    <Show
-                      when={previewKey() === track.key}
-                      fallback={
-                        <svg viewBox="0 0 24 24" width="15" height="15"
-                             fill="currentColor" aria-hidden="true">
-                          <path d="M8 5.5v13l10-6.5z" />
-                        </svg>
-                      }
-                    >
-                      <svg viewBox="0 0 24 24" width="15" height="15"
-                           fill="currentColor" aria-hidden="true">
-                        <rect x="7" y="5.5" width="3.4" height="13" rx="1" />
-                        <rect x="13.6" y="5.5" width="3.4" height="13" rx="1" />
-                      </svg>
-                    </Show>
-                  </button>
-
-                  {/* A scrubber for the excerpt, in the row rather than in a
-                      player elsewhere: what it is for is comparing this
-                      thirty seconds against the moment above it, and a
-                      control that lives somewhere else breaks that. A range
-                      input rather than a drawn bar — dragging, keyboard and
-                      touch all come with it. */}
-                  <Show when={previewKey() === track.key && span() > 0}>
-                    <span class="preview-scrub">
-                      <input
-                        type="range"
-                        min="0"
-                        max={span()}
-                        step="0.1"
-                        value={at()}
-                        aria-label="Position in the excerpt"
-                        onInput={(e) =>
-                          seekPreview(Number(e.currentTarget.value))}
-                      />
-                      <span class="tiny faint mono">
-                        {formatTime(at())} / {formatTime(span())}
-                      </span>
-                    </span>
-                  </Show>
+                    scrub={previewKey() === track.key}
+                  />
 
                   <button
                     class="btn-icon"

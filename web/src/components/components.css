@@ -634,3 +634,11 @@
   font-size: 0.85rem; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* The sources panel opened from a starred row. Full width under the row, so
+   the candidate columns have room to line up. */
+.track-expanded {
+  grid-column: 1 / -1;
+  padding-top: 0.6rem; margin-top: 0.5rem;
+  border-top: 1px solid var(--line);
+}

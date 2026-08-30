@@ -1,4 +1,6 @@
 import { For, Show, createResource, createSignal } from "solid-js";
+import AcquirePanel from "./AcquirePanel";
+import PreviewButton from "./PreviewButton";
 import { api } from "../lib/api";
 
 /** Starred tracks, filterable by the things a DJ actually sorts on. */
@@ -14,6 +16,11 @@ export default function Crate() {
   const [bpmMin, setBpmMin] = createSignal("");
   const [bpmMax, setBpmMax] = createSignal("");
   const [starredOnly, setStarredOnly] = createSignal(true);
+  // Which row has its sources open, and which is playing. Keyed by track
+  // rather than index: the list re-sorts as filters change, and an index
+  // would then point at a different record.
+  const [expanded, setExpanded] = createSignal<string | null>(null);
+  const [playing, setPlaying] = createSignal<string | null>(null);
 
   const [results, { refetch }] = createResource(
     () => ({
@@ -63,7 +70,10 @@ export default function Crate() {
             checked={starredOnly()}
             onChange={(e) => setStarredOnly(e.currentTarget.checked)}
           />
-          Crate only
+          {/* Off, this searches every identified track in every set — which
+              is a different screen's job wearing this one's filters. The
+              label has to say which of the two you are looking at. */}
+          Starred only
         </label>
       </div>
 
@@ -111,6 +121,29 @@ export default function Crate() {
                   </Show>
                 </div>
                 <div class="track-actions">
+                  {/* Hear it, then get it. A starred track had neither: the
+                      list existed to be a shortlist and offered no way to act
+                      on the shortlist, so every action meant finding the set
+                      the track came from first. */}
+                  <PreviewButton
+                    trackKey={track.key}
+                    onStart={() => setPlaying(track.key)}
+                    scrub={playing() === track.key}
+                  />
+                  <button
+                    class="btn-icon"
+                    classList={{ on: expanded() === track.key }}
+                    title="Where to get it"
+                    onClick={() =>
+                      setExpanded(expanded() === track.key ? null : track.key)}
+                  >
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+                         stroke="currentColor" stroke-width="2"
+                         stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <path d="M7 10l5 5 5-5M12 15V3" />
+                    </svg>
+                  </button>
                   <button
                     class="btn-icon on"
                     title="Remove from starred"
@@ -133,6 +166,22 @@ export default function Crate() {
                     </a>
                   </Show>
                 </div>
+                <Show when={expanded() === track.key}>
+                  <div class="track-expanded">
+                    {/* Only what acquisition needs. A starred track has no
+                        position in a set and no confidence, and inventing
+                        those to satisfy a wider type is what a cast hides. */}
+                    <AcquirePanel track={{
+                      key: track.key,
+                      title: track.title,
+                      artist: track.artist,
+                      album: track.album ?? "",
+                      label: track.label ?? "",
+                      year: track.year ?? "",
+                      genre: track.genre ?? "",
+                    }} />
+                  </div>
+                </Show>
               </div>
             )}
           </For>

@@ -4,6 +4,22 @@
 // renamed in Python surfaces as a TypeScript error rather than as `undefined`
 // rendering blank in the UI.
 
+/** What acquisition needs to identify and tag a record.
+ *
+ *  Narrower than `Track` on purpose: a starred track comes from the library
+ *  rather than from one set, so it has no position, no confidence and no
+ *  waveform — and requiring those would mean inventing them at the call site,
+ *  which is how a cast to `any` gets written. */
+export interface AcquirableTrack {
+  key: string;
+  title: string;
+  artist: string;
+  album: string;
+  label: string;
+  year: string;
+  genre: string;
+}
+
 export interface Track {
   /** Whether an excerpt of the record is already known. Not where it is —
    *  the audio always comes from our own endpoint. */
@@ -108,6 +124,12 @@ export interface LibraryTrack {
   starred?: boolean;
   set_title?: string;
   set_id?: string;
+  /** Carried so a starred track can be fetched and tagged without first
+   *  opening the set it came from. */
+  album?: string;
+  year?: string;
+  genre?: string;
+  isrc?: string;
 }
 
 export interface AcquisitionSource {

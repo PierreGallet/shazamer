@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createResource, createSignal,
          onCleanup } from "solid-js";
-import type { Download, SoulseekCandidate, Track } from "../lib/api";
+import type { AcquirableTrack, Download, SoulseekCandidate } from "../lib/api";
 import GetTrack from "./GetTrack";
 import { api, formatBytes, formatSpeed } from "../lib/api";
 
@@ -15,7 +15,7 @@ import { api, formatBytes, formatSpeed } from "../lib/api";
  */
 
 interface Props {
-  track: Track;
+  track: AcquirableTrack;
 }
 
 export default function AcquirePanel(props: Props) {

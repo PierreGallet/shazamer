@@ -787,7 +787,14 @@ class Library:
                 " MAX(t.title) AS title, MAX(t.artist) AS artist,"
                 " MAX(t.url) AS url, MAX(t.cover_url) AS cover_url,"
                 " MAX(t.label) AS label, AVG(t.bpm) AS bpm,"
-                " MAX(t.camelot) AS camelot, COUNT(DISTINCT t.set_id) AS set_count"
+                " MAX(t.camelot) AS camelot,"
+                # Carried because a starred track can now be fetched, and the
+                # acquisition tags the file it writes. Sending blanks would
+                # produce an untagged MP3 for no reason other than that this
+                # query did not ask.
+                " MAX(t.album) AS album, MAX(t.year) AS year,"
+                " MAX(t.genre) AS genre, MAX(t.isrc) AS isrc,"
+                " COUNT(DISTINCT t.set_id) AS set_count"
                 " FROM crate c LEFT JOIN tracks t ON t.track_key = c.track_key"
                 " WHERE c.user_id = ?"
                 " GROUP BY c.track_key ORDER BY c.starred_at DESC",
@@ -797,6 +804,8 @@ class Library:
             "key": r["track_key"], "title": r["title"] or "", "artist": r["artist"] or "",
             "url": r["url"] or "", "cover_url": r["cover_url"] or "",
             "label": r["label"] or "", "camelot": r["camelot"],
+            "album": r["album"] or "", "year": r["year"] or "",
+            "genre": r["genre"] or "", "isrc": r["isrc"] or "",
             "bpm": round(r["bpm"], 1) if r["bpm"] else None,
             "set_count": r["set_count"], "starred_at": r["starred_at"], "starred": True,
         } for r in rows]

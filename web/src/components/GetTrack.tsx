@@ -1,5 +1,5 @@
 import { For, Show, createSignal, onCleanup } from "solid-js";
-import type { Download, SoulseekCandidate, Track } from "../lib/api";
+import type { AcquirableTrack, Download, SoulseekCandidate } from "../lib/api";
 import { api, formatBytes } from "../lib/api";
 
 /**
@@ -13,7 +13,7 @@ import { api, formatBytes } from "../lib/api";
  */
 
 interface Props {
-  track: Track;
+  track: AcquirableTrack;
   /** False when the server has no slskd configured. */
   enabled: boolean;
 }
