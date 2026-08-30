@@ -117,9 +117,16 @@ async def main() -> int:
               f"no right ones recorded there is no way to see that it did.")
         return 0
 
+    # Ordered by how much mechanism stands behind each one, because that is
+    # how ties are broken below. `span / probe window` leads: it is the only
+    # feature that names a cause — a segment shorter than what the
+    # fingerprinter was handed is named on evidence mostly about its
+    # neighbours. `span / set length` is last of the three because a rule
+    # phrased as a fraction of the recording cannot hold across a reel and a
+    # three-hour set at once.
     features: Dict[str, Callable[[Dict[str, Any]], float]] = {
-        "span (s)": lambda r: float(r["span"] or 0),
         "span / probe window": lambda r: float(r["span"] or 0) / args.probe_window,
+        "span (s)": lambda r: float(r["span"] or 0),
         "span / set length": lambda r: (float(r["span"] or 0)
                                         / max(float(r["set_duration"] or 1), 1)),
         "confidence": lambda r: float(r["confidence"] or 0),
@@ -129,8 +136,8 @@ async def main() -> int:
     }
 
     print(f"\n{'feature':22} {'real':>22} {'invented':>22}   sep   rule")
-    ranked: List[Tuple[float, str, str]] = []
-    for name, extract in features.items():
+    ranked: List[Tuple[float, int, str, str]] = []
+    for order, (name, extract) in enumerate(features.items()):
         r_values = [extract(r) for r in right]
         w_values = [extract(r) for r in wrong]
         sep = _separation(r_values, w_values)
@@ -139,13 +146,24 @@ async def main() -> int:
                 f"{dropped}/{len(wrong)}") if dropped else "no clean cut"
         print(f"  {name:20} {_summarise(r_values):>22} "
               f"{_summarise(w_values):>22}  {sep:.2f}  {rule}")
-        ranked.append((sep, name, rule))
+        ranked.append((sep, order, name, rule))
 
-    ranked.sort(reverse=True)
-    top_sep, top_name, top_rule = ranked[0]
+    # Ties broken by declaration order, which runs from the features with a
+    # mechanism behind them to the ones that are merely available. With six
+    # labels three features separate perfectly, and picking between them
+    # alphabetically once nominated `span / set length` — the one that cannot
+    # generalise, since it says a track is real if it fills a seventh of the
+    # recording, which is true of a reel and false of every three-hour set.
+    ranked.sort(key=lambda row: (-row[0], row[1]))
+    top_sep, _order, top_name, top_rule = ranked[0]
+    tied = [row[2] for row in ranked if row[0] == top_sep]
     print()
     if top_sep >= 0.9 and "no clean cut" not in top_rule:
         print(f"Strongest signal: {top_name} ({top_sep:.2f}). {top_rule}.")
+        if len(tied) > 1:
+            others = ", ".join(n for n in tied if n != top_name)
+            print(f"Separates no better than {others} — too few labels to "
+                  f"tell them apart.")
         print("Worth acting on only if there is a *reason* it separates —")
         print("a threshold fitted to a handful of points is a coincidence "
               "until it has one.")
