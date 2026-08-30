@@ -8,6 +8,10 @@ vectors, which are tiny: at hop 512 and 22.05 kHz a two-hour set yields about
 
 Frames are carried across block boundaries so the analysis is bit-identical to
 what a single-shot call would produce, minus the edge padding.
+
+Three features come out of it: spectral centroid, RMS energy, and chroma.
+Centroid and chroma share one STFT rather than computing two, so adding
+harmony cost a filterbank projection and not a second transform.
 """
 from __future__ import annotations
 
@@ -21,6 +25,15 @@ logger = logging.getLogger(__name__)
 
 N_FFT = 1024
 HOP_LENGTH = 512
+
+# Chroma is pooled down to roughly two frames a second before being kept.
+#
+# Harmony moves at the speed of chords, not of samples: at hop 512 and
+# 22.05 kHz, 43 columns a second is 40 of them saying the same thing. Pooling
+# by 22 costs nothing in resolution — a boundary is placed against a window
+# tens of seconds wide — and keeps a two-hour set at about 700 kB of chroma
+# instead of 15 MB, which is what makes this affordable to carry at all.
+CHROMA_POOL = 22
 
 # Pitch classes in semitone order, matching librosa's chroma bin order.
 PITCH_CLASSES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -59,13 +72,60 @@ class StreamingFeatures:
 
     _centroid: List[np.ndarray] = field(default_factory=list, repr=False)
     _rms: List[np.ndarray] = field(default_factory=list, repr=False)
+    _chroma: List[np.ndarray] = field(default_factory=list, repr=False)
     _carry: Optional[np.ndarray] = field(default=None, repr=False)
+    # Chroma columns not yet forming a complete pool group. Held rather than
+    # dropped so the pooled grid is continuous across block boundaries — the
+    # same reason `_carry` exists one level down.
+    _chroma_pending: Optional[np.ndarray] = field(default=None, repr=False)
     _samples_seen: int = 0
+
+    def _absorb(self, analysed: np.ndarray) -> None:
+        """Extract every feature from one complete run of frames."""
+        import librosa
+
+        spectrum = np.abs(librosa.stft(
+            analysed, n_fft=self.n_fft, hop_length=self.hop_length,
+            center=False,
+        ))
+        self._centroid.append(
+            librosa.feature.spectral_centroid(
+                S=spectrum, sr=self.sample_rate, n_fft=self.n_fft,
+            )[0]
+        )
+        # RMS from the samples, not from `spectrum`. The spectral form is an
+        # approximation, and this envelope is what the waveform in the UI is
+        # drawn from — a picture of the set should be the set.
+        self._rms.append(
+            librosa.feature.rms(
+                y=analysed, frame_length=self.n_fft,
+                hop_length=self.hop_length, center=False,
+            )[0]
+        )
+        # `tuning=0.0` rather than letting librosa estimate it. Left to
+        # itself it estimates from whatever spectrogram it is handed, which
+        # here is one decoder block — so the filterbank would shift between
+        # blocks of the same file and the chroma would differ depending on how
+        # the download happened to chunk. A measure of *change* cannot afford
+        # that, and electronic music sits at A=440 anyway.
+        self._pool_chroma(librosa.feature.chroma_stft(
+            S=spectrum ** 2, sr=self.sample_rate, n_fft=self.n_fft,
+            tuning=0.0,
+        ))
+
+    def _pool_chroma(self, chroma: np.ndarray) -> None:
+        """Average chroma down to the pooled grid, carrying the remainder."""
+        if self._chroma_pending is not None and self._chroma_pending.size:
+            chroma = np.concatenate([self._chroma_pending, chroma], axis=1)
+        groups = chroma.shape[1] // CHROMA_POOL
+        if groups:
+            head = chroma[:, : groups * CHROMA_POOL]
+            self._chroma.append(
+                head.reshape(12, groups, CHROMA_POOL).mean(axis=2))
+        self._chroma_pending = chroma[:, groups * CHROMA_POOL:]
 
     def push(self, block: np.ndarray) -> None:
         """Feed one decoded block. The block is not retained."""
-        import librosa
-
         self._samples_seen += len(block)
 
         buf = block if self._carry is None else np.concatenate([self._carry, block])
@@ -80,48 +140,32 @@ class StreamingFeatures:
         n_frames = 1 + (len(buf) - self.n_fft) // self.hop_length
         consumed = n_frames * self.hop_length
 
-        analysed = buf[: consumed + self.n_fft - self.hop_length]
-        self._centroid.append(
-            librosa.feature.spectral_centroid(
-                y=analysed, sr=self.sample_rate,
-                n_fft=self.n_fft, hop_length=self.hop_length, center=False,
-            )[0]
-        )
-        self._rms.append(
-            librosa.feature.rms(
-                y=analysed, frame_length=self.n_fft,
-                hop_length=self.hop_length, center=False,
-            )[0]
-        )
+        self._absorb(buf[: consumed + self.n_fft - self.hop_length])
         self._carry = buf[consumed:]
 
     def finish(self) -> "FeatureSet":
         """Flush the tail and return the concatenated feature vectors."""
-        import librosa
-
         if self._carry is not None and len(self._carry) >= self.n_fft:
-            self._centroid.append(
-                librosa.feature.spectral_centroid(
-                    y=self._carry, sr=self.sample_rate,
-                    n_fft=self.n_fft, hop_length=self.hop_length, center=False,
-                )[0]
-            )
-            self._rms.append(
-                librosa.feature.rms(
-                    y=self._carry, frame_length=self.n_fft,
-                    hop_length=self.hop_length, center=False,
-                )[0]
-            )
+            self._absorb(self._carry)
         self._carry = None
+
+        # The last partial pool group is kept rather than discarded: on a short
+        # clip it can be most of the file.
+        if self._chroma_pending is not None and self._chroma_pending.size:
+            self._chroma.append(self._chroma_pending.mean(axis=1, keepdims=True))
+        self._chroma_pending = None
 
         centroid = (np.concatenate(self._centroid) if self._centroid
                     else np.zeros(0, dtype=np.float32))
         rms = (np.concatenate(self._rms) if self._rms
                else np.zeros(0, dtype=np.float32))
+        chroma = (np.concatenate(self._chroma, axis=1) if self._chroma
+                  else np.zeros((12, 0), dtype=np.float32))
 
         return FeatureSet(
             centroid=centroid,
             rms=rms,
+            chroma=chroma,
             sample_rate=self.sample_rate,
             hop_length=self.hop_length,
             duration=self._samples_seen / self.sample_rate if self.sample_rate else 0.0,
@@ -135,9 +179,22 @@ class FeatureSet:
     sample_rate: int
     hop_length: int
     duration: float
+    # (12, m) — energy per pitch class, on the pooled grid. Empty for a
+    # FeatureSet built before chroma existed, which every reader must handle.
+    chroma: np.ndarray = field(
+        default_factory=lambda: np.zeros((12, 0), dtype=np.float32))
 
     def frame_to_time(self, frame: int) -> float:
         return frame * self.hop_length / self.sample_rate
+
+    @property
+    def frame_rate(self) -> float:
+        return self.sample_rate / self.hop_length if self.hop_length else 0.0
+
+    @property
+    def chroma_rate(self) -> float:
+        """Chroma frames per second."""
+        return self.frame_rate / CHROMA_POOL
 
     def waveform_peaks(self, points: int = 1600) -> List[float]:
         """Downsample the RMS envelope for display.

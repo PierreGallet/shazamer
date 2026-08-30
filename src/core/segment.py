@@ -147,11 +147,99 @@ def grid_probes(duration: float, interval: float = 25.0,
     return [round(start + i * interval, 3) for i in range(n) if start + i * interval < end]
 
 
+# How far either side of a candidate boundary the harmony is averaged before
+# the two sides are compared, in seconds.
+#
+# Two scales because a transition has no single length. Eight seconds catches a
+# hard cut, where the chord changes between one bar and the next; twenty-four
+# rides over a long beatmatched blend, where the two records overlap for half a
+# minute and no eight-second window ever contains only one of them.
+CHROMA_SCALES = (8.0, 24.0)
+
+
+def harmonic_novelty(features: FeatureSet) -> np.ndarray:
+    """How much the harmony differs either side of each moment.
+
+    The measure a DJ set actually needs. Spectral centroid and RMS barely move
+    across a beatmatched transition — both records are loud, both are full
+    range, and holding that true is the mixing engineer's entire job. The
+    chords are not held: two different records are two different chord
+    sequences, and that shows even while the drums run straight through.
+
+    Cosine distance between the mean chroma before and after, at each of
+    `CHROMA_SCALES`. Cosine rather than Euclidean because it compares the
+    *shape* of the harmony and ignores how loud it is, which is the point: a
+    breakdown is quiet, not in a different key.
+
+    Returned on the chroma grid, not the frame grid. Zero-length when the
+    FeatureSet has no chroma — everything analysed before this existed.
+    """
+    chroma = features.chroma
+    if chroma.size == 0 or chroma.shape[1] < 4:
+        return np.zeros(0, dtype=np.float32)
+
+    m = chroma.shape[1]
+    # Column-normalised, so a loud passage does not simply outweigh a quiet one.
+    norms = np.linalg.norm(chroma, axis=0)
+    unit = chroma / np.where(norms > 0, norms, 1.0)
+
+    # Cumulative sums turn "mean of the k columns before i" into two lookups,
+    # which is what keeps this linear over a three-hour set.
+    cumulative = np.concatenate(
+        [np.zeros((12, 1)), np.cumsum(unit, axis=1)], axis=1)
+
+    total = np.zeros(m, dtype=np.float64)
+    scales = 0
+    for seconds in CHROMA_SCALES:
+        k = max(1, int(round(seconds * features.chroma_rate)))
+        if m < 2 * k:
+            continue                    # the clip is shorter than the window
+        index = np.arange(m)
+        lo = np.clip(index - k, 0, m)
+        hi = np.clip(index + k, 0, m)
+        before = cumulative[:, index] - cumulative[:, lo]
+        after = cumulative[:, hi] - cumulative[:, index]
+
+        b_norm = np.linalg.norm(before, axis=0)
+        a_norm = np.linalg.norm(after, axis=0)
+        usable = (b_norm > 0) & (a_norm > 0)
+        similarity = np.zeros(m)
+        similarity[usable] = (
+            (before[:, usable] * after[:, usable]).sum(axis=0)
+            / (b_norm[usable] * a_norm[usable]))
+        distance = 1.0 - similarity
+        # The edges compare a full window against a truncated one and always
+        # look different for that reason alone. Held at the first and last
+        # honest value rather than left to peak.
+        distance[:k] = distance[k] if m > k else 0.0
+        distance[m - k:] = distance[max(0, m - k - 1)]
+
+        total += distance
+        scales += 1
+
+    if not scales:
+        return np.zeros(0, dtype=np.float32)
+    return (total / scales).astype(np.float32)
+
+
 def novelty_curve(features: FeatureSet, smooth_sigma: float = 10.0) -> np.ndarray:
-    """Combined rate-of-change of spectral centroid and RMS energy.
+    """Where the music changes: harmony first, then timbre and level.
 
     Peaks mark where the sound is changing fastest. Useful for placing a
     boundary we already know exists; unreliable for discovering one.
+
+    Both terms are divided by their own median before being added, so each
+    arrives on the same scale and the combined curve keeps a median near one.
+    That matters beyond tidiness: `refine_boundary` decides whether a peak is
+    real by its ratio to the local median, so a term that swamped the other
+    would silently move a threshold measured on real cuts.
+
+    The harmonic term is weighted the heavier of the two. It is the one with a
+    reason behind it — a new record is a new chord sequence — where centroid
+    and RMS only report that something got brighter or louder, which a
+    breakdown does too. The spectral term stays because DJs mix in key on
+    purpose: two harmonically matched records leave the chroma nearly still,
+    and then brightness is the only thing that moved.
     """
     from scipy.ndimage import gaussian_filter1d
 
@@ -166,8 +254,27 @@ def novelty_curve(features: FeatureSet, smooth_sigma: float = 10.0) -> np.ndarra
         std = x.std()
         return (x - x.mean()) / (std if std else 1.0)
 
-    combined = np.abs(np.gradient(z(centroid))) + np.abs(np.gradient(z(rms)))
-    return gaussian_filter1d(combined, sigma=smooth_sigma)
+    spectral = gaussian_filter1d(
+        np.abs(np.gradient(z(centroid))) + np.abs(np.gradient(z(rms))),
+        sigma=smooth_sigma)
+
+    harmonic = harmonic_novelty(features)
+    if harmonic.size == 0:
+        return spectral
+
+    # Onto the frame grid, so every caller keeps indexing the curve the one way
+    # it always has.
+    on_frames = np.interp(
+        np.arange(n) / (features.frame_rate or 1.0),
+        np.arange(harmonic.size) / (features.chroma_rate or 1.0),
+        harmonic)
+
+    def unit_median(x: np.ndarray) -> np.ndarray:
+        middle = float(np.median(x))
+        return x / middle if middle > 0 else x
+
+    combined = 2.0 * unit_median(on_frames) + unit_median(spectral)
+    return combined.astype(np.float32)
 
 
 # How far the curve must rise above its own surroundings before the peak is

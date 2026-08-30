@@ -970,3 +970,150 @@ def test_a_normal_set_is_untouched():
     ]
     kept = [s.key for s in drop_unsupported(set_segments, probe_duration=12.0)]
     assert kept == ["a::x", "b::y"]
+
+
+def _chord_clip(sample_rate: int, seconds: float, semitones, brightness=(1, 2, 3)):
+    """A chord held over a fixed drum pattern, at a fixed loudness.
+
+    Everything a DJ holds constant across a transition is constant here:
+    the beat, the level, and the harmonic series of each voice. Only the
+    chord moves. Anything that detects the change detected the harmony.
+    """
+    import numpy as np
+
+    t = np.linspace(0, seconds, int(sample_rate * seconds), endpoint=False)
+    audio = np.zeros_like(t)
+    for semitone in semitones:
+        root = 220.0 * (2 ** (semitone / 12.0))
+        for partial in brightness:
+            audio += np.sin(2 * np.pi * root * partial * t) / partial
+    beat = (np.sin(2 * np.pi * 2.0 * t) > 0.8).astype(np.float64)
+    audio = audio / (np.abs(audio).max() or 1.0)
+    return (0.7 * audio + 0.3 * beat).astype(np.float32)
+
+
+def _features_of(samples, sample_rate):
+    from src.core.features import StreamingFeatures
+
+    feats = StreamingFeatures(sample_rate=sample_rate)
+    for start in range(0, len(samples), sample_rate):
+        feats.push(samples[start:start + sample_rate])
+    return feats.finish()
+
+
+def test_a_key_change_under_a_steady_beat_is_a_boundary():
+    """The transition a DJ actually plays, and the one the old curve missed.
+
+    A minor to F minor at bar 32, with the drums running straight through and
+    the level untouched. Spectral centroid and RMS have nothing to report —
+    that is the mixing engineer's whole job — so the curve they produce is
+    flat across the one moment that matters, and `refine_boundary` correctly
+    declines to move a boundary onto noise.
+
+    The chords are not held constant, and cannot be: two records are two
+    chord sequences. Asserted as a ratio against the same curve computed
+    without harmony, so this fails if the harmonic term is removed.
+    """
+    import numpy as np
+    from src.core.segment import harmonic_novelty, novelty_curve
+
+    sr, half = 22050, 20.0
+    clip = np.concatenate([
+        _chord_clip(sr, half, (0, 3, 7)),        # A minor
+        _chord_clip(sr, half, (5, 8, 12)),       # F minor, same voicing shape
+    ])
+    features = _features_of(clip, sr)
+
+    assert features.chroma.shape[1] > 0, "no chroma was extracted"
+
+    harmonic = harmonic_novelty(features)
+    cut = int(half * features.chroma_rate)
+    at_cut = float(harmonic[cut - 1:cut + 2].max())
+    elsewhere = float(np.median(harmonic))
+    assert at_cut > 3 * elsewhere, (
+        f"harmony at the cut {at_cut:.3f} is not clear of the "
+        f"background {elsewhere:.3f}")
+
+    # And the combined curve inherits it: the peak is at the cut, not adrift.
+    curve = novelty_curve(features)
+    peak_at = float(np.argmax(curve)) / features.frame_rate
+    assert abs(peak_at - half) < 2.0, f"peak at {peak_at:.1f}s, cut at {half}s"
+
+
+def test_the_old_curve_could_not_see_that_change():
+    """Pins the reason the harmonic term was added, not just its effect.
+
+    If centroid and RMS could already find a key change under a steady beat,
+    the extra feature would be cost for nothing. They cannot: measured on the
+    fixture above, their curve at the cut is within noise of the background.
+    """
+    import numpy as np
+    from scipy.ndimage import gaussian_filter1d
+
+    sr, half = 22050, 20.0
+    clip = np.concatenate([
+        _chord_clip(sr, half, (0, 3, 7)),
+        _chord_clip(sr, half, (5, 8, 12)),
+    ])
+    features = _features_of(clip, sr)
+
+    n = min(features.centroid.size, features.rms.size)
+
+    def z(x):
+        return (x - x.mean()) / (x.std() or 1.0)
+
+    spectral = gaussian_filter1d(
+        np.abs(np.gradient(z(features.centroid[:n])))
+        + np.abs(np.gradient(z(features.rms[:n]))), sigma=10.0)
+
+    cut = int(half * features.frame_rate)
+    window = spectral[max(0, cut - 40):cut + 40]
+    ratio = float(window.max()) / (float(np.median(spectral)) or 1.0)
+    assert ratio < 3.0, (
+        f"centroid+RMS reach {ratio:.1f}x the median at the cut — if they can "
+        f"see this, the harmonic term is not justified by this fixture")
+
+
+def test_chroma_survives_the_block_boundaries_it_is_streamed_across():
+    """Pooling has its own carry, and a dropped remainder would misalign time.
+
+    Fed in one piece against fed in ragged blocks: the same chroma, so the
+    pooled grid does not depend on how the decoder happened to chunk the file.
+    """
+    import numpy as np
+    from src.core.features import StreamingFeatures
+
+    sr = 22050
+    clip = _chord_clip(sr, 12.0, (0, 3, 7))
+
+    whole = StreamingFeatures(sample_rate=sr)
+    whole.push(clip)
+    one_shot = whole.finish()
+
+    ragged = StreamingFeatures(sample_rate=sr)
+    at = 0
+    for size in (7001, 13337, 4096, 65536, 1000):
+        ragged.push(clip[at:at + size])
+        at += size
+    ragged.push(clip[at:])
+    streamed = ragged.finish()
+
+    assert streamed.chroma.shape == one_shot.chroma.shape
+    assert np.allclose(streamed.chroma, one_shot.chroma, atol=1e-5)
+    assert np.allclose(streamed.centroid, one_shot.centroid, atol=1e-3)
+
+
+def test_a_set_analysed_before_chroma_existed_still_segments():
+    """Every FeatureSet in the wild predates this field."""
+    import numpy as np
+    from src.core.features import FeatureSet
+    from src.core.segment import harmonic_novelty, novelty_curve
+
+    old = FeatureSet(
+        centroid=np.linspace(1000, 4000, 500).astype(np.float32),
+        rms=np.linspace(0.1, 0.4, 500).astype(np.float32),
+        sample_rate=22050, hop_length=512, duration=11.6)
+
+    assert old.chroma.shape == (12, 0)
+    assert harmonic_novelty(old).size == 0
+    assert novelty_curve(old).size == 500
