@@ -1015,7 +1015,33 @@ async def get_set(set_id: str, user: Dict[str, Any] = Depends(current_user)):
     if data is None:
         raise HTTPException(status_code=404, detail="Set not found")
     data.pop("audio_path", None)
+
+    # A track's `bpm` here is the tempo the DJ played it at. Where the record
+    # itself has been downloaded and measured, its own tempo comes along
+    # beside it under `record` — both are true and the page has to be able to
+    # tell them apart, which one unlabelled field cannot.
+    described = await library.described_by_key(user_id=user["id"])
+    if described:
+        for track in data.get("tracks", []):
+            found = described.get(track.get("key") or track.get("track_key"))
+            if found:
+                track["record"] = found
     return data
+
+
+@app.post("/api/acquire/describe")
+async def describe_downloads(user: Dict[str, Any] = Depends(current_user)):
+    """Measure every downloaded file nobody has looked at yet.
+
+    Deliberately manual. A full sweep of a large crate is hours of CPU on a
+    host that runs five other projects, and that should be a decision somebody
+    made rather than something a deploy started on its own. New downloads are
+    described without asking; this is for the backlog.
+    """
+    from .acquire.describe import sweep
+
+    report = await sweep(library, user_id=user["id"])
+    return report.as_dict()
 
 
 @app.delete("/api/sets/{set_id}")

@@ -231,6 +231,26 @@ class Library:
         # Which invitation produced this copy, so following the same link
         # twice returns the copy already made rather than a second one.
         ("sets", "shared_from", "TEXT DEFAULT ''"),
+        # What the downloaded file turns out to be, measured from the audio
+        # rather than from the mix it was heard in. The tempo of a record and
+        # the tempo the DJ played it at are both true and they are not the
+        # same number; this is the first one.
+        ("downloads", "bpm", "REAL"),
+        ("downloads", "musical_key", "TEXT DEFAULT ''"),
+        ("downloads", "camelot", "TEXT DEFAULT ''"),
+        ("downloads", "key_strength", "REAL"),
+        ("downloads", "loudness_lufs", "REAL"),
+        ("downloads", "dynamic_range", "REAL"),
+        # Distinguishes "not looked at yet" from "looked at and undetectable",
+        # which a null tempo alone cannot.
+        ("downloads", "analysed_at", "TEXT DEFAULT ''"),
+        # Genre is the umbrella ("Electronic"), style the thing you dig by
+        # ("Deep House"). `style_source` because a style read from a
+        # stranger's ID3 tag and one from a Discogs release are not equally
+        # trustworthy, and one column hiding the difference cannot be audited.
+        ("downloads", "genre", "TEXT DEFAULT ''"),
+        ("downloads", "style", "TEXT DEFAULT ''"),
+        ("downloads", "style_source", "TEXT DEFAULT ''"),
     )
 
     async def adopt_orphans(self, user_id: str) -> int:
@@ -621,7 +641,10 @@ class Library:
     def _update_download_sync(self, download_id: int,
                               fields: Dict[str, Any]) -> None:
         allowed = {"status", "message", "local_path", "verified", "progress",
-                   "quality", "size", "username", "remote_path"}
+                   "quality", "size", "username", "remote_path",
+                   "bpm", "musical_key", "camelot", "key_strength",
+                   "loudness_lufs", "dynamic_range", "analysed_at",
+                   "genre", "style", "style_source"}
         writable = {k: v for k, v in fields.items() if k in allowed}
         if not writable:
             return
@@ -701,6 +724,58 @@ class Library:
                 " ORDER BY created_at DESC LIMIT ?",
                 (user_id, limit)).fetchall()
         return [_download_row(r) for r in rows]
+
+    async def undescribed_downloads(self, *, user_id: Optional[str] = None,
+                                    limit: int = 500) -> List[Dict[str, Any]]:
+        """Finished downloads nobody has measured yet.
+
+        Keyed on `analysed_at` rather than on a null tempo: a record whose
+        tempo genuinely could not be found must not be re-measured on every
+        sweep for ever.
+        """
+        return await self._run(self._undescribed_downloads_sync, user_id, limit)
+
+    def _undescribed_downloads_sync(self, user_id: Optional[str],
+                                    limit: int) -> List[Dict[str, Any]]:
+        query = ("SELECT id, track_key, artist, title, local_path, user_id"
+                 " FROM downloads WHERE status = 'ready'"
+                 " AND (analysed_at IS NULL OR analysed_at = '')")
+        params: List[Any] = []
+        if user_id is not None:
+            query += " AND user_id = ?"
+            params.append(user_id)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with closing(self._connect()) as conn:
+            return [dict(r) for r in conn.execute(query, params).fetchall()]
+
+    async def described_by_key(self, *, user_id: str) -> Dict[str, Dict[str, Any]]:
+        """What the downloaded copy of each record turns out to be, by key.
+
+        For the set view. The tempo shown against a track in a mix is the
+        tempo the DJ played it at; once the record itself is on disk we know
+        its own tempo, and those are two different true numbers. This is how
+        the second one reaches a page that only knows about the first.
+        """
+        return await self._run(self._described_by_key_sync, user_id)
+
+    def _described_by_key_sync(self, user_id: str) -> Dict[str, Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT track_key, bpm, camelot, musical_key, style, genre"
+                " FROM downloads WHERE user_id = ? AND status = 'ready'"
+                " AND analysed_at IS NOT NULL AND analysed_at != ''"
+                # Newest last, so the dictionary keeps the most recent copy of
+                # a record downloaded more than once.
+                " ORDER BY id ASC", (user_id,)).fetchall()
+        out: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            described = {k: r[k] for k in
+                         ("bpm", "camelot", "musical_key", "style", "genre")
+                         if r[k] not in (None, "")}
+            if described:
+                out[r["track_key"]] = described
+        return out
 
     # ── Enrichment ───────────────────────────────────────────────────────
 
@@ -1170,6 +1245,12 @@ def _download_row(r: sqlite3.Row) -> Dict[str, Any]:
         "available": bool(local and Path(local).exists()),
         "size": r["size"], "verified": bool(r["verified"]),
         "progress": r["progress"], "created_at": r["created_at"],
+        # Absent rather than null when never analysed, so a client can tell
+        # "no tempo" from "not looked at" without a second field.
+        **{name: r[name] for name in
+           ("bpm", "musical_key", "camelot", "key_strength", "loudness_lufs",
+            "dynamic_range", "genre", "style", "style_source", "analysed_at")
+           if name in r.keys() and r[name] not in (None, "")},
     }
 
 

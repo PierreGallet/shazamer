@@ -4,6 +4,10 @@ arq>=0.26,<1.0
 mutagen>=1.47
 pydub==0.25.1
 librosa==0.10.2.post1
+# Tempo, key, EBU loudness and dynamics on downloaded files, and the set
+# tempo. Linux x86-64 only: there is no arm64 macOS wheel, so every caller
+# treats it as optional and falls back to librosa. See src/core/descriptors.py.
+essentia==2.1b6.dev1389 ; platform_system == "Linux" and platform_machine == "x86_64"
 numpy==2.1.2
 scipy==1.14.1
 soundfile==0.12.1

@@ -15,9 +15,15 @@ import { api, formatBytes } from "../lib/api";
 
 const POLL_MS = 4000;
 
+type SortBy = "recent" | "bpm" | "key";
+
+
 export default function Downloads() {
   const [rows, { refetch }] = createResource(() => api.downloads());
   const [filter, setFilter] = createSignal("");
+  const [sort, setSort] = createSignal<SortBy>("recent");
+  const [sweeping, setSweeping] = createSignal(false);
+  const [swept, setSwept] = createSignal("");
 
   // Polled only while something is moving. A queue on Soulseek can sit for
   // ten minutes, and a page that stops updating during it looks broken.
@@ -33,11 +39,49 @@ export default function Downloads() {
 
   const shown = () => {
     const needle = filter().trim().toLowerCase();
-    const all = rows() ?? [];
-    if (!needle) return all;
-    return all.filter((d) =>
-      `${d.artist} ${d.title} ${d.username}`.toLowerCase().includes(needle));
+    let all = rows() ?? [];
+    if (needle) {
+      // Style is searchable too: "tech house" is how you find a record whose
+      // name you have forgotten, which is the whole point of a crate.
+      all = all.filter((d) =>
+        `${d.artist} ${d.title} ${d.username} ${d.style ?? ""} ${d.genre ?? ""}`
+          .toLowerCase().includes(needle));
+    }
+    const by = sort();
+    if (by === "recent") return all;
+    // Rows with nothing measured sink rather than sorting as zero — a file
+    // waiting to be described is not a 0 BPM record.
+    return [...all].sort((a, b) => {
+      if (by === "bpm") return (b.bpm ?? -1) - (a.bpm ?? -1);
+      return (a.camelot ?? "~").localeCompare(b.camelot ?? "~", undefined,
+                                              { numeric: true });
+    });
   };
+
+  const undescribed = () =>
+    (rows() ?? []).filter((d) => d.status === "ready" && !d.analysed_at).length;
+
+  async function describe() {
+    setSweeping(true);
+    setSwept("");
+    try {
+      const report = await api.describeDownloads();
+      // The sweep is measured in files, not in a spinner: a crate of two
+      // hundred takes hours and "working..." for hours is indistinguishable
+      // from broken.
+      setSwept(
+        report.unavailable
+          ? "This server cannot measure audio — Essentia is not installed here."
+          : `${report.described} described` +
+            (report.skipped ? `, ${report.skipped} no longer on disk` : "") +
+            (report.failed ? `, ${report.failed} unreadable` : ""));
+      refetch();
+    } catch (err) {
+      setSwept(err instanceof Error ? err.message : "Could not start the sweep");
+    } finally {
+      setSweeping(false);
+    }
+  }
 
   return (
     <div class="wrap">
@@ -46,11 +90,35 @@ export default function Downloads() {
         <div class="spacer" />
         <input
           class="signin-input downloads-filter"
-          placeholder="Filter"
+          placeholder="Filter by name or style"
           value={filter()}
           onInput={(e) => setFilter(e.currentTarget.value)}
         />
+        <select
+          class="signin-input downloads-sort"
+          aria-label="Sort the crate"
+          value={sort()}
+          onChange={(e) => setSort(e.currentTarget.value as SortBy)}
+        >
+          <option value="recent">Newest first</option>
+          <option value="bpm">Tempo</option>
+          <option value="key">Key</option>
+        </select>
+        <Show when={undescribed()}>
+          <button
+            class="btn btn-ghost btn-sm"
+            disabled={sweeping()}
+            title="Measure tempo, key, loudness and style for files nobody has looked at yet. Minutes per track, so it runs on request rather than on its own."
+            onClick={describe}
+          >
+            {sweeping() ? "Measuring…" : `Measure ${undescribed()}`}
+          </button>
+        </Show>
       </div>
+
+      <Show when={swept()}>
+        <div class="tiny faint downloads-swept">{swept()}</div>
+      </Show>
 
       <Show
         when={shown().length}
@@ -85,6 +153,31 @@ export default function Downloads() {
                     {item.message}
                   </div>
                 </div>
+
+                <Show when={item.bpm}>
+                  <span class="chip" title="The record's own tempo, measured from this file">
+                    {item.bpm!.toFixed(0)}
+                  </span>
+                </Show>
+                <Show when={item.camelot}>
+                  <span class="chip chip-key" title={item.musical_key ?? ""}>
+                    {item.camelot}
+                  </span>
+                </Show>
+                <Show when={item.style || item.genre}>
+                  {/* Where it came from is part of what it is: a style read
+                      from a stranger's ID3 tag and one from a Discogs release
+                      are not equally trustworthy. */}
+                  <span
+                    class="chip chip-style"
+                    classList={{ faint: item.style_source === "tag" }}
+                    title={item.style_source === "discogs"
+                      ? "Style, from Discogs"
+                      : "Genre, from the file's own tags — whoever ripped it wrote this"}
+                  >
+                    {item.style || item.genre}
+                  </span>
+                </Show>
 
                 <Show when={item.verified}>
                   {/* Only shown when true: "unverified" on every row would be

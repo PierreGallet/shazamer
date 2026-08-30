@@ -197,12 +197,37 @@ export default function TrackList(props: Props) {
               </div>
 
               <div class="track-meta">
-                <Show when={track.bpm}>
-                  <span class="chip" title="Tempo">{track.bpm!.toFixed(0)}</span>
+                {/* Two tempos, and they are not the same number. `bpm` is what
+                    the DJ played the record at, measured from the mix; a
+                    record pitched from 132 to 130 to sit in the set is 132 and
+                    also 130, and only the first is what you sort a crate by.
+                    So the record's own tempo wins the slot once we have the
+                    file, and the mix's is labelled when it is all we have. */}
+                <Show
+                  when={track.record?.bpm}
+                  fallback={
+                    <Show when={track.bpm}>
+                      <span class="chip faint" title="Tempo in the mix — the record's own tempo is known only once it has been downloaded">
+                        {track.bpm!.toFixed(0)} in the mix
+                      </span>
+                    </Show>
+                  }
+                >
+                  <span class="chip" title="The record's own tempo, measured from the downloaded file">
+                    {track.record!.bpm!.toFixed(0)}
+                  </span>
                 </Show>
-                <Show when={track.camelot}>
-                  <span class="chip chip-key" title={track.musical_key ?? ""}>
-                    {track.camelot}
+                <Show when={track.record?.camelot ?? track.camelot}>
+                  <span
+                    class="chip chip-key"
+                    title={track.record?.musical_key ?? track.musical_key ?? ""}
+                  >
+                    {track.record?.camelot ?? track.camelot}
+                  </span>
+                </Show>
+                <Show when={track.record?.style}>
+                  <span class="chip chip-style" title="Style, from Discogs">
+                    {track.record!.style}
                   </span>
                 </Show>
                 <Show when={track.identified && track.strength}>
