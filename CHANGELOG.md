@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.1](https://github.com/PierreGallet/shazamer/compare/v1.20.0...v1.20.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **acquire:** a download you asked for is yours, whatever it sounds like ([c961881](https://github.com/PierreGallet/shazamer/commit/c961881715e621b48cc95d0c7c2b60c1bfa23dd6))
+
 ## [1.20.0](https://github.com/PierreGallet/shazamer/compare/v1.19.0...v1.20.0) (2026-08-30)
 
 
