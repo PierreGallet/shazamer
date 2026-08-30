@@ -222,6 +222,46 @@ def harmonic_novelty(features: FeatureSet) -> np.ndarray:
     return (total / scales).astype(np.float32)
 
 
+# A probe is placed among positions whose separation is within this share of
+# the best available. Above it, positions count as equally well separated and
+# stability decides between them.
+#
+# The number sets how much spread may be traded for cleaner audio. At 0.8 a
+# probe can give up a fifth of its distance from the nearest neighbour to sit
+# in a stretch where one record is playing alone — which is worth it, because
+# separation past half a probe window buys very little extra independence
+# while a blend costs the answer outright.
+STABILITY_TIE_TOLERANCE = 0.8
+
+
+def stability_curve(features: FeatureSet) -> np.ndarray:
+    """How alone one record sounds at each moment, 0 to 1, on the chroma grid.
+
+    The inverse of `harmonic_novelty`, and the reason that function is worth
+    computing twice over. High novelty means the harmony either side differs:
+    two records overlapping, or a breakdown where the chords drop out. Both are
+    exactly where a fingerprinter fails — it is handed two songs at once, or
+    almost nothing.
+
+    So the curve that says where a boundary *is* also says where a probe should
+    *not* go, and it is already in memory.
+
+    Scaled against its own range rather than an absolute threshold: what counts
+    as a busy passage in an ambient set is not what counts in a peak-time one,
+    and only the ordering within a set is used.
+    """
+    novelty = harmonic_novelty(features)
+    if novelty.size == 0:
+        return np.zeros(0, dtype=np.float32)
+
+    low, high = float(novelty.min()), float(novelty.max())
+    if high - low <= 0:
+        # Perfectly flat: no position is better than another, and saying so is
+        # more useful than manufacturing an ordering out of floating-point dust.
+        return np.zeros(novelty.size, dtype=np.float32)
+    return (1.0 - (novelty - low) / (high - low)).astype(np.float32)
+
+
 def novelty_curve(features: FeatureSet, smooth_sigma: float = 10.0) -> np.ndarray:
     """Where the music changes: harmony first, then timbre and level.
 
@@ -634,14 +674,15 @@ def spectral_boundaries(features: FeatureSet, min_song_duration: float,
 
 def confirmation_times(segment: Segment, already: Sequence[float],
                        wanted: int, probe_duration: float = 12.0,
-                       edge_margin: float = 6.0) -> List[float]:
+                       edge_margin: float = 6.0,
+                       features: Optional[FeatureSet] = None) -> List[float]:
     """Extra probe positions inside a segment whose evidence is thin.
 
-    The goal is independent evidence, so each position is chosen to sit as far
-    as possible from every probe already taken — including the ones added by
-    this call. Even spacing across the segment was tried first and placed
-    probes badly whenever an existing one already sat near the middle: the
-    obvious slot at the edge went unused and the segment kept its single vote.
+    The goal is independent evidence, so each position must sit far from every
+    probe already taken — including the ones added by this call. Even spacing
+    across the segment was tried first and placed probes badly whenever an
+    existing one already sat near the middle: the obvious slot at the edge went
+    unused and the segment kept its single vote.
 
     "Far enough" is defined by the probe window rather than a fixed number of
     seconds: two probes closer than half a window overlap by more than half, so
@@ -650,6 +691,22 @@ def confirmation_times(segment: Segment, already: Sequence[float],
 
     Both ends are trimmed — a boundary is approximate, and audio there may
     belong to the neighbouring track.
+
+    Given `features`, separation stops being the whole answer and becomes a
+    filter. Among positions that are comfortably separated — within
+    `STABILITY_TIE_TOLERANCE` of the best available — the one where a single
+    record is playing wins. A Shazam probe is the scarcest thing in this
+    system, roughly one every ten seconds under the rate limit, and until now
+    it was placed by arithmetic that never listened: a probe landing in the
+    middle of a forty-second blend hears two records at once, which is the one
+    condition a fingerprinter cannot resolve.
+
+    Separation stays a hard constraint and is never traded away, so this can
+    only reorder choices that were already valid — it can never return fewer
+    probes than it would without `features`. That asymmetry is deliberate:
+    fewer probes displays as "weak evidence" when the truth would have been
+    "we declined to look", and a silent failure is worse than a mediocre
+    position.
 
     Returns fewer than requested, possibly none, when the segment has no room.
     A short track backed by one probe then stays weak, which is the honest
@@ -670,17 +727,42 @@ def confirmation_times(segment: Segment, already: Sequence[float],
     steps = max(2, min(200, int((hi - lo) / 2)))
     candidates = [lo + (hi - lo) * i / steps for i in range(steps + 1)]
 
+    stability = stability_curve(features) if features is not None else None
+    rate = features.chroma_rate if features is not None else 0.0
+
+    def settled(t: float) -> float:
+        """How alone one record sounds at `t`. Zero when nothing is known."""
+        if stability is None or stability.size == 0 or rate <= 0:
+            return 0.0
+        return float(stability[min(int(t * rate), stability.size - 1)])
+
     taken = list(already)
     out: List[float] = []
     for _ in range(missing):
-        best: Optional[float] = None
-        best_gap = 0.0
-        for t in candidates:
-            gap = min((abs(t - u) for u in taken + out), default=float("inf"))
-            if gap > best_gap:
-                best_gap, best = gap, t
-        if best is None or best_gap < min_gap:
+        gaps = [(t, min((abs(t - u) for u in taken + out), default=float("inf")))
+                for t in candidates]
+        widest = max((gap for _t, gap in gaps), default=0.0)
+        if widest < min_gap:
             break                       # nowhere independent left
+
+        # Every position that is both independent and near the widest gap
+        # available. `>= min_gap` is the constraint; the tolerance is the
+        # tie-break window.
+        #
+        # With nothing to say about the audio the window closes to the widest
+        # gap alone, which is the rule this function has always followed. A
+        # tolerance applied with no stability to spend it on would trade
+        # separation for nothing and quietly move every existing caller.
+        tolerance = (STABILITY_TIE_TOLERANCE if stability is not None
+                     and stability.size else 1.0)
+        room = [t for t, gap in gaps
+                if gap >= min_gap and gap >= widest * tolerance]
+        if not room:
+            break
+
+        # `-t` breaks a stability tie towards the earlier position, which is
+        # what the pure-separation rule did and what the tests expect.
+        best = max(room, key=lambda t: (settled(t), -t))
         out.append(round(best, 3))
 
     return sorted(out)
