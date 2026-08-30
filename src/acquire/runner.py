@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .library import VerificationFailed, collect
-from .slskd import Candidate, SlskdClient, SlskdError, search_query
+from .slskd import (LOSSLESS, Candidate, SlskdClient, SlskdError,
+                    _ordinal, search_query)
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +171,8 @@ async def acquire_track(library, destination: Path, track_key: str,
 
         await client.enqueue(best)
 
-        def on_progress(percent: float, state: str) -> None:
+        def on_progress(percent: float, state: str,
+                        position: Optional[int] = None) -> None:
             # Fire-and-forget, because awaiting a database write inside the
             # poll loop would slow the loop for no benefit — but *tracked*,
             # and drained before anything final is written.
@@ -181,11 +183,22 @@ async def acquire_track(library, destination: Path, track_key: str,
             # said one thing and the message said another, and neither said
             # what went wrong.
             import asyncio
+
+            # A queued transfer sits at 0% for as long as the queue lasts, so
+            # "0%" was the entire story for what could be an hour. The place in
+            # the queue is the only thing that moves, and it is what somebody
+            # waiting actually wants: 12th is worth waiting for, 40th is worth
+            # picking somebody else.
+            if "queued" in state.lower():
+                where = _ordinal(position)
+                message = (f"{where} in {best.username}'s queue"
+                           if where else f"Queued by {best.username}")
+            else:
+                message = (f"Downloading from {best.username}... "
+                           f"{percent:.0f}%")
             progress_writes.append(asyncio.create_task(
                 library.update_download(
-                    download_id, progress=percent,
-                    message=f"Downloading from {best.username}... "
-                            f"{percent:.0f}%")
+                    download_id, progress=percent, message=message)
             ))
 
 
@@ -209,22 +222,30 @@ async def acquire_track(library, destination: Path, track_key: str,
             source, destination, artist, title,
             identifier=identifier, expected_key=track_key, meta=meta,
             require_verification=REQUIRE_VERIFICATION,
+            # From the candidate, not from the transfer entry: `entry` is
+            # slskd's record of the transfer and carries no audio metadata.
+            declared_bitrate=int(best.bitrate or 0),
+            lossless=best.extension in LOSSLESS,
         )
 
-        # Ready either way. The fingerprint's verdict rides along in the
-        # message, because "this sounds like a mix of three other records" is
-        # worth knowing before you load it — and worth nothing if it stops you
-        # having the file you asked for.
-        if acquired.verified:
-            message = "Ready"
-        elif acquired.verified_as:
-            message = f"Ready — but this sounds like {acquired.verified_as}"
-        else:
-            message = "Ready — could not confirm what this is"
+        # Ready either way, and for both verdicts. The fingerprint says whether
+        # this is the right record; the spectrum says whether it is the quality
+        # it claims. Both are worth knowing before you load it and worth
+        # nothing if they stop you having the file you asked for.
+        parts = []
+        if not acquired.verified:
+            parts.append(f"this sounds like {acquired.verified_as}"
+                         if acquired.verified_as
+                         else "could not confirm what this is")
+        if acquired.quality_note:
+            parts.append(acquired.quality_note)
+        message = "Ready" if not parts else "Ready — " + "; ".join(parts)
 
         await note("ready", message,
                    local_path=str(acquired.path),
-                   verified=1 if acquired.verified else 0, progress=100)
+                   verified=1 if acquired.verified else 0, progress=100,
+                   cutoff_hz=acquired.cutoff_hz,
+                   quality_note=acquired.quality_note)
         logger.info("Acquired %s - %s -> %s", artist, title, acquired.path.name)
 
     except VerificationFailed as exc:

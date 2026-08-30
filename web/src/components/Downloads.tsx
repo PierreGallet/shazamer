@@ -179,6 +179,16 @@ export default function Downloads() {
                   </span>
                 </Show>
 
+                <Show when={item.quality_note}>
+                  {/* The declared bitrate against what the audio carries. Only
+                      shown when they disagree — a note here is a finding, and
+                      "the bitrate is what it says" on every row would be
+                      noise. */}
+                  <span class="chip chip-warn" title={item.quality_note}>
+                    quality
+                  </span>
+                </Show>
+
                 <Show when={item.verified}>
                   {/* Only shown when true: "unverified" on every row would be
                       noise, and this one means the audio was fingerprinted

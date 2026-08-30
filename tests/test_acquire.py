@@ -732,3 +732,73 @@ async def test_the_download_is_always_yours_to_save(tmp_path, monkeypatch):
     assert row["verified"] is False, "the disagreement was not recorded"
     assert "The Quest" in row["message"], (
         f"the message does not say what it sounds like: {row['message']!r}")
+
+
+def test_a_queue_position_reads_like_english():
+    """Somebody is watching this while they wait, so it should read."""
+    from src.acquire.slskd import _ordinal
+
+    assert _ordinal(1) == "1st"
+    assert _ordinal(2) == "2nd"
+    assert _ordinal(3) == "3rd"
+    assert _ordinal(4) == "4th"
+    assert _ordinal(11) == "11th"          # not "11st"
+    assert _ordinal(12) == "12th"
+    assert _ordinal(13) == "13th"
+    assert _ordinal(21) == "21st"
+    assert _ordinal(112) == "112th"
+    assert _ordinal(None) == ""
+
+
+async def test_moving_up_a_queue_is_progress_not_a_stall():
+    """The bug this fixes: waiting in a queue was killed as a dead transfer.
+
+    A queued download sits at 0% by definition, so the percentage-stall rule
+    abandoned it after ten minutes and reported "the peer is probably gone"
+    about a peer who was fine and forty people deep.
+    """
+    from src.acquire.slskd import SlskdClient
+
+    seen = []
+    positions = iter([40, 40, 12, 3, None])
+
+    class Queueing(SlskdClient):
+        async def transfer(self, username, filename):
+            place = next(positions, None)
+            if place is None:
+                return {"state": "Completed, Succeeded", "percent": 100}
+            return {"state": "Queued, Remotely", "percent": 0,
+                    "placeInQueue": place}
+
+    client = Queueing()
+    entry = await client.await_transfer(
+        "someone", "file.mp3", poll=0,
+        on_progress=lambda pct, state, pos=None: seen.append(pos))
+
+    assert entry["percent"] == 100, "a moving queue was abandoned"
+    # The trailing None is the completed poll, which has no queue to be in.
+    assert seen == [40, 40, 12, 3, None], (
+        f"queue position was not reported: {seen}")
+
+
+async def test_a_queue_that_never_moves_is_still_given_up_on():
+    """Patience is not infinite — it is just not ten minutes."""
+    import src.acquire.slskd as slskd_module
+    from src.acquire.slskd import SlskdClient, SlskdError
+
+    class Frozen(SlskdClient):
+        async def transfer(self, username, filename):
+            return {"state": "Queued, Remotely", "percent": 0,
+                    "placeInQueue": 17}
+
+    original = slskd_module.QUEUE_PATIENCE
+    slskd_module.QUEUE_PATIENCE = 0.0       # so the test does not wait an hour
+    try:
+        with pytest.raises(SlskdError) as raised:
+            await Frozen().await_transfer("someone", "file.mp3", poll=0)
+    finally:
+        slskd_module.QUEUE_PATIENCE = original
+
+    assert "17th" in str(raised.value), str(raised.value)
+    assert "probably gone" not in str(raised.value), (
+        "a queued transfer was still blamed on the peer disappearing")

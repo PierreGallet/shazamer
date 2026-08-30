@@ -81,6 +81,21 @@ def genre_from_tags(path: Path) -> str:
     return first[:64]
 
 
+def _declared_quality(label: str) -> "tuple[int, bool]":
+    """(bitrate in kbps, whether it claims to be lossless) from "MP3 320 kbps".
+
+    Parsed back out of the stored label rather than kept as a column: the label
+    is what the peer said, it is already recorded, and a second copy of it
+    would be a second thing that can disagree.
+    """
+    import re
+
+    upper = label.upper()
+    lossless = any(f in upper for f in ("FLAC", "WAV", "AIFF", "AIF", "ALAC"))
+    found = re.search(r"(\d+)\s*KBPS", upper)
+    return (int(found.group(1)) if found else 0), lossless
+
+
 async def describe_one(library, row: Dict[str, Any],
                        discogs=None) -> str:
     """Measure one download and store what came back.
@@ -122,6 +137,21 @@ async def describe_one(library, row: Dict[str, Any],
                 fields["genre"] = found.genre
             fields["style"] = found.style
             fields["style_source"] = "discogs"
+
+    # Whether the declared bitrate is true of the audio. Under a second, and
+    # it is the one measurement here that can contradict something already on
+    # screen — the rest add facts, this one corrects one.
+    declared, lossless = _declared_quality(row.get("quality", ""))
+    try:
+        from ..core.bitrate import assess
+
+        cutoff, quality_note = assess(local, declared, lossless)
+        if cutoff is not None:
+            fields["cutoff_hz"] = round(cutoff, 1)
+        if quality_note:
+            fields["quality_note"] = quality_note
+    except Exception as exc:            # noqa: BLE001
+        logger.debug("Could not assess %s: %s", local.name, exc)
 
     loop = asyncio.get_running_loop()
     # A thread: Essentia holds the CPU for seconds at a time and the event loop

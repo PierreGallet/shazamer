@@ -251,6 +251,11 @@ class Library:
         ("downloads", "genre", "TEXT DEFAULT ''"),
         ("downloads", "style", "TEXT DEFAULT ''"),
         ("downloads", "style_source", "TEXT DEFAULT ''"),
+        # Where the encoder stopped storing anything, and what that says about
+        # the bitrate the file declares. `quality` keeps what the peer claimed:
+        # overwriting it would destroy the evidence for the finding.
+        ("downloads", "cutoff_hz", "REAL"),
+        ("downloads", "quality_note", "TEXT DEFAULT ''"),
     )
 
     async def adopt_orphans(self, user_id: str) -> int:
@@ -644,7 +649,8 @@ class Library:
                    "quality", "size", "username", "remote_path",
                    "bpm", "musical_key", "camelot", "key_strength",
                    "loudness_lufs", "dynamic_range", "analysed_at",
-                   "genre", "style", "style_source"}
+                   "genre", "style", "style_source",
+                   "cutoff_hz", "quality_note"}
         writable = {k: v for k, v in fields.items() if k in allowed}
         if not writable:
             return
@@ -737,8 +743,8 @@ class Library:
 
     def _undescribed_downloads_sync(self, user_id: Optional[str],
                                     limit: int) -> List[Dict[str, Any]]:
-        query = ("SELECT id, track_key, artist, title, local_path, user_id"
-                 " FROM downloads WHERE status = 'ready'"
+        query = ("SELECT id, track_key, artist, title, local_path, user_id,"
+                 " quality FROM downloads WHERE status = 'ready'"
                  " AND (analysed_at IS NULL OR analysed_at = '')")
         params: List[Any] = []
         if user_id is not None:
@@ -1249,7 +1255,8 @@ def _download_row(r: sqlite3.Row) -> Dict[str, Any]:
         # "no tempo" from "not looked at" without a second field.
         **{name: r[name] for name in
            ("bpm", "musical_key", "camelot", "key_strength", "loudness_lufs",
-            "dynamic_range", "genre", "style", "style_source", "analysed_at")
+            "dynamic_range", "genre", "style", "style_source", "analysed_at",
+            "cutoff_hz", "quality_note")
            if name in r.keys() and r[name] not in (None, "")},
     }
 
