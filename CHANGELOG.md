@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0](https://github.com/PierreGallet/shazamer/compare/v1.21.1...v1.22.0) (2026-08-30)
+
+
+### Features
+
+* **segment:** find boundaries by harmony, not by brightness ([72d0125](https://github.com/PierreGallet/shazamer/commit/72d0125419f20ba0b1a15daff81180c4f206e7f0))
+
 ## [1.21.1](https://github.com/PierreGallet/shazamer/compare/v1.21.0...v1.21.1) (2026-08-30)
 
 
