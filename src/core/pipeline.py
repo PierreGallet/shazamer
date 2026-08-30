@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ..identify.base import Identifier, TrackMatch
 from . import audio as audio_io
+from .descriptors import tempo_of
 from .features import (FeatureSet, StreamingFeatures, estimate_bpm,
                        estimate_key)
 from .segment import (ProbeResult, Segment, auto_interval, auto_min_segment,
@@ -642,10 +643,23 @@ class Pipeline:
                 except Exception as exc:
                     logger.debug("PCM extract failed for track %d: %s", track.index, exc)
                     return
-                # librosa is CPU-bound and releases the GIL in its inner loops;
-                # a thread keeps the event loop responsive for other probes.
+                # Essentia first, librosa as the fallback. Measured on ten
+                # windows of a real set, librosa returned 89.1, 103.4 and 107.7
+                # twice in a mix that never left 123-133 — half-time locks the
+                # 85-175 folding cannot catch because they land inside it.
+                # Essentia was right on all ten, including the one window whose
+                # title states its own tempo.
+                #
+                # Both are CPU-bound and release the GIL in their inner loops,
+                # so a thread keeps the event loop serving other probes.
                 track.bpm = await loop.run_in_executor(
-                    None, estimate_bpm, pcm, audio_io.ANALYSIS_SR)
+                    None, tempo_of, pcm, audio_io.ANALYSIS_SR)
+                if track.bpm is None:
+                    track.bpm = await loop.run_in_executor(
+                        None, estimate_bpm, pcm, audio_io.ANALYSIS_SR)
+                # Key stays on librosa: the two agree on seven windows of ten
+                # and there is no ground truth among the three disagreements,
+                # which is not a reason to switch.
                 key = await loop.run_in_executor(
                     None, estimate_key, pcm, audio_io.ANALYSIS_SR)
             if key is not None:

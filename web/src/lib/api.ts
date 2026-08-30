@@ -51,9 +51,22 @@ export interface Track {
   strength: "strong" | "medium" | "weak" | "none" | "";
   votes: number;
   probes: number;
+  /** The tempo the DJ played it at, measured from the mix — not the record's
+   *  own tempo. Those are two different true numbers and the page has to be
+   *  able to tell them apart. See `record`. */
   bpm: number | null;
   camelot: string | null;
   musical_key: string | null;
+  /** What the downloaded copy of this record turns out to be, when there is
+   *  one and it has been measured. Absent otherwise. This is the tempo a DJ
+   *  sorts and mixes by; `bpm` above is the tempo of the mix. */
+  record?: {
+    bpm?: number;
+    camelot?: string;
+    musical_key?: string;
+    style?: string;
+    genre?: string;
+  };
   starred?: boolean;
 }
 
@@ -176,6 +189,35 @@ export interface Download {
   verified: boolean;
   progress: number;
   created_at: string;
+  /** Measured from the file itself, so this is the record's own tempo. Absent
+   *  until the sweep has looked at it. */
+  bpm?: number;
+  camelot?: string;
+  musical_key?: string;
+  key_strength?: number;
+  /** EBU R128 integrated loudness. The only loudness number that means the
+   *  same thing across two files mastered by different people. */
+  loudness_lufs?: number;
+  dynamic_range?: number;
+  /** "Electronic" — the umbrella. */
+  genre?: string;
+  /** "Deep House" — the thing you actually dig by. */
+  style?: string;
+  /** Where the style came from: a stranger's ID3 tag, or Discogs. Shown,
+   *  because those are not equally trustworthy. */
+  style_source?: "tag" | "discogs" | "";
+  analysed_at?: string;
+}
+
+export interface SweepReport {
+  queued: number;
+  described: number;
+  skipped: number;
+  failed: number;
+  styled: number;
+  /** True when the server cannot import Essentia — a dev box, not the server. */
+  unavailable: boolean;
+  errors: string[];
 }
 
 export interface Watch {
@@ -515,6 +557,8 @@ export const api = {
           : "/api/acquire/downloads",
     ),
   download: (id: number) => request<Download>(`/api/acquire/downloads/${id}`),
+  describeDownloads: () =>
+    request<SweepReport>("/api/acquire/describe", { method: "POST" }),
   downloadFileUrl: (id: number) => `/api/acquire/downloads/${id}/file`,
 
   watches: () => request<Watch[]>("/api/watches"),
