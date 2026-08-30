@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.0](https://github.com/PierreGallet/shazamer/compare/v1.23.0...v1.24.0) (2026-08-30)
+
+
+### Features
+
+* **acquire:** measure what a downloaded record actually is ([#74](https://github.com/PierreGallet/shazamer/issues/74)) ([b1fabe5](https://github.com/PierreGallet/shazamer/commit/b1fabe5aa9ae2d7d4919c9bdfab3e46b1998f90e))
+
 ## [1.23.0](https://github.com/PierreGallet/shazamer/compare/v1.22.0...v1.23.0) (2026-08-30)
 
 
