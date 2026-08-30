@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.0](https://github.com/PierreGallet/shazamer/compare/v1.20.1...v1.21.0) (2026-08-30)
+
+
+### Features
+
+* **feedback:** label identifications, so heuristics can be measured ([5d9eeca](https://github.com/PierreGallet/shazamer/commit/5d9eeca68103c57eb05b2367d2ae0aa20a6ed7d4))
+
 ## [1.20.1](https://github.com/PierreGallet/shazamer/compare/v1.20.0...v1.20.1) (2026-08-30)
 
 
