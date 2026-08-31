@@ -58,16 +58,33 @@ def init_sentry() -> bool:
 
 
 def _probe_release() -> str | None:
-    """Best-effort: read version from a VERSION file or pyproject, else None."""
-    candidates = [
-        ("VERSION", lambda c: c.strip()),
-    ]
-    for path, parse in candidates:
+    """The version this build is, so an error can be traced to a commit.
+
+    Read from `.release-please-manifest.json`, which release-please owns and
+    rewrites on every release — so it is current by construction and it is in
+    the image.
+
+    It used to read a `VERSION` file. There has never been one: no `VERSION`,
+    no `setup.py`, no `pyproject.toml` in this repository, so this returned
+    None on every call and every Sentry event went up with no release
+    attached. Which is the one field you want when an error appears after a
+    deploy.
+    """
+    import json
+
+    for path in (".release-please-manifest.json", "VERSION"):
         try:
-            with open(path) as f:
-                version = parse(f.read())
-                if version:
-                    return f"shazamer@{version}"
+            with open(path) as handle:
+                raw = handle.read()
         except OSError:
             continue
+        if path.endswith(".json"):
+            try:
+                version = str(json.loads(raw).get(".", "")).strip()
+            except (ValueError, AttributeError):
+                continue
+        else:
+            version = raw.strip()
+        if version:
+            return f"shazamer@{version}"
     return None
