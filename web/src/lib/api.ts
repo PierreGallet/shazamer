@@ -43,14 +43,21 @@ export interface Track {
   catalog_number: string;
   mbid: string;
   key: string;
+  /** Votes over probes — so a segment covered by a single probe reads 1.0 by
+   *  construction, because it agrees with itself. Measured on the live
+   *  library, 1.0 covers fifteen well-evidenced tracks and eighteen thin ones.
+   *  Never render it alone: use `strength`, which weighs the count too, and
+   *  `probes` for the denominator. */
   confidence: number;
   /** Share of the probes that named *something* which agreed. Silence is not
    *  dissent — fingerprinting fails on breakdowns and unreleased passages. */
   agreement: number;
   /** How much evidence backs the match, not just how much of it agreed. */
   strength: "strong" | "medium" | "weak" | "none" | "";
-  votes: number;
-  probes: number;
+  /** How many probes named this track, and how many were taken across the
+   *  segment. Absent on a set analysed before they were stored. */
+  votes?: number;
+  probes?: number;
   /** The tempo the DJ played it at, measured from the mix — not the record's
    *  own tempo. Those are two different true numbers and the page has to be
    *  able to tell them apart. See `record`. */

@@ -553,3 +553,65 @@ async def test_an_invented_verdict_is_refused(library):
 
     assert await library.record_feedback("s1", 1, "maybe",
                                          user_id="alice") is False
+
+
+async def test_the_evidence_behind_a_match_survives_a_save(library):
+    """`confidence` is votes over probes, and the denominator was being dropped.
+
+    A segment covered by one probe scores 1.0 by agreeing with itself, and on
+    the live library that maximum covered fifteen well-evidenced tracks and
+    eighteen thin ones. The number could not be read without its denominator,
+    and the denominator did not survive being written to disk — so the
+    tracklist tooltip interpolated `undefined` on every reloaded set.
+    """
+    payload = {"duration": 600.0, "waveform": [], "stats": {}, "tracks": [
+        {"index": 1, "start": 0, "end": 300, "identified": True,
+         "key": "a::x", "title": "X", "artist": "A", "confidence": 1.0,
+         "strength": "strong", "votes": 4, "probes": 4},
+        {"index": 2, "start": 300, "end": 600, "identified": True,
+         "key": "b::y", "title": "Y", "artist": "B", "confidence": 1.0,
+         "strength": "weak", "votes": 1, "probes": 1}]}
+    await library.save_set("s1", "Set", payload, user_id="alice")
+
+    read = await library.get_set("s1", user_id="alice")
+    solid, thin = read["tracks"]
+
+    assert solid["confidence"] == thin["confidence"] == 1.0, (
+        "the fixture no longer shows why confidence cannot be read alone")
+    assert (solid["votes"], solid["probes"]) == (4, 4)
+    assert (thin["votes"], thin["probes"]) == (1, 1)
+
+
+async def test_a_verdict_freezes_the_evidence_as_well_as_the_score(library):
+    """The dimension six labels from one reel could not supply.
+
+    Every one of them scored 1.00 on confidence, so the study tool measured it
+    at 0.50 separation — no discriminating power. That was a property of the
+    sample: each segment rested on a single probe. Without the probe count
+    stored beside the verdict there is no way for a later study to tell that
+    apart from the metric being useless.
+    """
+    payload = {"duration": 600.0, "waveform": [], "stats": {}, "tracks": [
+        {"index": 1, "start": 0, "end": 300, "identified": True,
+         "key": "a::x", "title": "X", "artist": "A", "confidence": 1.0,
+         "strength": "strong", "votes": 4, "probes": 4}]}
+    await library.save_set("s1", "Set", payload, user_id="alice")
+    assert await library.record_feedback("s1", 1, "right", user_id="alice")
+
+    label = (await library.all_feedback())[0]
+    assert label["confidence"] == 1.0
+    assert label["probes"] == 4, "the denominator was not frozen with the score"
+    assert label["votes"] == 4
+
+
+async def test_a_set_from_before_the_evidence_was_stored_still_reads(library):
+    """Every set in the library predates this."""
+    payload = {"duration": 600.0, "waveform": [], "stats": {}, "tracks": [
+        {"index": 1, "start": 0, "end": 600, "identified": True,
+         "key": "a::x", "title": "X", "artist": "A", "confidence": 1.0}]}
+    await library.save_set("s1", "Set", payload, user_id="alice")
+
+    track = (await library.get_set("s1", user_id="alice"))["tracks"][0]
+    # Zero, not absent and not null: the reader distinguishes "no evidence
+    # recorded" from "no probes", and says so in words rather than a number.
+    assert track["votes"] == 0 and track["probes"] == 0

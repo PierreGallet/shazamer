@@ -23,6 +23,38 @@ interface Props {
   setId?: string;
 }
 
+/**
+ * What stands behind a match, in words.
+ *
+ * The tooltip used to interpolate `track.votes` and `track.probes` directly,
+ * and those were computed by the pipeline and then dropped on save — so every
+ * reloaded set, which is every set, read "undefined probes named this".
+ *
+ * It also has to name the single-probe case out loud. `confidence` is votes
+ * over probes, so one probe scores 1.0 by agreeing with itself; on the live
+ * library that maximum covers fifteen well-evidenced tracks and eighteen thin
+ * ones. A number that means both is worth a sentence rather than a digit.
+ */
+function evidence(track: Track): string {
+  const probes = track.probes ?? 0;
+  const votes = track.votes ?? 0;
+  if (!probes) {
+    return "This set was analysed before the evidence behind a match was " +
+      "recorded. Re-analyse it to see how many probes agreed.";
+  }
+  if (probes === 1) {
+    return "One probe, never corroborated. It agrees with itself, so the " +
+      "score cannot say more than that — a second probe would.";
+  }
+  if (votes === probes) {
+    return `All ${probes} probes across this segment named it.`;
+  }
+  return `${votes} of ${probes} probes named it. Probes that came back empty ` +
+    "are not counted against it — fingerprinting fails on breakdowns and on " +
+    "passages the database does not have.";
+}
+
+
 export default function TrackList(props: Props) {
   const [expanded, setExpanded] = createSignal<number | null>(null);
   const [starred, setStarred] = createSignal<Record<string, boolean>>({});
@@ -244,15 +276,7 @@ export default function TrackList(props: Props) {
                       "chip-warn": track.strength === "medium",
                       "chip-crit": track.strength === "weak",
                     }}
-                    title={
-                      track.strength === "weak"
-                        ? `Thin evidence: ${track.votes} probe(s) named this, ` +
-                          `out of ${track.probes} across the segment. Often a ` +
-                          "short track, or one sitting across a transition."
-                        : `${track.votes} probes named this. Probes that came ` +
-                          "back empty are not counted against it — fingerprinting " +
-                          "fails on breakdowns and unreleased passages."
-                    }
+                    title={evidence(track)}
                   >
                     {track.strength === "weak" ? "unsure"
                       : track.strength === "medium" ? "likely" : "solid"}
