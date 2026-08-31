@@ -657,3 +657,48 @@ async def test_a_file_outside_the_downloads_directory_is_refused(client,
 
     refused = await client.get(f"/api/acquire/downloads/{download_id}/file")
     assert refused.status_code == 400
+
+
+def test_an_error_can_be_traced_to_the_version_that_produced_it(tmp_path,
+                                                                monkeypatch):
+    """Sentry events were going up with no release attached, always.
+
+    `_probe_release` read a `VERSION` file, and there has never been one in
+    this repository — no `VERSION`, no `setup.py`, no `pyproject.toml`. So it
+    returned None on every call, and the one field you want when an error
+    appears right after a deploy was never set.
+
+    The manifest is the right source because release-please rewrites it on
+    every release, so it cannot drift, and the Dockerfile already copies it.
+    """
+    from src.sentry_setup import _probe_release
+
+    monkeypatch.chdir(tmp_path)
+    assert _probe_release() is None, "invented a version out of nothing"
+
+    (tmp_path / ".release-please-manifest.json").write_text('{".": "1.25.2"}')
+    assert _probe_release() == "shazamer@1.25.2"
+
+
+def test_a_damaged_manifest_does_not_take_the_app_down(tmp_path, monkeypatch):
+    """This runs at import time, before anything is serving.
+
+    A version is a nice-to-have; a process that will not start is not.
+    """
+    from src.sentry_setup import _probe_release
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".release-please-manifest.json").write_text("{not json at all")
+    assert _probe_release() is None
+
+    (tmp_path / ".release-please-manifest.json").write_text("[]")
+    assert _probe_release() is None
+
+
+def test_a_plain_version_file_still_works(tmp_path, monkeypatch):
+    """Kept as a fallback: an image built elsewhere may carry one."""
+    from src.sentry_setup import _probe_release
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "VERSION").write_text("9.9.9\n")
+    assert _probe_release() == "shazamer@9.9.9"
