@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.2](https://github.com/PierreGallet/shazamer/compare/v1.25.1...v1.25.2) (2026-08-31)
+
+
+### Bug Fixes
+
+* **library:** keep the evidence behind a match, not just the score ([#80](https://github.com/PierreGallet/shazamer/issues/80)) ([059c191](https://github.com/PierreGallet/shazamer/commit/059c1911d2c62d341370e3ad6d9795a8bce7695a))
+
 ## [1.25.1](https://github.com/PierreGallet/shazamer/compare/v1.25.0...v1.25.1) (2026-08-31)
 
 
