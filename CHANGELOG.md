@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.1](https://github.com/PierreGallet/shazamer/compare/v1.25.0...v1.25.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **deploy:** reclaim disk after the rollout ([#39](https://github.com/PierreGallet/shazamer/issues/39)) ([bc55de5](https://github.com/PierreGallet/shazamer/commit/bc55de53473c221a4c4d4f325eaac528639f8d13))
+
 ## [1.25.0](https://github.com/PierreGallet/shazamer/compare/v1.24.0...v1.25.0) (2026-08-30)
 
 
