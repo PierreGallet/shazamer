@@ -42,6 +42,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.store.library import Library  # noqa: E402
 
 
+def _field(row: Dict[str, Any], name: str) -> float:
+    """A column that may predate the verdict being read.
+
+    Labels recorded before the evidence count was stored have no `probes`, and
+    a missing value must read as "not recorded" rather than as zero — a zero
+    would say a track had no probes behind it, which is a different and false
+    claim.
+    """
+    try:
+        value = row[name]
+    except (KeyError, IndexError):
+        return 0.0
+    return float(value or 0)
+
+
 def _summarise(values: Sequence[float]) -> str:
     if not values:
         return "—"
@@ -129,7 +144,16 @@ async def main() -> int:
         "span (s)": lambda r: float(r["span"] or 0),
         "span / set length": lambda r: (float(r["span"] or 0)
                                         / max(float(r["set_duration"] or 1), 1)),
+        # Reported, but read the note this script prints about it. `confidence`
+        # is votes over probes, so a segment covered by one probe scores 1.0 by
+        # construction and the metric reaches its own maximum on both the best
+        # and the worst evidence in the set.
         "confidence": lambda r: float(r["confidence"] or 0),
+        # The denominator, which is the part that was missing. Whether 1.0 from
+        # four probes behaves like 1.0 from one is the question six labels from
+        # a single reel could not answer, and it is now recorded.
+        "probes": lambda r: float(_field(r, "probes")),
+        "votes": lambda r: float(_field(r, "votes")),
         "strength rank": lambda r: {"weak": 1.0, "medium": 2.0,
                                     "strong": 3.0}.get(r["strength"] or "", 0.0),
         "start (s)": lambda r: float(r["start"] or 0),
@@ -171,6 +195,13 @@ async def main() -> int:
         print(f"Nothing separates cleanly yet (best: {top_name} at "
               f"{top_sep:.2f}).")
         print("More verdicts, or the difference is not in these features.")
+
+    single = sum(1 for r in labels if _field(r, "probes") == 1)
+    if single:
+        print(f"\n{single} of {len(labels)} labelled segments rest on a single "
+              f"probe, and those score 1.00 on confidence by construction — a "
+              f"lone probe agrees with itself. Read the confidence row above "
+              f"against the probes row, never on its own.")
 
     if len(labels) < 20:
         print(f"\n{len(labels)} labels is few. Treat all of the above as a "

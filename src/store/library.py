@@ -256,6 +256,19 @@ class Library:
         # overwriting it would destroy the evidence for the finding.
         ("downloads", "cutoff_hz", "REAL"),
         ("downloads", "quality_note", "TEXT DEFAULT ''"),
+        # The denominator behind `confidence`. It was computed, put in the
+        # payload, and dropped on save — so a reloaded set could show 1.0
+        # without any way to tell four agreeing probes from one probe agreeing
+        # with itself. Measured on this install, 1.0 covers 15 strong tracks
+        # and 18 weak ones, which is a number carrying no information at its
+        # own maximum.
+        ("tracks", "votes", "INTEGER DEFAULT 0"),
+        ("tracks", "probes", "INTEGER DEFAULT 0"),
+        # And the same two frozen with a verdict, so a later study can ask the
+        # question the six labels we have cannot answer: whether 1.0 from one
+        # probe behaves like 1.0 from four.
+        ("track_feedback", "votes", "INTEGER DEFAULT 0"),
+        ("track_feedback", "probes", "INTEGER DEFAULT 0"),
     )
 
     async def adopt_orphans(self, user_id: str) -> int:
@@ -420,7 +433,8 @@ class Library:
                 "INSERT INTO tracks (set_id, position, start, end, identified,"
                 " track_key, title, artist, album, label, year, genre, isrc, url,"
                 " cover_url, bpm, camelot, musical_key, confidence, strength,"
-                " preview_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " votes, probes,"
+                " preview_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     (set_id, t.get("index", i + 1), t.get("start", 0), t.get("end", 0),
                      1 if t.get("identified") else 0, t.get("key", ""),
@@ -429,6 +443,7 @@ class Library:
                      t.get("isrc", ""), t.get("url", ""), t.get("cover_url", ""),
                      t.get("bpm"), t.get("camelot"), t.get("musical_key"),
                      t.get("confidence", 0), t.get("strength", ""),
+                     t.get("votes", 0), t.get("probes", 0),
                      t.get("preview_url", ""))
                     for i, t in enumerate(result.get("tracks", []))
                 ],
@@ -989,7 +1004,7 @@ class Library:
         with closing(self._connect()) as conn:
             track = conn.execute(
                 "SELECT t.track_key, t.start, t.end, t.strength, t.confidence,"
-                " s.duration"
+                " t.votes, t.probes, s.duration"
                 " FROM tracks t JOIN sets s ON s.id = t.set_id"
                 " WHERE t.set_id = ? AND t.position = ? AND s.user_id = ?",
                 (set_id, position, user_id)).fetchone()
@@ -998,14 +1013,15 @@ class Library:
             conn.execute(
                 "INSERT INTO track_feedback (user_id, set_id, position,"
                 " track_key, verdict, span, start, strength, confidence,"
-                " set_duration, note, created_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+                " votes, probes, set_duration, note, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 " ON CONFLICT(user_id, set_id, position) DO UPDATE SET"
                 " verdict = excluded.verdict, note = excluded.note,"
                 " created_at = excluded.created_at",
                 (user_id, set_id, position, track["track_key"], verdict,
                  round(track["end"] - track["start"], 3), track["start"],
                  track["strength"] or "", track["confidence"] or 0,
+                 track["votes"] or 0, track["probes"] or 0,
                  track["duration"] or 0, note, _now()))
             conn.commit()
             return True
@@ -1297,7 +1313,14 @@ def _track_row(r: sqlite3.Row, starred: set) -> Dict[str, Any]:
         "label": r["label"], "year": r["year"], "genre": r["genre"],
         "isrc": r["isrc"], "url": r["url"], "cover_url": r["cover_url"],
         "bpm": r["bpm"], "camelot": r["camelot"], "musical_key": r["musical_key"],
+        # The number and, beside it, what it is a number *of*. `confidence` is
+        # votes over probes, so a segment covered by one probe scores 1.0 by
+        # construction — it agrees with itself. Measured on this install, 1.0
+        # covers fifteen strong tracks and eighteen weak ones. Nothing reads
+        # it alone any more, and nothing should.
         "confidence": r["confidence"],
+        "votes": r["votes"] if "votes" in r.keys() else 0,
+        "probes": r["probes"] if "probes" in r.keys() else 0,
         "strength": r["strength"] if "strength" in r.keys() else "",
         "catalog_number": r["catalog_number"] if "catalog_number" in r.keys() else "",
         "mbid": r["mbid"] if "mbid" in r.keys() else "",
