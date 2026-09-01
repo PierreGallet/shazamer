@@ -125,20 +125,18 @@ fi
 rm -f /tmp/envload.$$
 set -a; . ./.env; set +a
 
-# Accounts are on unless deliberately switched off, and with no way to send a
-# code there is no way in. Refusing here beats locking the owner out of their
-# own library and having to find this from the outside.
-if [ "${AUTH_ENABLED:-1}" != "0" ]; then
-  missing=""
-  [ -n "${SMTP_HOST:-}" ]     || missing="$missing SMTP_HOST"
-  [ -n "${MAIL_FROM:-}" ]     || missing="$missing MAIL_FROM"
-  [ -n "${SMTP_PASSWORD:-}" ] || missing="$missing SMTP_PASSWORD"
-  if [ -n "$missing" ]; then
-    echo ">> Accounts are on but these are empty:$missing" >&3
-    echo "   Nobody could receive a sign-in code, so nobody could get in." >&3
-    echo "   Set them in .env, or set AUTH_ENABLED=0 to run without accounts." >&3
-    exit 1
-  fi
+# Signing in is the only way in, and a code arrives by mail or not at all.
+# Refusing here beats deploying a login nobody can pass and discovering it
+# from the outside, locked out of your own library.
+missing=""
+[ -n "${SMTP_HOST:-}" ]     || missing="$missing SMTP_HOST"
+[ -n "${MAIL_FROM:-}" ]     || missing="$missing MAIL_FROM"
+[ -n "${SMTP_PASSWORD:-}" ] || missing="$missing SMTP_PASSWORD"
+if [ -n "$missing" ]; then
+  echo ">> These are empty and sign-in needs them:$missing" >&3
+  echo "   Nobody could receive a code, so nobody could get in." >&3
+  echo "   Set them in .env and deploy again." >&3
+  exit 1
 fi
 
 # Written here, after the .env is loaded — not before it. The first version of

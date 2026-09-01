@@ -463,7 +463,14 @@ async def test_an_existing_library_gains_new_columns(tmp_path):
         "PRAGMA table_info(tracks)")}
     assert "strength" in columns, "migration did not run"
 
+    # Rows written before accounts existed have an empty owner, so nobody can
+    # see them until somebody adopts them. That is what happens on the first
+    # sign-in, and doing it here rather than reading with `user_id=""` keeps
+    # the test on the path production actually takes.
+    assert await library.adopt_orphans(TEST_USER) >= 1, "nothing was adopted"
+
     stored = await library.get_set("s1", user_id=TEST_USER)
+    assert stored is not None, "the migrated set was not adopted"
     assert stored["title"] == "Old Set", "existing data was lost"
     assert stored["tracks"][0]["strength"] == ""
 
@@ -590,7 +597,6 @@ async def test_soulseek_endpoints_need_a_session(client, monkeypatch):
     """
     import importlib
 
-    monkeypatch.setenv("AUTH_ENABLED", "1")
     monkeypatch.setenv("SLSKD_URL", "http://slskd:5030")
     import src.auth as auth_mod
     importlib.reload(auth_mod)

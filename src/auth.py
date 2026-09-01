@@ -29,28 +29,19 @@ COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1").lower() not in ("0", "false
 COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "lax")
 COOKIE_DOMAIN = os.environ.get("COOKIE_DOMAIN", "") or None
 
-# On unless deliberately switched off. Secure by default: an install that
-# forgets to set anything gets accounts, not an open library.
+# There is no switch. Accounts are how one person's library stays theirs, and
+# a setting that turns that off is a setting that can be left off — in an
+# environment file, by a copied deploy, by anyone who wanted to get past a
+# login once and forgot.
 #
-# The escape hatch stays because it is genuinely useful — running locally with
-# no SMTP configured means no way to receive a code, and the alternative is
-# not being able to open your own app. It is a development convenience, not a
-# production option, which is why the default is the other way round.
-AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "1").lower() not in (
-    "0", "false", "no")
-
-# The empty string, and that is the whole point rather than an oversight.
+# It existed as a development convenience: running locally with no SMTP means
+# no way to receive a code. That is a real problem and this is not where it
+# should be solved — the tests sign in through the same path everything else
+# uses, and a developer without mail can mint a session directly against the
+# accounts store.
 #
-# Every row written before accounts existed has an empty owner, because that
-# is what the column defaults to. Giving the solo user any other id would make
-# the entire existing library invisible the moment this deploys — present in
-# the database, owned by nobody, matching no query. The test suite caught
-# exactly that.
-#
-# So "no account" data belongs to "no accounts" mode, and the two line up with
-# no migration and no writes at startup. Turning accounts on later hands these
-# rows to the first person who signs in, which `Library.adopt_orphans` does.
-SOLO_USER = {"id": "", "email": ""}
+# Rows written before accounts existed have an empty owner, and they are still
+# reachable: `Library.adopt_orphans` hands them to the first account created.
 
 
 def set_session_cookie(response: Response, token: str) -> None:
@@ -129,8 +120,6 @@ def make_dependencies(accounts: Accounts):
     """
 
     async def current_user_optional(request: Request) -> Optional[Dict[str, Any]]:
-        if not AUTH_ENABLED:
-            return SOLO_USER
         token = request.cookies.get(COOKIE_NAME, "")
         return await accounts.user_for_session(token)
 

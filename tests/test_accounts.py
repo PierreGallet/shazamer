@@ -205,10 +205,9 @@ async def test_the_first_account_adopts_what_came_before_it(library):
 
 @pytest.fixture
 async def auth_client(tmp_path, monkeypatch):
-    """An app instance with accounts switched on and mail captured."""
+    """An app instance with mail captured. Accounts are always on."""
     import importlib
 
-    monkeypatch.setenv("AUTH_ENABLED", "1")
     # Before web is imported: it builds the accounts store at import time and
     # binds the request dependencies to that instance, so reassigning the
     # attribute afterwards would leave the endpoints on the old one — pointed
@@ -615,3 +614,73 @@ async def test_a_set_from_before_the_evidence_was_stored_still_reads(library):
     # Zero, not absent and not null: the reader distinguishes "no evidence
     # recorded" from "no probes", and says so in words rather than a number.
     assert track["votes"] == 0 and track["probes"] == 0
+
+
+async def test_there_is_no_way_to_turn_accounts_off(monkeypatch):
+    """The switch is gone, and setting it must not bring it back.
+
+    It existed as a development convenience and defaulted to on, which made it
+    safe in principle and one environment file away from not being. A setting
+    that opens the library is a setting that can be left open — by a copied
+    deploy, by a stack file, by anyone who wanted past a login once.
+    """
+    import importlib
+
+    import src.auth as auth_mod
+
+    monkeypatch.setenv("AUTH_ENABLED", "0")
+    importlib.reload(auth_mod)
+    try:
+        assert not hasattr(auth_mod, "AUTH_ENABLED")
+        assert not hasattr(auth_mod, "SOLO_USER")
+    finally:
+        monkeypatch.delenv("AUTH_ENABLED", raising=False)
+        importlib.reload(auth_mod)
+
+
+async def test_an_anonymous_request_is_refused(client):
+    """The client fixture is signed in; this asks the same app without a cookie.
+
+    The point of the fixture change: three hundred tests now go through the
+    real cookie check, and this one proves the check would have stopped them.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    transport = ASGITransport(app=client.web.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as guest:
+        for path in ("/api/sets", "/api/library/appearances",
+                     "/api/acquire/downloads", "/api/profile"):
+            answer = await guest.get(path)
+            assert answer.status_code == 401, (
+                f"{path} answered {answer.status_code} with no session")
+
+
+async def test_a_forged_cookie_is_refused(client):
+    """Tokens are stored as hashes, so a guessed one matches nothing."""
+    from httpx import ASGITransport, AsyncClient
+    import src.auth as auth_mod
+
+    transport = ASGITransport(app=client.web.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as guest:
+        guest.cookies.set(auth_mod.COOKIE_NAME, "not-a-real-token")
+        assert (await guest.get("/api/sets")).status_code == 401
+
+
+async def test_whoami_says_auth_is_required_and_answers_without_a_session(client):
+    """The frontend reads this to decide whether to show the sign-in screen.
+
+    It has to answer 200 to an anonymous caller — a 401 on the first page load
+    would be reported as an error on every visit by somebody not yet signed in.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    signed_in = (await client.get("/api/auth/me")).json()
+    assert signed_in["authenticated"] is True
+    assert signed_in["auth_required"] is True
+
+    transport = ASGITransport(app=client.web.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as guest:
+        answer = await guest.get("/api/auth/me")
+        assert answer.status_code == 200, "a first page load would log an error"
+        assert answer.json() == {**answer.json(), "authenticated": False,
+                                 "auth_required": True}
