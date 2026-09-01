@@ -25,9 +25,13 @@ SOURCE_SR = 44100
 # identity whenever accounts are switched off — which is the default, and what
 # the rest of the suite is exercising. A literal here would pass today and
 # start failing silently the day that id changes.
-from src.auth import SOLO_USER
-
-TEST_USER = SOLO_USER["id"]
+# The account the test client is signed in as, and the owner of anything a
+# test seeds directly into the store. A fixed id rather than one drawn from
+# `Accounts`, which mints random ones: the tests need to arrange data for the
+# same person the client is, and reading that back is the point of most of
+# them.
+TEST_USER = "test-account"
+TEST_EMAIL = "tester@example.com"
 
 # Half of the default 12 s probe window.
 PROBE_CENTRE = 6.0
@@ -122,14 +126,13 @@ async def client(tmp_path, monkeypatch):
         (tmp_path / name.lower()).mkdir(exist_ok=True)
 
     monkeypatch.setenv("SLSKD_URL", "")
-    # Accounts off for this fixture. These tests are about the pipeline, the
-    # library and the API's own behaviour; making each of them sign in first
-    # would test the login flow three hundred times and the thing under test
-    # once. `test_accounts.py` covers the signed-in path properly, with
-    # accounts on.
-    monkeypatch.setenv("AUTH_ENABLED", "0")
-    # Reloaded because AUTH_ENABLED is read at import, and `web` binds its
-    # request dependencies to whatever `auth` decided at that moment.
+    # Its own data directory, because `web` builds the accounts store at import
+    # time: pointing it afterwards would leave the endpoints bound to the
+    # working copy's real database.
+    monkeypatch.setenv("SHAZAMER_DATA_DIR", str(tmp_path / "data"))
+    # The test transport is http, and a Secure cookie would never be sent back.
+    monkeypatch.setenv("COOKIE_SECURE", "0")
+
     import src.auth as auth_mod
     importlib.reload(auth_mod)
     import src.web as web
@@ -142,7 +145,40 @@ async def client(tmp_path, monkeypatch):
     web.library = web.Library(tmp_path / "library.db")
     web.tasks = web.TaskManager(tmp_path / "tasks")
 
+    # Signed in for real, through the same cookie every request uses. There is
+    # no way to switch accounts off any more, and there should not be: a
+    # fixture that bypassed the check would leave three hundred tests passing
+    # against a door nobody ever tried to open.
+    #
+    # The account is arranged rather than logged into. `start_login` mints a
+    # random id and sends a code, and these tests need a *known* id so they can
+    # seed the library for the same person the client is. The login flow itself
+    # is covered properly in `test_accounts.py`.
+    await _seed_account(web.accounts, TEST_USER, TEST_EMAIL)
+    token = await web.accounts.create_session(TEST_USER, "pytest")
+
     transport = ASGITransport(app=web.app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
+        c.cookies.set(auth_mod.COOKIE_NAME, token)
         c.web = web  # type: ignore[attr-defined]
+        c.user_id = TEST_USER  # type: ignore[attr-defined]
         yield c
+
+
+async def _seed_account(accounts, user_id: str, email: str) -> None:
+    """Put one account in the store at a chosen id.
+
+    Straight to the table because `Accounts` has no reason to expose "create a
+    user with this exact id" — nothing in the application wants that, and only
+    the tests do.
+    """
+    from contextlib import closing
+
+    def write() -> None:
+        with closing(accounts._connect()) as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO users (id, email, created_at)"
+                " VALUES (?, ?, datetime('now'))", (user_id, email))
+            conn.commit()
+
+    await accounts._run(write)

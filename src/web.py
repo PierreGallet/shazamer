@@ -763,7 +763,10 @@ async def whoami(user: Optional[Dict[str, Any]] = Depends(current_user_optional)
     """
     return {
         "authenticated": user is not None,
-        "auth_required": auth.AUTH_ENABLED,
+        # Always. Kept in the payload because the frontend reads it to
+        # decide whether to show the sign-in screen, and a client built
+        # against an older server should not have to guess.
+        "auth_required": True,
         "email": (user or {}).get("email", ""),
         "can_send_mail": mail.configured(),
     }
@@ -782,7 +785,7 @@ async def request_code(request: EmailRequest, http: Request):
     if not looks_like_email(email):
         raise HTTPException(status_code=400, detail="That is not an email address")
 
-    if not mail.configured() and auth.AUTH_ENABLED:
+    if not mail.configured():
         # The one case worth reporting: the server cannot send at all, so
         # waiting for a code would be waiting for ever. This says nothing
         # about the address.
