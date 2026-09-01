@@ -94,7 +94,15 @@ jobs:
         uses: googleapis/release-please-action@v4
         id: release
         with:
-          release-type: python
+          # No `release-type` here, deliberately. Passing it puts the action in
+          # manifest-less mode, where `release-please-config.json` is read by
+          # nothing — which is why the config added to group the changelog had
+          # no effect on 1.26.0, and why the other repository's changelog is
+          # also still on the default sections despite carrying the same file.
+          #
+          # Without it the action reads the config and the manifest, both of
+          # which are committed here, and the release type comes from the
+          # config's `packages` entry.
           token: ${{ secrets.GITHUB_TOKEN }}
           target-branch: main
 
