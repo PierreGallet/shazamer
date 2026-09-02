@@ -101,7 +101,25 @@ mkdir -p /home/sharon/shazamer/{data,media,uploads,tmp,redis,downloads}
 mkdir -p /home/sharon/slskd/{config,downloads}
 
 echo ">> Building shazamer image"
-docker build -t shazamer_app:latest .
+# zstd rather than the default gzip, and `buildx build` rather than `build`
+# because the compression setting only exists on the `--output` form.
+#
+# This image is built on genius and consumed on genius — it never reaches a
+# registry, so gzip buys nothing and costs real minutes. With the containerd
+# snapshotter the layers are compressed into the content store and immediately
+# decompressed back onto disk, so the host pays for both directions.
+#
+# Measured here on 2026-09-02, same source, same cache state:
+#   gzip   exporting layers 153.0s + unpacking 44.9s = 198s
+#   zstd   exporting layers  35.1s + unpacking 31.7s =  67s
+# The image also comes out marginally smaller (1.75 GB vs 1.78 GB) and runs
+# unchanged — containerd decompresses zstd natively.
+#
+# No force-compression: cached layers keep the blobs they already have rather
+# than being recompressed for nothing. Only newly built layers get zstd.
+#
+# `name=` in --output is what sets the tag; there is no -t on this form.
+docker buildx build --output type=docker,name=shazamer_app:latest,compression=zstd .
 
 echo ">> Deploying swarm stack (host/secrets from .env)"
 # `.` on a file with an unquoted value containing spaces does not fail — it
@@ -257,28 +275,38 @@ docker image prune -f >/dev/null 2>&1 || true
 # the rollback target of a rollout that has not finished converging.
 docker container prune -f --filter "until=1h" >/dev/null 2>&1 || true
 
-# NOT `--max-used-space`: on Docker 29.1.2 / buildx 0.30.1 it exits 0 and frees
-# nothing. Verified on genius 2026-08-28 — 59.24 GB of cache against a 35 GB
-# cap gave "Total: 0B", exit 0. Sibling repos carried that flag for weeks
-# thinking they were capped. Measure instead, and prune only when over.
-# Never `-a`: it also evicts layers shared with existing images, making the
-# next build cold.
-BUILD_CACHE_MAX_GB="${BUILD_CACHE_MAX_GB:-5}"
-_cache_mib() {
-    docker builder du 2>/dev/null | awk -F'\t' '/^Total:/{
-        v=$NF; sub(/B$/,"",v); u=substr(v,length(v));
-        n=(u ~ /[0-9]/) ? v : substr(v,1,length(v)-1);
-        m=(u=="G")?1024:((u=="M")?1:((u=="k"||u=="K")?1/1024:1/1048576));
-        printf "%d", n*m; exit}'
+# Purge the RECLAIMABLE BuildKit cache after each deploy.
+#
+# No per-project threshold, and the one that used to be here was dead code:
+# there is ONE BuildKit cache for the whole daemon (a single `default`
+# builder), so BUILD_CACHE_MAX_GB compared this project's ceiling against a
+# fleet-wide total that structurally sits near 72 GB. The condition was always
+# true — the branch printing "rien a purger" was unreachable.
+#
+# The measurement was fragile on top of being pointless: `docker builder du`
+# occasionally returns empty right after a build, the value read 0, and
+# `0 <= cap` SKIPPED the purge on exactly the days that built the most.
+#
+# Plain `docker builder prune -f`, unconditionally, is simpler and safe.
+# Measured on genius 2026-09-02: of 1376 cache records, 1363 (71.87 GB) are
+# Shared — they back layers of images still on disk, and prune leaves them
+# alone. Only the 333 MB of Private records go. Proof by observation: nyew
+# runs this same prune on every deploy, ran it three times in twelve hours,
+# and the cache still stands at 72 GB.
+#
+# NEVER `-af`: that one DOES evict image-backed layers, and it makes the next
+# build cold in every project on the host, not just this one.
+#
+# Placed here, AFTER `docker stack deploy --detach=false` returned: `set -e`
+# means a failed deploy exits before this line, so a rollback still has both
+# the previous image and a warm cache to rebuild from.
+_cache_size() {
+    docker system df --format '{{.Type}} {{.Size}}' 2>/dev/null \
+        | awk '/[Bb]uild [Cc]ache/{print $NF; exit}'
 }
-_cache_now="$(_cache_mib)"
-if [ -n "$_cache_now" ] && [ "$_cache_now" -gt $((BUILD_CACHE_MAX_GB * 1024)) ] 2>/dev/null; then
-    echo "   cache $((_cache_now / 1024)) GiB > ${BUILD_CACHE_MAX_GB} GiB — purge"
-    docker builder prune -f >/dev/null 2>&1 || true
-    echo "   reste $(( $(_cache_mib) / 1024 )) GiB"
-else
-    echo "   cache $(( ${_cache_now:-0} / 1024 )) GiB <= ${BUILD_CACHE_MAX_GB} GiB, rien a purger"
-fi
+_cache_before="$(_cache_size)"
+docker builder prune -f >/dev/null 2>&1 || true
+echo ">> Build cache: ${_cache_before:-?} -> $(_cache_size) (reclaimable only; shared layers stay)"
 
 echo ">> Done. Current service:"
 docker service ls --filter name=shazamer_app
