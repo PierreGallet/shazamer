@@ -275,38 +275,34 @@ docker image prune -f >/dev/null 2>&1 || true
 # the rollback target of a rollout that has not finished converging.
 docker container prune -f --filter "until=1h" >/dev/null 2>&1 || true
 
-# Purge the RECLAIMABLE BuildKit cache after each deploy.
+# NO build-cache prune here. Deliberate, and it reverses what this script did
+# earlier the same day.
 #
-# No per-project threshold, and the one that used to be here was dead code:
-# there is ONE BuildKit cache for the whole daemon (a single `default`
-# builder), so BUILD_CACHE_MAX_GB compared this project's ceiling against a
-# fleet-wide total that structurally sits near 72 GB. The condition was always
-# true — the branch printing "rien a purger" was unreachable.
+# Measured on genius 2026-09-02, same Dockerfile, same content, back to back:
 #
-# The measurement was fragile on top of being pointless: `docker builder du`
-# occasionally returns empty right after a build, the value read 0, and
-# `0 <= cap` SKIPPED the purge on exactly the days that built the most.
+#   rebuild with no prune in between          CACHED = 3 / 3
+#   rebuild after `docker builder prune -f`   CACHED = 0 / 3
 #
-# Plain `docker builder prune -f`, unconditionally, is simpler and safe.
-# Measured on genius 2026-09-02: of 1376 cache records, 1363 (71.87 GB) are
-# Shared — they back layers of images still on disk, and prune leaves them
-# alone. Only the 333 MB of Private records go. Proof by observation: nyew
-# runs this same prune on every deploy, ran it three times in twelve hours,
-# and the cache still stands at 72 GB.
+# So a plain prune — no `-a` — destroys the reusable cache outright. The comment
+# that used to sit here claimed it only dropped "private" records and spared the
+# layers shared with existing images. The LAYERS do survive, being part of those
+# images. What does not survive is the cache INDEX: the records mapping a
+# Dockerfile step to its layer. Without them BuildKit cannot tell that step N was
+# already computed, so it recomputes it. Shared is not the same as reusable, and
+# that distinction cost every repo on this host its warm builds.
 #
-# NEVER `-af`: that one DOES evict image-backed layers, and it makes the next
-# build cold in every project on the host, not just this one.
+# This ran at the end of every deploy, so each deploy destroyed exactly what the
+# next one would have reused — which is why CACHED sat at 0-2 out of ~104 on
+# every project here, regardless of Dockerfile or disk space.
 #
-# Placed here, AFTER `docker stack deploy --detach=false` returned: `set -e`
-# means a failed deploy exits before this line, so a rollback still has both
-# the previous image and a warm cache to rebuild from.
-_cache_size() {
-    docker system df --format '{{.Type}} {{.Size}}' 2>/dev/null \
-        | awk '/[Bb]uild [Cc]ache/{print $NF; exit}'
-}
-_cache_before="$(_cache_size)"
-docker builder prune -f >/dev/null 2>&1 || true
-echo ">> Build cache: ${_cache_before:-?} -> $(_cache_size) (reclaimable only; shared layers stay)"
+# Nothing replaces it, because nothing needs to. BuildKit garbage-collects
+# itself: `docker buildx inspect default` shows Min Free Space 42.84 GiB, and it
+# evicts on its own once free space drops under that. A bounded, self-managing
+# resource — the manual prune was redundant AND harmful.
+#
+# Image retention is unaffected and stays. Deleting the previous image was
+# verified NOT to cost the next build its cache (CACHED = 3/3 after `rmi`), so
+# the one-image policy and warm builds are compatible.
 
 echo ">> Done. Current service:"
 docker service ls --filter name=shazamer_app
