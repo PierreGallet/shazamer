@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.2](https://github.com/PierreGallet/shazamer/compare/v1.26.1...v1.26.2) (2026-09-02)
+
+
+### 🚀 Performance
+
+* **deploy:** build with zstd, drop the dead build-cache cap ([7134278](https://github.com/PierreGallet/shazamer/commit/71342781d6ea979eddd29ba94e611fac5c4171ce))
+
 ## [1.26.1](https://github.com/PierreGallet/shazamer/compare/v1.26.0...v1.26.1) (2026-09-01)
 
 
