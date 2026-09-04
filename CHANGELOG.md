@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.3](https://github.com/PierreGallet/shazamer/compare/v1.26.2...v1.26.3) (2026-09-04)
+
+
+### 🐛 Fixes
+
+* **deploy:** stop pruning the build cache — it was the cold builds ([a9bad35](https://github.com/PierreGallet/shazamer/commit/a9bad358aa017ec3e6940cce09d964e932f42252))
+
 ## [1.26.2](https://github.com/PierreGallet/shazamer/compare/v1.26.1...v1.26.2) (2026-09-02)
 
 
