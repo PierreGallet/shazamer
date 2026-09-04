@@ -21,7 +21,20 @@ ENV/
 Thumbs.db
 
 # Secrets
-.env
+#
+# `.env` n'est PLUS ignore depuis le 2026-09-04 : il ne contient que des
+# references `op://` que 1Password resout a l'execution, aucune valeur. Le
+# commiter est le but — c'est ainsi qu'on cesse d'avoir la meme valeur a trois
+# endroits (fichier local, secrets GitHub, .env serveur) sans garantie qu'ils
+# concordent.
+#
+# `.env.*` reste ignore : un `.env.local` ou un `.env.prod` cree a la main
+# contiendrait, lui, de vraies valeurs.
+#
+# AVANT DE COMMITER UN CHANGEMENT ICI : verifier qu'aucune ligne ne porte de
+# valeur en clair. `grep -v 'op://' .env` doit ne montrer que PYTHON_ENV et
+# SLSKD_URL. gitleaks tourne en CI et attrapera le reste, mais mieux vaut ne
+# pas dependre de lui.
 .env.*
 !.env.example
 

@@ -181,21 +181,57 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Un seul secret GitHub au lieu de douze.
+      #
+      # Les valeurs vivent dans 1Password et le depot n'en porte que des
+      # REFERENCES (.env, entierement commite). On sort ainsi du regime ou la
+      # meme valeur existait a trois endroits — .env local, secrets GitHub,
+      # .env serveur — sans que rien ne garantisse qu'ils concordent.
+      #
+      # Le jeton donne acces au coffre `Dev` en lecture. Le perimetre du coffre
+      # EST le perimetre de la fuite si ce jeton s'echappe : n'y mettre que ce
+      # que le deploiement doit lire.
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          # Ces references doivent rester identiques a celles du .env. Elles
+          # sont dupliquees ici parce que load-secrets-action lit son propre
+          # bloc `env` et non un fichier — le .env du depot reste la source de
+          # verite lisible, celui-ci en est le miroir pour la CI.
+          SSH_HOST: op://Dev/Serveur/hostname
+          SSH_USER: op://Dev/Serveur/username
+          SSH_PRIVATE_KEY: op://Dev/SSHgithub/private_key
+          TS_OAUTH_CLIENT_ID: op://Dev/Tailscale/username
+          TS_OAUTH_SECRET: op://Dev/Tailscale/identifiant
+          SENTRY_DSN: op://Dev/Env/SENTRY_DSN_SHAZAMER
+          SLSKD_API_KEY: op://Dev/Env/SLSKD_API_KEY
+          SLSKD_SLSK_USERNAME: op://Dev/Env/SLSKD_SLSK_USERNAME
+          SLSKD_SLSK_PASSWORD: op://Dev/Env/SLSKD_SLSK_PASSWORD
+          SMTP_HOST: op://Dev/EmailsAPI/hostname
+          SMTP_PORT: op://Dev/EmailsAPI/port
+          SMTP_USER: op://Dev/EmailsAPI/username
+          SMTP_PASSWORD: op://Dev/EmailsAPI/identifiant
+          MAIL_FROM: op://Dev/EmailsAPI/username
+
       - name: Setup Tailscale
         uses: tailscale/github-action@v2
         with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          # $TS_* et non secrets.* : l'etape 1Password ci-dessus les a exportes
+          # dans l'environnement du job (export-env: true).
+          oauth-client-id: ${{ env.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ env.TS_OAUTH_SECRET }}
           tags: tag:github-action
 
       - name: Set up SSH
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ env.SSH_PRIVATE_KEY }}
 
       - name: Add server to known hosts
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
+        # SSH_HOST vient de l'etape 1Password, deja dans l'environnement.
         run: |
           HOST=$(echo "$SSH_HOST" | cut -d':' -f1)
           PORT=$(echo "$SSH_HOST" | grep -o ':[0-9]*' | cut -d':' -f2 || echo "22")
@@ -203,16 +239,19 @@ jobs:
 
       - name: Deploy to server
         env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-          # Soulseek. Optional — absent secrets write empty values, which is
-          # exactly how the feature stays switched off.
-          SLSKD_URL: ${{ secrets.SLSKD_URL }}
-          SLSKD_API_KEY: ${{ secrets.SLSKD_API_KEY }}
-          SLSKD_SLSK_USERNAME: ${{ secrets.SLSKD_SLSK_USERNAME }}
-          SLSKD_SLSK_PASSWORD: ${{ secrets.SLSKD_SLSK_PASSWORD }}
+          # SSH_*, SENTRY_DSN, SLSKD_* et SMTP_* sont deja dans l'environnement
+          # du job, exportes par l'etape 1Password. Rien a redeclarer ici.
+          #
+          # DEPLOY_PATH n'est PAS un secret et n'a jamais eu a en etre un : un
+          # chemin ne donne aucun acces, et le serveur refuse l'authentification
+          # par mot de passe (verifie le 2026-09-04). Il vit desormais dans le
+          # depot, ou on peut le lire sans ouvrir un coffre.
+          DEPLOY_PATH: /home/sharon/shazamer
+          # L'URL slskd est de la configuration interne au reseau Docker, pas un
+          # secret. Elle sert aussi de DRAPEAU : soulseek_configured() teste sa
+          # seule presence (src/acquire/resolve.py), donc la vider desactive la
+          # fonctionnalite. A garder en clair et non vide.
+          SLSKD_URL: http://slskd:5030
         run: |
           HOST=$(echo $SSH_HOST | cut -d':' -f1)
           PORT=$(echo $SSH_HOST | grep -o ':[0-9]*' | cut -d':' -f2 || echo "22")
@@ -266,9 +305,8 @@ jobs:
 
       - name: Post-deploy verification
         env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          # SSH_USER et SSH_HOST viennent de l'etape 1Password.
+          DEPLOY_PATH: /home/sharon/shazamer
         run: |
           HOST=$(echo $SSH_HOST | cut -d':' -f1)
           PORT=$(echo $SSH_HOST | grep -o ':[0-9]*' | cut -d':' -f2 || echo "22")

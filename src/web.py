@@ -36,6 +36,8 @@ from fastapi.responses import (FileResponse, JSONResponse, Response,
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
+
+from src.config import PUBLIC_URL
 from pydantic import BaseModel
 
 from src.acquire import resolve as acquire_resolve
@@ -138,11 +140,10 @@ SEARCH_RESULT_CAP = int(os.environ.get("SEARCH_RESULT_CAP", "60"))
 # also what gets shared back to Soulseek in return for what you take. Sweeping
 # it on the same short schedule would empty the share every fortnight.
 KEEP_DOWNLOADS_DAYS = int(os.environ.get("KEEP_DOWNLOADS_DAYS", "180"))
-# Where this instance lives, for links that leave the app. Falls back to the
-# first allowed origin, which in every real deployment is the public address —
-# guessing from the request Host header instead would let anyone who can reach
-# the API mint an invitation pointing at a site they control.
-PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
+# Where this instance lives, for links that leave the app. Defined in
+# src/config.py with a per-environment default, so it no longer has to be set
+# in .env — see that module for why guessing it from the request Host header
+# would be a vulnerability rather than a convenience.
 
 ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
     "ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8000").split(",")
