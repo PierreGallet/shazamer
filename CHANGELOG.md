@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.1](https://github.com/PierreGallet/shazamer/compare/v1.27.0...v1.27.1) (2026-09-04)
+
+
+### 🧹 Maintenance
+
+* **config:** secrets to 1Password, configuration to the repo ([12a5334](https://github.com/PierreGallet/shazamer/commit/12a53349689b8a4509cbd994e84f1d87a3363a90))
+
 ## [1.27.0](https://github.com/PierreGallet/shazamer/compare/v1.26.3...v1.27.0) (2026-09-04)
 
 
