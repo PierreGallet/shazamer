@@ -35,6 +35,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (FileResponse, JSONResponse, Response,
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 
 from src.acquire import resolve as acquire_resolve
@@ -274,6 +275,34 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE", "HEAD", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Prometheus metrics on /metrics.
+#
+# Request rate per route, error rate per status class, and latency percentiles
+# — the three things alerts are actually built on. Logs cannot answer "are we
+# above 2% 5xx over five minutes"; this can.
+#
+# No multiprocess registry needed here, unlike noctambule: the Dockerfile runs
+# a single uvicorn process (no --workers), so one in-process registry holds the
+# whole picture. Add PROMETHEUS_MULTIPROC_DIR if workers are ever introduced,
+# or successive scrapes will hit different processes and the counters will
+# appear to move backwards.
+#
+# Registered HERE and not further down on purpose: the SPA catch-all at the end
+# of this module answers every unmatched path with index.html, and FastAPI
+# resolves routes in declaration order. Declared after it, /metrics would serve
+# HTML and Prometheus would reject the target on Content-Type.
+Instrumentator(
+    # Exact status codes rather than the default 2xx/4xx/5xx buckets: telling
+    # 401 from 403 from 404 is most of the value when a route starts failing,
+    # and the extra cardinality is one series per code actually returned.
+    #
+    # Route cardinality is already safe without any option here: the `handler`
+    # label carries the route TEMPLATE (/api/x/{id}), not the resolved URL, and
+    # requests matching no route are grouped under a single "none" handler.
+    should_group_status_codes=False,
+    excluded_handlers=["/metrics", "/api/health"],
+).instrument(app).expose(app, include_in_schema=False)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────

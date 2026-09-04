@@ -84,6 +84,18 @@ services:
         - "traefik.http.routers.shazamer.rule=Host(`${SHAZAMER_HOST:-shazamer.pierregallet.com}`)"
         - "traefik.http.routers.shazamer.entrypoints=web"
         - "traefik.http.services.shazamer.loadbalancer.server.port=8000"
+        # Block /metrics from the public internet. The endpoint carries no user
+        # data, but it publishes every route name, request volume and latency
+        # profile — a free reconnaissance map. A dedicated router with a higher
+        # priority wins the match and the allowlist middleware answers 403.
+        # Prometheus is unaffected: it scrapes shazamer_app:8000 directly over
+        # the Swarm overlay and never traverses Traefik.
+        - "traefik.http.routers.shazamer-metrics.rule=Host(`${SHAZAMER_HOST:-shazamer.pierregallet.com}`) && PathPrefix(`/metrics`)"
+        - "traefik.http.routers.shazamer-metrics.entrypoints=web"
+        - "traefik.http.routers.shazamer-metrics.priority=100"
+        - "traefik.http.routers.shazamer-metrics.middlewares=shazamer-deny@docker"
+        - "traefik.http.routers.shazamer-metrics.service=shazamer"
+        - "traefik.http.middlewares.shazamer-deny.ipallowlist.sourcerange=127.0.0.1/32"
       resources:
         limits:
           # The API no longer analyses anything — that moved to the worker — so

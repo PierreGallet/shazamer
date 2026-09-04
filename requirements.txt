@@ -12,6 +12,10 @@ numpy==2.1.2
 scipy==1.14.1
 soundfile==0.12.1
 fastapi>=0.100.0,<0.104.0
+# 6.x et non 7.x : la 7 exige starlette>=0.30, alors que le fastapi epingle
+# ci-dessus resout starlette 0.27. Installer la 7 remonterait fastapi de force
+# et sortirait de la borne <0.104 posee volontairement au-dessus.
+prometheus-fastapi-instrumentator>=6.1.0,<7.0.0
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 lazy-loader==0.3
