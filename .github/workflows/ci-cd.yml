@@ -202,6 +202,11 @@ jobs:
           # bloc `env` et non un fichier — le .env du depot reste la source de
           # verite lisible, celui-ci en est le miroir pour la CI.
           SSH_HOST: op://Dev/Serveur/hostname
+          # Le port peut vivre dans SSH_HOST sous la forme `hote:port`, ou ici
+          # separement. Genius ecoute sur 2222 et non 22 (verifie le
+          # 2026-09-04), donc le defaut standard ne convient pas et le laisser
+          # implicite se paie par un `Connection refused` peu parlant.
+          SSH_PORT: op://Dev/Serveur/port
           SSH_USER: op://Dev/Serveur/username
           SSH_PRIVATE_KEY: op://Dev/SSHgithub/private_key
           TS_OAUTH_CLIENT_ID: op://Dev/Tailscale/username
@@ -234,7 +239,15 @@ jobs:
         # SSH_HOST vient de l'etape 1Password, deja dans l'environnement.
         run: |
           HOST=$(echo "$SSH_HOST" | cut -d':' -f1)
-          PORT=$(echo "$SSH_HOST" | grep -o ':[0-9]*' | cut -d':' -f2 || echo "22")
+          # `${SSH_HOST##*:}` ne rend le port que s'il y en a un ; sinon il rend
+          # l'hote entier, d'ou le test numerique. L'ancienne forme
+          # `grep -o ':[0-9]*' | cut -f2 || echo 22` ne pouvait PAS retomber sur
+          # le defaut : cut reussit meme sur une entree vide, donc le `||`
+          # n'etait jamais atteint et PORT restait VIDE — `Bad port ''`.
+          PORT="${SSH_HOST##*:}"
+          case "$PORT" in
+            ''|*[!0-9]*) PORT="${SSH_PORT:-22}" ;;
+          esac
           ssh-keyscan -H -p $PORT $HOST >> ~/.ssh/known_hosts
 
       - name: Deploy to server
@@ -254,7 +267,15 @@ jobs:
           SLSKD_URL: http://slskd:5030
         run: |
           HOST=$(echo $SSH_HOST | cut -d':' -f1)
-          PORT=$(echo $SSH_HOST | grep -o ':[0-9]*' | cut -d':' -f2 || echo "22")
+          # `${SSH_HOST##*:}` ne rend le port que s'il y en a un ; sinon il rend
+          # l'hote entier, d'ou le test numerique. L'ancienne forme
+          # `grep -o ':[0-9]*' | cut -f2 || echo 22` ne pouvait PAS retomber sur
+          # le defaut : cut reussit meme sur une entree vide, donc le `||`
+          # n'etait jamais atteint et PORT restait VIDE — `Bad port ''`.
+          PORT="${SSH_HOST##*:}"
+          case "$PORT" in
+            ''|*[!0-9]*) PORT="${SSH_PORT:-22}" ;;
+          esac
 
           # 1. Update code
           ssh -p $PORT $SSH_USER@$HOST "
@@ -309,7 +330,15 @@ jobs:
           DEPLOY_PATH: /home/sharon/shazamer
         run: |
           HOST=$(echo $SSH_HOST | cut -d':' -f1)
-          PORT=$(echo $SSH_HOST | grep -o ':[0-9]*' | cut -d':' -f2 || echo "22")
+          # `${SSH_HOST##*:}` ne rend le port que s'il y en a un ; sinon il rend
+          # l'hote entier, d'ou le test numerique. L'ancienne forme
+          # `grep -o ':[0-9]*' | cut -f2 || echo 22` ne pouvait PAS retomber sur
+          # le defaut : cut reussit meme sur une entree vide, donc le `||`
+          # n'etait jamais atteint et PORT restait VIDE — `Bad port ''`.
+          PORT="${SSH_HOST##*:}"
+          case "$PORT" in
+            ''|*[!0-9]*) PORT="${SSH_PORT:-22}" ;;
+          esac
 
           # The service runs under Swarm now, not blue-green: there is no
           # .deploy-env and no fixed container name, so resolve the running
