@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.2](https://github.com/PierreGallet/shazamer/compare/v1.27.1...v1.27.2) (2026-09-04)
+
+
+### 🐛 Fixes
+
+* **ci:** port extraction could never fall back to a default ([dc1c8ba](https://github.com/PierreGallet/shazamer/commit/dc1c8badaf4eb5e0b5aea86e538ae00e21717c45))
+
 ## [1.27.1](https://github.com/PierreGallet/shazamer/compare/v1.27.0...v1.27.1) (2026-09-04)
 
 
