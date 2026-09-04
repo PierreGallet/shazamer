@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.0](https://github.com/PierreGallet/shazamer/compare/v1.26.3...v1.27.0) (2026-09-04)
+
+
+### ✨ Features
+
+* **observability:** expose Prometheus metrics on /metrics ([f0a9bee](https://github.com/PierreGallet/shazamer/commit/f0a9bee5c21c3a2952623465091762a98f807692))
+
 ## [1.26.3](https://github.com/PierreGallet/shazamer/compare/v1.26.2...v1.26.3) (2026-09-04)
 
 
