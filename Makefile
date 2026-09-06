@@ -14,7 +14,13 @@ VENV := venv/bin/python
 # Dégradation volontaire si `op` n'est pas installé ou pas déverrouillé : la
 # commande tourne quand même, sans les secrets. Contribuer au frontend ou
 # lancer les tests ne doit pas exiger un coffre.
-OP := $(shell command -v op >/dev/null 2>&1 && echo "op run --env-file=.env --")
+# `op whoami` en plus de la presence du binaire : sans lui, un coffre
+# VERROUILLE faisait echouer la cible au lieu de la degrader. `op run` sort en
+# erreur des qu'il n'est pas connecte, et la commande ne tournait pas du tout.
+#
+# Teste le 2026-09-06 : sans session, `op run -- echo` n'affiche que
+# « You are not currently signed in » et n'execute rien.
+OP := $(shell command -v op >/dev/null 2>&1 && op whoami >/dev/null 2>&1 && echo "op run --env-file=.env --")
 PORT ?= 8000
 
 help:
