@@ -191,35 +191,34 @@ jobs:
       # Le jeton donne acces au coffre `Dev` en lecture. Le perimetre du coffre
       # EST le perimetre de la fuite si ce jeton s'echappe : n'y mettre que ce
       # que le deploiement doit lire.
-      - name: Load secrets from 1Password
+      # Un seul secret GitHub au lieu de douze. Ici, UNIQUEMENT ce dont le
+      # DEPLOIEMENT a besoin pour joindre le serveur — rien de ce que
+      # l'application lit a l'execution.
+      #
+      # Cette separation est ce qui supprime la duplication. Les variables
+      # runtime vivent dans .env, resolues plus bas par `op inject` ; celles-ci
+      # ne servent qu'ici et ne figurent nulle part ailleurs. Une place par
+      # usage, plutot qu'un fichier unique obligeant a declarer chaque variable
+      # deux fois.
+      #
+      # Verifie le 2026-09-04 : aucun code sous src/ ne lit SSH_* ni TS_*.
+      # load-secrets-action embarque le CLI mais ne le publie pas sur le PATH ;
+      # `op inject` plus bas en a besoin explicitement.
+      - name: Install 1Password CLI
+        uses: 1password/install-cli-action@v1
+
+      - name: Load deploy credentials from 1Password
         uses: 1password/load-secrets-action@v2
         with:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          # Ces references doivent rester identiques a celles du .env. Elles
-          # sont dupliquees ici parce que load-secrets-action lit son propre
-          # bloc `env` et non un fichier — le .env du depot reste la source de
-          # verite lisible, celui-ci en est le miroir pour la CI.
           SSH_HOST: op://Dev/Serveur/hostname
-          # Le port peut vivre dans SSH_HOST sous la forme `hote:port`, ou ici
-          # separement. Genius ecoute sur 2222 et non 22 (verifie le
-          # 2026-09-04), donc le defaut standard ne convient pas et le laisser
-          # implicite se paie par un `Connection refused` peu parlant.
           SSH_PORT: op://Dev/Serveur/port
           SSH_USER: op://Dev/Serveur/username
           SSH_PRIVATE_KEY: op://Dev/SSHgithub/private_key
           TS_OAUTH_CLIENT_ID: op://Dev/Tailscale/username
           TS_OAUTH_SECRET: op://Dev/Tailscale/identifiant
-          SENTRY_DSN: op://Dev/Env/SENTRY_DSN_SHAZAMER
-          SLSKD_API_KEY: op://Dev/Env/SLSKD_API_KEY
-          SLSKD_SLSK_USERNAME: op://Dev/Env/SLSKD_SLSK_USERNAME
-          SLSKD_SLSK_PASSWORD: op://Dev/Env/SLSKD_SLSK_PASSWORD
-          SMTP_HOST: op://Dev/EmailsAPI/hostname
-          SMTP_PORT: op://Dev/EmailsAPI/port
-          SMTP_USER: op://Dev/EmailsAPI/username
-          SMTP_PASSWORD: op://Dev/EmailsAPI/identifiant
-          MAIL_FROM: op://Dev/EmailsAPI/username
 
       - name: Setup Tailscale
         uses: tailscale/github-action@v2
@@ -252,19 +251,15 @@ jobs:
 
       - name: Deploy to server
         env:
-          # SSH_*, SENTRY_DSN, SLSKD_* et SMTP_* sont deja dans l'environnement
-          # du job, exportes par l'etape 1Password. Rien a redeclarer ici.
+          # SSH_* viennent de l'etape 1Password ci-dessus. Les variables que
+          # l'APPLICATION lit ne passent plus par ici : elles sont dans .env et
+          # `op inject` les resout plus bas.
           #
           # DEPLOY_PATH n'est PAS un secret et n'a jamais eu a en etre un : un
           # chemin ne donne aucun acces, et le serveur refuse l'authentification
-          # par mot de passe (verifie le 2026-09-04). Il vit desormais dans le
-          # depot, ou on peut le lire sans ouvrir un coffre.
+          # par mot de passe (verifie le 2026-09-04).
           DEPLOY_PATH: /home/sharon/shazamer
-          # L'URL slskd est de la configuration interne au reseau Docker, pas un
-          # secret. Elle sert aussi de DRAPEAU : soulseek_configured() teste sa
-          # seule presence (src/acquire/resolve.py), donc la vider desactive la
-          # fonctionnalite. A garder en clair et non vide.
-          SLSKD_URL: http://slskd:5030
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
         run: |
           HOST=$(echo $SSH_HOST | cut -d':' -f1)
           # `${SSH_HOST##*:}` ne rend le port que s'il y en a un ; sinon il rend
@@ -285,37 +280,37 @@ jobs:
             git reset --hard origin/main
           "
 
-          # 2. Merge the runtime env rather than replacing it.
+          # 2. Resolve .env with 1Password and ship it.
           #
-          # This used to `cat >` two lines over the whole file, which meant any
-          # variable set on the server by hand — Soulseek credentials, an API
-          # key — was silently wiped by the next deploy. Anything CI does not
-          # manage is now left alone, so the server .env is a place secrets can
-          # actually live.
-          # Only non-empty secrets are written, so an unset one leaves whatever
-          # is already on the server rather than blanking it.
-          {
-            printf 'PYTHON_ENV=Production\n'
-            printf 'SENTRY_DSN=%s\n' "$SENTRY_DSN"
-            [ -n "$SLSKD_URL" ] && printf 'SLSKD_URL=%s\n' "$SLSKD_URL"
-            [ -n "$SLSKD_API_KEY" ] && printf 'SLSKD_API_KEY=%s\n' "$SLSKD_API_KEY"
-            [ -n "$SLSKD_SLSK_USERNAME" ] && printf 'SLSKD_SLSK_USERNAME=%s\n' "$SLSKD_SLSK_USERNAME"
-            [ -n "$SLSKD_SLSK_PASSWORD" ] && printf 'SLSKD_SLSK_PASSWORD=%s\n' "$SLSKD_SLSK_PASSWORD"
-            true
-          } \
-            | ssh -p $PORT $SSH_USER@$HOST "
-              set -e
-              cd $DEPLOY_PATH
-              touch .env && chmod 600 .env
-              MANAGED=\$(cat)
-              # Keys CI owns are rewritten; every other line survives.
-              OWNED=\$(printf '%s\n' \"\$MANAGED\" | cut -d= -f1 | paste -sd'|' -)
-              KEPT=\$(grep -vE \"^(\$OWNED)=\" .env 2>/dev/null || true)
-              printf '%s\n' \"\$MANAGED\" > .env.new
-              [ -n \"\$KEPT\" ] && printf '%s\n' \"\$KEPT\" >> .env.new
-              mv .env.new .env && chmod 600 .env
-              echo \"env: \$(grep -c '=' .env) variable(s)\"
-            "
+          # `op inject` lit le .env DU DEPOT et substitue chaque reference
+          # `op://` par sa valeur. Le depot est donc l'unique endroit ou une
+          # variable runtime est declaree : en ajouter une la suffit, il n'y a
+          # pas de seconde liste a tenir a jour ici.
+          #
+          # C'est ce qui remplace l'ancien bloc de `printf` par variable, et le
+          # bug qu'il portait : les cinq variables SMTP n'y figuraient pas, donc
+          # depuis que le .env du depot arrive sur le serveur ce sont les
+          # references `op://` BRUTES qui y atterrissaient. Une valeur qui
+          # ressemble a une URL sans en etre une — l'envoi d'e-mails aurait
+          # echoue loin d'ici, sur un message n'expliquant rien.
+          #
+          # PYTHON_ENV est force a Production apres l'injection : le fichier
+          # commite porte Development, et c'est le bon defaut (un oubli donne du
+          # dev, jamais une prod tournant en mode dev).
+          op inject -i .env -o /tmp/env.resolved
+          sed -i 's/^PYTHON_ENV=.*/PYTHON_ENV=Production/' /tmp/env.resolved
+
+          # Transfere puis efface. `install -m 600` pose les droits AVANT
+          # d'ecrire le contenu, contrairement a un `cat >` suivi d'un chmod qui
+          # laisse une fenetre ou le fichier est lisible par tous.
+          scp -P $PORT /tmp/env.resolved $SSH_USER@$HOST:/tmp/env.shazamer
+          rm -f /tmp/env.resolved
+          ssh -p $PORT $SSH_USER@$HOST "
+            set -e
+            install -m 600 /tmp/env.shazamer $DEPLOY_PATH/.env
+            rm -f /tmp/env.shazamer
+            echo \"env: \$(grep -c '^[A-Z_]*=' $DEPLOY_PATH/.env) variable(s)\"
+          "
 
           # 3. Run blue-green deployment
           ssh -p $PORT $SSH_USER@$HOST "
