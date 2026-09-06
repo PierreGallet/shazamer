@@ -122,26 +122,27 @@ echo ">> Building shazamer image"
 docker buildx build --output type=docker,name=shazamer_app:latest,compression=zstd .
 
 echo ">> Deploying swarm stack (host/secrets from .env)"
+# Read .env by SPLITTING on the first `=`, never by sourcing it.
+#
 # `.` on a file with an unquoted value containing spaces does not fail — it
 # assigns the first word and tries to run the rest as a command. A Gmail app
-# password is sixteen characters shown in groups of four, so pasting one
-# verbatim silently produced an empty SMTP_PASSWORD and a deploy that looked
-# fine. Caught here rather than discovered as "the code is broken".
-if ! . ./.env 2>/tmp/envload.$$; then
-  echo ">> .env could not be read:" >&3
-  cat /tmp/envload.$$ >&3
-  rm -f /tmp/envload.$$
-  exit 1
-fi
-if [ -s /tmp/envload.$$ ]; then
-  echo ">> .env produced errors while loading — a value with spaces almost" >&3
-  echo "   certainly needs quoting. Nothing was deployed." >&3
-  sed -E 's/(PASSWORD|KEY|SECRET)[=:].*/\1=***/' /tmp/envload.$$ >&3
-  rm -f /tmp/envload.$$
-  exit 1
-fi
-rm -f /tmp/envload.$$
-set -a; . ./.env; set +a
+# password is sixteen characters shown in groups of four, so
+# `SMTP_PASSWORD=abcd efgh ijkl mnop` set the password to "abcd" and then
+# reported `ijkl: command not found`.
+#
+# The guard that used to sit here caught exactly that and aborted, which was
+# right at the time: the file was hand-edited on the server, and a mangled
+# value deserved a stop rather than a silent half-deploy. It stopped being
+# right the moment CI began generating the file with `op inject` — the value is
+# now correct by construction, and refusing it means refusing a good deploy
+# over a parsing choice this script controls.
+#
+# So parse it properly instead. Values containing spaces, `#` or quotes all
+# survive, because nothing is ever handed to the shell to interpret.
+while IFS='=' read -r k v; do
+    case "$k" in ''|\#*) continue ;; esac
+    export "$k=$v"
+done < ./.env
 
 # Signing in is the only way in, and a code arrives by mail or not at all.
 # Refusing here beats deploying a login nobody can pass and discovering it
