@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.5](https://github.com/PierreGallet/shazamer/compare/v1.27.4...v1.27.5) (2026-09-06)
+
+
+### 🐛 Fixes
+
+* **deploy:** parse .env instead of sourcing it ([a6fdf1f](https://github.com/PierreGallet/shazamer/commit/a6fdf1faf52fac34095f8b18903953501dc84020))
+
 ## [1.27.4](https://github.com/PierreGallet/shazamer/compare/v1.27.3...v1.27.4) (2026-09-06)
 
 
