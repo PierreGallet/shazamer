@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.3](https://github.com/PierreGallet/shazamer/compare/v1.27.2...v1.27.3) (2026-09-06)
+
+
+### 🧹 Maintenance
+
+* **ci:** .env is the single source, resolved by op inject ([a300c7d](https://github.com/PierreGallet/shazamer/commit/a300c7da640065d32cb821ec26d37af62b67298c))
+
 ## [1.27.2](https://github.com/PierreGallet/shazamer/compare/v1.27.1...v1.27.2) (2026-09-04)
 
 
