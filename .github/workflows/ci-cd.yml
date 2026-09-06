@@ -75,7 +75,36 @@ jobs:
         run: npm run build
 
       - name: Run tests
-        run: uv run pytest -x -q -m "not integration" --ignore=tests/test_integration.py
+        # --cov ajoute le 2026-09-06 : pytest-cov etait installe mais jamais
+        # utilise, donc la couverture n'existait pas. Sans `-x`, pour que
+        # Codecov recoive un rapport complet plutot que celui des tests joues
+        # avant le premier echec.
+        run: uv run pytest -q -m "not integration" --ignore=tests/test_integration.py --cov=src --cov-report=xml
+
+      # Codecov, aligne sur triton. Le jeton vient de 1Password et non d'un
+      # secret GitHub, pour qu'il n'en reste qu'un seul dans l'interface.
+      - name: Install 1Password CLI
+        if: ${{ !cancelled() }}
+        uses: 1password/install-cli-action@v1
+
+      - name: Load Codecov token from 1Password
+        if: ${{ !cancelled() }}
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          CODECOV_TOKEN: op://Dev/Env/CODECOV_TOKEN
+
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          files: coverage.xml
+          # Un envoi Codecov en echec ne doit pas faire echouer la CI : c'est de
+          # l'information sur les tests, pas un test.
+          fail_ci_if_error: false
 
   release-please:
     name: "\U0001F4E6 Release Please"
