@@ -1,6 +1,20 @@
 .PHONY: help install install-web install-docs dev web web-build build docs docs-dev test test-integration clean lint
 
 VENV := venv/bin/python
+
+# Résout les références 1Password du .env et lance la commande avec les vraies
+# valeurs dans son environnement — sans jamais les écrire sur le disque.
+#
+# Nécessaire parce que rien ne charge le .env autrement : le code lit
+# os.environ et pas un fichier, et en production c'est docker-stack.yml qui
+# fournit les variables. En local, sans ce préfixe, SMTP et Sentry sont
+# simplement absents — ou pire, valent la chaîne « op://… » si le fichier est
+# chargé à la main, ce qui ressemble à une valeur sans en être une.
+#
+# Dégradation volontaire si `op` n'est pas installé ou pas déverrouillé : la
+# commande tourne quand même, sans les secrets. Contribuer au frontend ou
+# lancer les tests ne doit pas exiger un coffre.
+OP := $(shell command -v op >/dev/null 2>&1 && echo "op run --env-file=.env --")
 PORT ?= 8000
 
 help:
@@ -52,21 +66,21 @@ docs-dev:
 # The analysis worker. Needs REDIS_URL; without one the API runs analyses
 # itself and this is unnecessary.
 worker:
-	@$(VENV) -m arq src.jobs.worker.WorkerSettings
+	@$(OP) $(VENV) -m arq src.jobs.worker.WorkerSettings
 
 # Two processes: the API, and Vite with hot reload proxying /api to it.
 dev:
 	@echo "API on http://localhost:$(PORT) · UI on http://localhost:5173"
-	@$(VENV) -m uvicorn src.web:app --reload --port $(PORT) & \
+	@$(OP) $(VENV) -m uvicorn src.web:app --reload --port $(PORT) & \
 	 cd web && npm run dev; \
 	 kill %1 2>/dev/null || true
 
 web: build
-	@$(VENV) -m uvicorn src.web:app --host 0.0.0.0 --port $(PORT)
+	@$(OP) $(VENV) -m uvicorn src.web:app --host 0.0.0.0 --port $(PORT)
 
 analyze:
 	@test -n "$(FILE)" || { echo 'Usage: make analyze FILE="path/to/mix.mp3"'; exit 1; }
-	@$(VENV) -m src.shazamer "$(FILE)"
+	@$(OP) $(VENV) -m src.shazamer "$(FILE)"
 
 test:
 	@$(VENV) -m pytest -q -m "not integration"
