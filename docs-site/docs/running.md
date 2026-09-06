@@ -25,7 +25,7 @@ make install     # Python environment and frontend dependencies
 make web         # builds the interface and serves everything on :8000
 ```
 
-For development, `make dev` runs the API on `:8000` and Vite with hot reload on
+For development, `make run` runs the API on `:8000` and Vite with hot reload on
 `:5173`, proxying `/api` through.
 
 ## With or without a queue

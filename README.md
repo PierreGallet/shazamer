@@ -48,7 +48,7 @@ make install     # Python venv + frontend dependencies
 make web         # builds the UI and serves everything on :8000
 ```
 
-For development, `make dev` runs the API on `:8000` and Vite with hot reload on
+For development, `make run` runs the API on `:8000` and Vite with hot reload on
 `:5173`, proxying `/api` to the backend.
 
 ### Command line

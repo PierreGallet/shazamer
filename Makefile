@@ -21,7 +21,7 @@ help:
 	@echo "Shazamer — DJ digging station"
 	@echo ""
 	@echo "  make install        Install Python + frontend dependencies"
-	@echo "  make dev            Run API (:8000) and Vite dev server (:5173)"
+	@echo "  make run            Run API (:8000) and Vite dev server (:5173)"
 	@echo "  make web            Run the production server (built frontend)"
 	@echo "  make worker         Run the analysis worker (needs REDIS_URL)"
 	@echo "  make build          Build the frontend into web/dist"
@@ -69,11 +69,19 @@ worker:
 	@$(OP) $(VENV) -m arq src.jobs.worker.WorkerSettings
 
 # Two processes: the API, and Vite with hot reload proxying /api to it.
-dev:
+#
+# `run` and not `dev`, to match triton, noctambule and lecrapaud — every other
+# repo here starts the same way. `dev` stays as an alias: it is what the README,
+# the docs site and muscle memory have said for months, and breaking it would
+# cost more than the line it takes to keep.
+run:
 	@echo "API on http://localhost:$(PORT) · UI on http://localhost:5173"
 	@$(OP) $(VENV) -m uvicorn src.web:app --reload --port $(PORT) & \
 	 cd web && npm run dev; \
 	 kill %1 2>/dev/null || true
+
+# Alias historique.
+dev: run
 
 web: build
 	@$(OP) $(VENV) -m uvicorn src.web:app --host 0.0.0.0 --port $(PORT)
