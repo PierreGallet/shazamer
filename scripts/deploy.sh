@@ -276,6 +276,24 @@ docker image prune -f >/dev/null 2>&1 || true
 # the rollback target of a rollout that has not finished converging.
 docker container prune -f --filter "until=1h" >/dev/null 2>&1 || true
 
+# Conteneurs de tache ARRETES de cette pile, supprimes tout de suite.
+#
+# Un conteneur arrete epingle son image, et la purge d'images refuse — a
+# raison — de toucher une image qu'un conteneur reference. La grace d'une
+# heure ci-dessus accordait donc, en pratique, une heure de retention d'image
+# par-dessus la politique : le parc gardait courante + precedente au lieu de la
+# seule courante.
+#
+# On assume le deploiement des qu'il est sain, donc on n'attend pas. Ce qu'on
+# perd, c'est `docker logs` sur l'ancienne tache ; ses journaux sont dans Loki,
+# et `docker service ps` garde l'historique des taches meme sans leur
+# conteneur, donc le diagnostic d'un deploiement rate reste lisible.
+#
+# Cible par NOM, pas un `container prune` global : le meme demon porte les
+# cinq autres piles, dont un deploiement peut tourner en meme temps.
+docker ps -a --filter "name=shazamer_app."  --filter "name=shazamer_worker." --filter status=exited --format '{{.ID}}' \
+    | xargs -r docker rm >/dev/null 2>&1 || true
+
 # Images supplantees de TOUT le parc, pas seulement de ce depot.
 #
 # Le meme demon Docker porte les images des six depots. Chacun nettoyait les
