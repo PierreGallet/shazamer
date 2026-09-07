@@ -276,6 +276,23 @@ docker image prune -f >/dev/null 2>&1 || true
 # the rollback target of a rollout that has not finished converging.
 docker container prune -f --filter "until=1h" >/dev/null 2>&1 || true
 
+# Images supplantees de TOUT le parc, pas seulement de ce depot.
+#
+# Le meme demon Docker porte les images des six depots. Chacun nettoyait les
+# siennes et laissait celles des autres au minuteur nocturne de 03:30 — ce qui
+# ne tient pas a cinq deploiements dans la journee : triton pese 5 Go l'unite,
+# noctambule 4,3 Go, et le disque franchit le seuil d'alerte bien avant que le
+# minuteur ne se reveille.
+#
+# Le script vit dans le depot genius pour qu'il n'existe qu'une politique. S'il
+# est absent, on ne fait rien : le nettoyage local ci-dessus a deja fait le plus
+# gros, et un deploiement reussi ne doit pas echouer sur du menage.
+PRUNE_SUPERSEDED="${PRUNE_SUPERSEDED:-$HOME/genius/scripts/prune-superseded-images.sh}"
+if [ -x "$PRUNE_SUPERSEDED" ]; then
+    echo ">> Images supplantees (tous depots)"
+    "$PRUNE_SUPERSEDED" || true
+fi
+
 # NO build-cache prune here. Deliberate, and it reverses what this script did
 # earlier the same day.
 #
