@@ -21,6 +21,36 @@ VENV := venv/bin/python
 # Teste le 2026-09-06 : sans session, `op run -- echo` n'affiche que
 # « You are not currently signed in » et n'execute rien.
 OP := $(shell command -v op >/dev/null 2>&1 && op whoami >/dev/null 2>&1 && echo "op run --env-file=.env --")
+
+# Refuser de demarrer plutot que de demarrer FAUX.
+#
+# La garde ci-dessus se contentait de vider $(OP) : la cible tournait, sans
+# dechiffrement, sans le dire. Les valeurs `op://` arrivaient alors dans
+# l'application comme des chaines litterales, et le symptome n'apparaissait que
+# bien plus loin — « Failed to decrypt openai_api_key », une liste de modeles
+# vide — sans rien qui designe la vraie cause. Deux allers-retours de debogage
+# pour ca le 2026-09-07, sur une cible qui affichait pourtant un demarrage
+# normal.
+#
+# Le test ne se declenche QUE si le .env porte reellement des references : un
+# .env entierement en clair continue de tourner sans op, donc rien ne se
+# complique pour qui n'utilise pas le coffre.
+define require_op
+@if [ -z "$(OP)" ] && grep -qs '^[A-Za-z_][A-Za-z0-9_]*=op://' .env; then \
+	echo ""; \
+	echo "  X  1Password injoignable : les valeurs op:// du .env NE SERAIENT PAS resolues."; \
+	echo ""; \
+	echo "     Verifie d'abord :  op account list"; \
+	echo "     Une liste VIDE veut dire que le CLI ne voit aucun compte — l'app de"; \
+	echo "     bureau ne l'expose pas. 1Password > Reglages > Developpeur >"; \
+	echo "     « Integrer avec le CLI 1Password ». C'est le seul reglage qui vaut"; \
+	echo "     pour TOUS les terminaux ; un 'op signin' ne vaut que pour le shell"; \
+	echo "     ou tu l'as lance, pas pour celui d'un agent ou d'un autre onglet."; \
+	echo ""; \
+	exit 1; \
+fi
+endef
+
 PORT ?= 8000
 
 help:
@@ -72,6 +102,7 @@ docs-dev:
 # The analysis worker. Needs REDIS_URL; without one the API runs analyses
 # itself and this is unnecessary.
 worker:
+	$(require_op)
 	@$(OP) $(VENV) -m arq src.jobs.worker.WorkerSettings
 
 # Two processes: the API, and Vite with hot reload proxying /api to it.
@@ -82,6 +113,7 @@ worker:
 # cost more than the line it takes to keep.
 run:
 	@echo "API on http://localhost:$(PORT) · UI on http://localhost:5173"
+	$(require_op)
 	@$(OP) $(VENV) -m uvicorn src.web:app --reload --port $(PORT) & \
 	 cd web && npm run dev; \
 	 kill %1 2>/dev/null || true
@@ -90,10 +122,12 @@ run:
 dev: run
 
 web: build
+	$(require_op)
 	@$(OP) $(VENV) -m uvicorn src.web:app --host 0.0.0.0 --port $(PORT)
 
 analyze:
 	@test -n "$(FILE)" || { echo 'Usage: make analyze FILE="path/to/mix.mp3"'; exit 1; }
+	$(require_op)
 	@$(OP) $(VENV) -m src.shazamer "$(FILE)"
 
 test:
