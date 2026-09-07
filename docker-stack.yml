@@ -90,10 +90,21 @@ services:
         # priority wins the match and the allowlist middleware answers 403.
         # Prometheus is unaffected: it scrapes shazamer_app:8000 directly over
         # the Swarm overlay and never traverses Traefik.
+        #
+        # `@swarm` et NON `@docker` : le suffixe nomme le fournisseur qui a
+        # decouvert l'etiquette, et ces etiquettes viennent du fournisseur
+        # Swarm. Avec `@docker` le middleware est introuvable, Traefik ecarte le
+        # routeur comme invalide, et la requete retombe sur le routeur d'hote
+        # qui sert les metriques. Un `curl` public renvoyait 200 et le journal
+        # d'acces nommait le routeur d'hote : le blocage n'avait jamais
+        # fonctionne, sur aucun des trois depots qui le declarent.
+        #
+        # priority=1000 et non 100 : une priorite absente vaut la LONGUEUR de la
+        # regle, et 100 n'etait pas surement au-dessus du routeur d'hote.
         - "traefik.http.routers.shazamer-metrics.rule=Host(`${SHAZAMER_HOST:-shazamer.pierregallet.com}`) && PathPrefix(`/metrics`)"
         - "traefik.http.routers.shazamer-metrics.entrypoints=web"
-        - "traefik.http.routers.shazamer-metrics.priority=100"
-        - "traefik.http.routers.shazamer-metrics.middlewares=shazamer-deny@docker"
+        - "traefik.http.routers.shazamer-metrics.priority=1000"
+        - "traefik.http.routers.shazamer-metrics.middlewares=shazamer-deny@swarm"
         - "traefik.http.routers.shazamer-metrics.service=shazamer"
         - "traefik.http.middlewares.shazamer-deny.ipallowlist.sourcerange=127.0.0.1/32"
       resources:
