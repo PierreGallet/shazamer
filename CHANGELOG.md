@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.6](https://github.com/PierreGallet/shazamer/compare/v1.27.5...v1.27.6) (2026-09-07)
+
+
+### 🐛 Fixes
+
+* **make:** op run degraded on a LOCKED vault, not just a missing CLI ([67bdf80](https://github.com/PierreGallet/shazamer/commit/67bdf808d75e8d6e1026bc83bf6e82ea61ed9345))
+* **make:** resolve 1Password references when running locally ([9339c6f](https://github.com/PierreGallet/shazamer/commit/9339c6f2c636829ce2bc2fa799c453aecef3f477))
+* **traefik:** /metrics was public — the deny middleware never resolved ([8e7ada3](https://github.com/PierreGallet/shazamer/commit/8e7ada335e0eb20acd12dc5fe093ef9ffbee5af4))
+
+
+### 🧹 Maintenance
+
+* **make:** rename dev to run, matching every other repo ([bca1a37](https://github.com/PierreGallet/shazamer/commit/bca1a3705ada1d230e8dcdfd7860449778f9712f))
+
 ## [1.27.5](https://github.com/PierreGallet/shazamer/compare/v1.27.4...v1.27.5) (2026-09-06)
 
 
