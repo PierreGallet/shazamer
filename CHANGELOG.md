@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.7](https://github.com/PierreGallet/shazamer/compare/v1.27.6...v1.27.7) (2026-09-07)
+
+
+### 🐛 Fixes
+
+* **deploy:** call the shared image purge after a successful deploy ([f775fdb](https://github.com/PierreGallet/shazamer/commit/f775fdb560dd9eeabc1b6b6c2ea16aa7c830ae15))
+
 ## [1.27.6](https://github.com/PierreGallet/shazamer/compare/v1.27.5...v1.27.6) (2026-09-07)
 
 
