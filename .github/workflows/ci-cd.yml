@@ -119,6 +119,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Le PAT, charge depuis 1Password plutot que pose en secret GitHub.
+      #
+      # GITHUB_TOKEN ne peut pas faire ce travail, et ce n'est pas un defaut de
+      # configuration : GitHub refuse deliberement que les evenements produits
+      # par ce jeton en declenchent d'autres, pour empecher les boucles
+      # infinies. Deux consequences, mesurees sur ce depot :
+      #
+      #   - la PR de release ouverte par le bot voit son run refuse au demarrage
+      #     (0 job, conclusion `failure`) — cosmetique mais rouge
+      #   - la fusion faite par le bot ne declenche AUCUN workflow, donc rien ne
+      #     publie la release, qui attend le prochain push humain
+      #
+      # Le second n'est pas cosmetique : le 2026-09-09 la PR 1.27.8 etait
+      # fusionnee alors que la derniere release publiee restait v1.27.7. Un
+      # decalage permanent d'une version, sur les quatre depots.
+      #
+      # Aucun secret GitHub supplementaire : l'entree existe deja dans le coffre
+      # et ce workflow sait deja y lire (cf. CODECOV_TOKEN plus haut).
+      - name: Install 1Password CLI
+        uses: 1password/install-cli-action@v1
+
+      - name: Load release token from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          GHP_TOKEN: op://Dev/GHP_TOKEN/identifiant
+
       - name: Release Please
         uses: googleapis/release-please-action@v4
         id: release
@@ -132,7 +161,7 @@ jobs:
           # Without it the action reads the config and the manifest, both of
           # which are committed here, and the release type comes from the
           # config's `packages` entry.
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ env.GHP_TOKEN }}
           target-branch: main
 
       - name: Set up Python
@@ -155,7 +184,7 @@ jobs:
       - name: Upload Release Artifacts
         if: ${{ steps.release.outputs.release_created }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ env.GHP_TOKEN }}
         run: |
           VERSION="${{ steps.release.outputs.major }}.${{ steps.release.outputs.minor }}.${{ steps.release.outputs.patch }}"
           gh release upload ${{ steps.release.outputs.tag_name }} \
@@ -178,9 +207,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Job distinct, donc chargement distinct : `export-env` n'expose la
+      # variable qu'aux etapes du job ou l'action s'execute, jamais aux autres.
+      #
+      # Et c'est ICI que le PAT compte le plus. GITHUB_TOKEN sait fusionner une
+      # PR — ce n'est pas ce qui manquait — mais la fusion qu'il produit ne
+      # declenche aucun workflow, donc rien ne publie la release qui vient
+      # d'etre fusionnee. Avec le PAT, la fusion est un evenement ordinaire et
+      # la chaine se poursuit.
+      - name: Install 1Password CLI
+        uses: 1password/install-cli-action@v1
+
+      - name: Load merge token from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          GHP_TOKEN: op://Dev/GHP_TOKEN/identifiant
+
       - name: Find and merge release-please PR
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ env.GHP_TOKEN }}
         run: |
           sleep 10
           PR_NUMBER=$(gh pr list --head "release-please--branches--main" --state open --json number --jq '.[0].number')
