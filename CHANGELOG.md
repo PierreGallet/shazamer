@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.8](https://github.com/PierreGallet/shazamer/compare/v1.27.7...v1.27.8) (2026-09-09)
+
+
+### 🐛 Fixes
+
+* **make:** refuse to start rather than start with unresolved op:// values ([2452e40](https://github.com/PierreGallet/shazamer/commit/2452e4000fd6e10f758dc3d662faa56a513b4fa7))
+
+
+### 🧹 Maintenance
+
+* **deploy:** reap the previous task container as soon as the deploy is healthy ([2b374d3](https://github.com/PierreGallet/shazamer/commit/2b374d3b375a64f5c41059e509af882c7f0d39c8))
+
 ## [1.27.7](https://github.com/PierreGallet/shazamer/compare/v1.27.6...v1.27.7) (2026-09-07)
 
 
