@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.9](https://github.com/PierreGallet/shazamer/compare/v1.27.8...v1.27.9) (2026-09-09)
+
+
+### 🐛 Fixes
+
+* **ci:** use the PAT for release-please, so releases actually publish ([e7b3dc6](https://github.com/PierreGallet/shazamer/commit/e7b3dc6fc34ecbf2cdad44938aa1815388324386))
+
 ## [1.27.8](https://github.com/PierreGallet/shazamer/compare/v1.27.7...v1.27.8) (2026-09-09)
 
 
