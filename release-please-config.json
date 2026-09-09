@@ -5,13 +5,40 @@
     ".": {
       "release-type": "python",
       "changelog-sections": [
-        { "type": "feat", "section": "✨ Features" },
-        { "type": "fix", "section": "🐛 Fixes" },
-        { "type": "perf", "section": "🚀 Performance" },
-        { "type": "chore", "section": "🧹 Maintenance" },
-        { "type": "refactor", "section": "🧹 Maintenance" },
-        { "type": "docs", "section": "🧹 Maintenance" },
-        { "type": "test", "section": "🧹 Maintenance" }
+        {
+          "type": "feat",
+          "section": "✨ Features"
+        },
+        {
+          "type": "fix",
+          "section": "🐛 Fixes"
+        },
+        {
+          "type": "perf",
+          "section": "🚀 Performance"
+        },
+        {
+          "type": "refactor",
+          "section": "♻️ Refactoring"
+        },
+        {
+          "type": "docs",
+          "section": "📚 Documentation"
+        },
+        {
+          "type": "test",
+          "section": "🧪 Tests"
+        },
+        {
+          "type": "chore",
+          "section": "🧹 Maintenance",
+          "hidden": true
+        },
+        {
+          "type": "style",
+          "section": "🧹 Maintenance",
+          "hidden": true
+        }
       ]
     }
   }
