@@ -20,7 +20,25 @@ VENV := venv/bin/python
 #
 # Teste le 2026-09-06 : sans session, `op run -- echo` n'affiche que
 # « You are not currently signed in » et n'execute rien.
-OP := $(shell command -v op >/dev/null 2>&1 && op whoami >/dev/null 2>&1 && echo "op run --env-file=.env --")
+# `op account list` et non `op whoami`.
+#
+# `op whoami` echoue avec « account is not signed in » des lors qu'on passe par
+# l'integration avec l'app de bureau : celle-ci deverrouille a chaque appel
+# (biometrie) et ne cree JAMAIS de jeton de session CLI. Le garde-fou refusait
+# donc de demarrer un environnement parfaitement sain — pire que le probleme
+# qu'il previent. Verifie sur la machine de Pierre le 2026-09-10 :
+# `op whoami` -> ECHEC, `op account list` -> OK, et `op run` fonctionne.
+#
+# La sonde ne doit RIEN lire dans le coffre non plus : `op run -- true`
+# resoudrait toutes les references du .env a chaque invocation de make, soit une
+# rafale de demandes TouchID sur `make help` comme sur `make run`. Une sonde qui
+# coute une authentification par appel est inutilisable.
+#
+# `op account list` repond depuis la config locale : aucune biometrie, et elle
+# distingue exactement le cas vise — « le CLI ne voit aucun compte ». Elle ne
+# prouve pas le deverrouillage, et c'est voulu : `op run` demandera la biometrie
+# une seule fois, quand la cible en a reellement besoin.
+OP := $(shell command -v op >/dev/null 2>&1 && op account list --format=json 2>/dev/null | grep -q '"url"' && echo "op run --env-file=.env --")
 
 # Refuser de demarrer plutot que de demarrer FAUX.
 #
