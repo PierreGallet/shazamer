@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.10](https://github.com/PierreGallet/shazamer/compare/v1.27.9...v1.27.10) (2026-09-15)
+
+
+### 🐛 Fixes
+
+* **make:** the 1Password guard rejected a healthy environment ([acefd32](https://github.com/PierreGallet/shazamer/commit/acefd32f3b38ac05fed7148ab446be7e07b7aeff))
+
 ## [1.27.9](https://github.com/PierreGallet/shazamer/compare/v1.27.8...v1.27.9) (2026-09-09)
 
 
