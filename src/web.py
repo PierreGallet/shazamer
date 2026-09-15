@@ -24,7 +24,7 @@ import os
 import urllib.parse
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -168,7 +168,11 @@ def sweep_media(max_age_days: int, downloads_days: Optional[int] = None) -> int:
     is the thing you were after, and here it is also the Soulseek share, so it
     lives far longer.
     """
-    now = datetime.now().timestamp()
+    # `.timestamp()` sur un datetime NAIF l'interprete en heure locale : le
+    # meme balayage dans tasks.py:497 utilise deja `now(timezone.utc)`, et les
+    # deux donnaient des epochs differents de l'offset local hors serveur UTC —
+    # assez pour balayer deux heures trop tot ou trop tard.
+    now = datetime.now(timezone.utc).timestamp()
     removed = 0
 
     # An age limit only if one was asked for. Zero — the default — means the
