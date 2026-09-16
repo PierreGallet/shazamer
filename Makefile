@@ -162,3 +162,55 @@ clean:
 	        docs-site/node_modules docs-site/build docs-site/.docusaurus
 	@find . -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
 	@echo "Cleaned."
+
+
+DEPLOY_HOST ?= genius
+DEPLOY_PATH ?= /home/sharon/shazamer
+
+.PHONY: deploy
+deploy: ## Deploiement manuel sur genius — memes etapes que la CI
+# Sert quand le quota GitHub Actions est epuise : la CI ne tourne alors pas et
+# cette cible fait le meme travail qu'elle, .env compris.
+#
+# ATTENTION quand le quota est disponible : le `git push` ci-dessous DECLENCHE
+# aussi la CI, dont le job deploy s'execute sur push main. Deux deploiements
+# concurrents sur le meme service.
+	git push origin main
+	@command -v op >/dev/null || { echo "1Password CLI absent — impossible de resoudre le .env."; exit 1; }
+# `op inject` resout les references `op://` du .env VERSIONNE, qui reste ainsi
+# l'unique endroit ou une variable d'execution est declaree.
+#
+# `sed` et non un ajout en fin de fichier : la CI fait la meme substitution en
+# place, ce qui evite un PYTHON_ENV en double dont seule la derniere occurrence
+# compterait — un fichier de production doit pouvoir se lire.
+#
+# Le garde-fou `tail -c1` couvre un .env qui ne finirait pas par un saut de
+# ligne : la substitution n'en depend pas, mais tout ajout ulterieur si, et le
+# cas s'est deja produit ailleurs (une cle collee a la valeur precedente, donc
+# perdue en silence).
+#
+# TOUT tient dans UN SEUL shell (les `\` en fin de ligne) : chaque ligne d'une
+# recette tourne sinon dans son propre shell, et `$$$$` y rendrait un PID
+# different a chaque ligne — le fichier ecrit ne porterait deja plus le meme nom
+# a l'etape `scp`. Le `trap` garantit qu'il disparait meme en cas d'echec.
+	@set -e; \
+	  TMP=$$(mktemp /tmp/env.shazamer.XXXXXX); \
+	  trap 'rm -f "$$TMP"' EXIT INT TERM; \
+	  echo ">> Resolution du .env depuis 1Password"; \
+	  op inject -i .env -f -o "$$TMP"; \
+	  if [ -n "$$(tail -c1 "$$TMP")" ]; then printf '\n' >> "$$TMP"; fi; \
+	  sed -i.bak 's/^PYTHON_ENV=.*/PYTHON_ENV=Production/' "$$TMP"; rm -f "$$TMP.bak"; \
+	  chmod 600 "$$TMP"; \
+	  scp -q "$$TMP" $(DEPLOY_HOST):/tmp/env.shazamer; \
+	  echo ">> .env resolu depose sur le serveur (PYTHON_ENV=Production)"
+# Le .env est installe APRES `git reset --hard`, dans le MEME ssh, parce que
+# `.env` est VERSIONNE — c'est la premisse meme de `op inject -i .env`. Pose
+# avant, le reset le remplacerait par la version du depot : celle du
+# developpement, references `op://` non resolues comprises. La CI ne s'y trompe
+# pas non plus, son `install` vient apres ses operations git.
+	ssh $(DEPLOY_HOST) "chmod 600 /tmp/env.shazamer \
+	  && cd $(DEPLOY_PATH) \
+	  && git fetch origin && git reset --hard origin/main \
+	  && install -m 600 /tmp/env.shazamer .env && rm -f /tmp/env.shazamer \
+	  && echo \">> env: \$$(grep -c '^[A-Z_]*=' .env) variable(s)\" \
+	  && bash scripts/deploy.sh"
