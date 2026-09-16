@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.0](https://github.com/PierreGallet/shazamer/compare/v1.27.10...v1.28.0) (2026-09-16)
+
+
+### ✨ Features
+
+* **make:** une cible `deploy`, pour quand la CI ne peut pas tourner ([b7b7fab](https://github.com/PierreGallet/shazamer/commit/b7b7fabf5a01e207f37cc0834e12b88948f05c4f))
+
+
+### 🐛 Fixes
+
+* **dates:** le balayage des fichiers compare des epochs UTC, pas locaux ([361900c](https://github.com/PierreGallet/shazamer/commit/361900ceba21dc9d4eae43b353be7196919175a3))
+
 ## [1.27.10](https://github.com/PierreGallet/shazamer/compare/v1.27.9...v1.27.10) (2026-09-15)
 
 
