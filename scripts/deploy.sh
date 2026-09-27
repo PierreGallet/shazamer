@@ -280,6 +280,56 @@ if docker service ls --filter name=shazamer_slskd --format '{{.Name}}' | grep -q
   docker service update --force shazamer_slskd
 fi
 
+# ── Le verdict ────────────────────────────────────────────────────────
+# Cette verification vivait dans la CI GitHub, en fin de job « Deploy ». Elle y
+# etait au mauvais endroit pour deux raisons.
+#
+# D'abord elle n'etait pas atteignable par `make deploy` : un deploiement lance
+# a la main ne verifiait rien du tout. Ensuite le runner n'attend plus la fin du
+# deploiement — il le lance et rend la main — donc la laisser la-bas l'aurait
+# fait sonder l'ANCIENNE version, encore en place, et declarer un succes.
+#
+# Elle est donc ici, la ou le deploiement se termine vraiment, et son code de
+# sortie est celui du script : la metrique `genius_deploy_last_success` et
+# l'alerte « Last deploy failed » la rapportent.
+#
+# Placee AVANT la reprise d'espace : `set -e` fait sortir le script ici si la
+# verification echoue, et un retour arriere doit retrouver l'image precedente
+# et un cache chaud.
+echo ">> Verification"
+_verified=0
+for _ in $(seq 1 30); do
+    # Le NOMBRE de repliques d'abord : un conteneur sain ne suffit pas si le
+    # service en fait tourner moins qu'il ne devrait. Une sortie propre l'a
+    # laisse une fois a 0/1, sans rien pour servir, et un controle qui ne
+    # cherchait qu'un conteneur sain aurait appele cela un succes.
+    _replicas=$(docker service ls --filter name=shazamer_app --format '{{.Replicas}}')
+    _worker=$(docker service ls --filter name=shazamer_worker --format '{{.Replicas}}')
+    # Le worker tourne la meme image et fait le travail reel. Un deploiement qui
+    # le laisse a terre, ou sur l'ancien code, n'est pas un succes — l'un l'a
+    # fait exactement, et le correctif ecrit pour debloquer une analyse n'a
+    # jamais atteint le processus qui la tournait.
+    _healthy=$(docker ps --filter 'name=shazamer_app' --filter 'health=healthy' -q | head -1)
+    if [ -n "$_healthy" ] \
+       && [ "${_replicas%%/*}" = "${_replicas##*/}" ] \
+       && [ "${_worker%%/*}" = "${_worker##*/}" ] \
+       && docker exec "$_healthy" python -c \
+            "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()" \
+            >/dev/null 2>&1; then
+        echo "   app $_replicas, worker $_worker, /api/health repond"
+        _verified=1
+        break
+    fi
+    sleep 10
+done
+if [ "$_verified" != 1 ]; then
+    echo ">> ECHEC : aucune tache saine apres 5 minutes (app: $_replicas worker: $_worker)." >&2
+    docker service ps shazamer_app --no-trunc 2>/dev/null | head -20 >&2
+    _c=$(docker ps --filter 'name=shazamer_app' -q | head -1)
+    [ -n "$_c" ] && docker logs "$_c" --tail 50 >&2 2>&1 || true
+    exit 1
+fi
+
 # ── Reclaim disk ──────────────────────────────────────────────────────
 # Placed here, AFTER the rollout: `set -e` means a failed deploy exits before
 # this line, so a rollback still finds the previous image and a warm cache.

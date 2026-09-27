@@ -248,7 +248,12 @@ jobs:
       !failure() && !cancelled()
       && github.event_name != 'pull_request'
       && !startsWith(github.event.head_commit.message, 'chore(main): release')
-    timeout-minutes: 45
+    # Le job ne fait plus qu'une chose : resoudre le .env et LANCER le
+    # deploiement. La construction de l'image et la mise a jour tournante se
+    # poursuivent sur le serveur apres la fin du job, donc la borne n'a plus a
+    # les couvrir. Si ces dix minutes ne suffisent pas, c'est que le serveur est
+    # injoignable — et c'est bien un echec.
+    timeout-minutes: 10
 
     concurrency:
       group: deploy-production
@@ -389,64 +394,54 @@ jobs:
             echo \"env: \$(grep -c '^[A-Z_]*=' $DEPLOY_PATH/.env) variable(s)\"
           "
 
-          # 3. Run blue-green deployment
-          ssh -p $PORT $SSH_USER@$HOST "
-            set -e
-            cd $DEPLOY_PATH
-            bash scripts/deploy.sh
-          "
+          # DEPLOIEMENT DETACHE — le runner ne l'attend plus.
+          #
+          # Il l'attendait, et l'attente se comptait en quart d'heure : la
+          # construction de l'image se fait sur le SERVEUR, et le runner ne
+          # faisait que tenir une session SSH ouverte pendant ce temps. Ces
+          # minutes etaient facturees a chaque poussee pour ne rien calculer.
+          #
+          # Le verdict n'est pas perdu, il change de lecteur. Il est cote
+          # serveur, dans scripts/deploy.sh, qui attend la convergence et sort
+          # en erreur si la nouvelle tache ne devient pas saine. Le script
+          # publie son heure de debut, son heure de fin et son code de sortie ;
+          # deux alertes Grafana les lisent — « Deploy started but never
+          # finished » (45 min) et « Last deploy failed ».
+          #
+          # `setsid` detache le processus de la session SSH, sans quoi il
+          # recevrait SIGHUP a la fermeture du canal.
+          #
+          # Les accolades ne sont pas decoratives. `A && B > f &` met toute la
+          # liste en fond mais n'applique la redirection qu'a `B` : le sous-shell
+          # garde la sortie de `ssh` ouverte tant qu'il vit, et `ssh` ne rend la
+          # main que quand le canal se ferme — donc au bout du deploiement
+          # entier. Le detachement etait annule SANS AUCUN MESSAGE. Mesure sur
+          # le serveur : 15 s sans les accolades contre 1 s avec, pour un
+          # `sleep 15`. Les trois descripteurs sont rediriges pour la meme
+          # raison — un seul encore ouvert suffit a tenir le canal.
+          LOG="deploy-logs/shazamer-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA:0:7}.log"
+          ssh -n -p $PORT $SSH_USER@$HOST "{ mkdir -p ~/deploy-logs \
+            && cd $DEPLOY_PATH \
+            && setsid nohup bash scripts/deploy.sh ; \
+            } > ~/$LOG 2>&1 < /dev/null & \
+            echo 'deploiement lance en tache de fond'"
+          echo "::notice::Deploiement lance sur le serveur, sans attente du runner. Journal : ~/$LOG. Une panne remonte par les alertes Grafana deploy-stuck / deploy-failed."
 
-      - name: Post-deploy verification
-        env:
-          # SSH_USER et SSH_HOST viennent de l'etape 1Password.
-          DEPLOY_PATH: /home/sharon/shazamer
-        run: |
-          HOST=$(echo $SSH_HOST | cut -d':' -f1)
-          # `${SSH_HOST##*:}` ne rend le port que s'il y en a un ; sinon il rend
-          # l'hote entier, d'ou le test numerique. L'ancienne forme
-          # `grep -o ':[0-9]*' | cut -f2 || echo 22` ne pouvait PAS retomber sur
-          # le defaut : cut reussit meme sur une entree vide, donc le `||`
-          # n'etait jamais atteint et PORT restait VIDE — `Bad port ''`.
-          PORT="${SSH_HOST##*:}"
-          case "$PORT" in
-            ''|*[!0-9]*) PORT="${SSH_PORT:-22}" ;;
-          esac
-
-          # The service runs under Swarm now, not blue-green: there is no
-          # .deploy-env and no fixed container name, so resolve the running
-          # task and exec into that.
-          echo "Waiting for the new task to report healthy..."
-          ssh -p $PORT $SSH_USER@$HOST "
-            set -e
-            for attempt in \$(seq 1 30); do
-              # Replica count first: a healthy container is not enough if the
-              # service is running fewer than it should. A clean exit once left
-              # it at 0/1 with nothing serving, and a check that only looked for
-              # a healthy container would have called that a success.
-              REPLICAS=\$(docker service ls --filter name=shazamer_app --format '{{.Replicas}}')
-              RUNNING=\${REPLICAS%%/*}
-              WANTED=\${REPLICAS##*/}
-              # The worker runs the same image and does the actual work. A
-              # deploy that leaves it down, or on old code, is not a success —
-              # one did exactly that, and the fix written to unstick an
-              # analysis never reached the process running it.
-              WORKER=\$(docker service ls --filter name=shazamer_worker --format '{{.Replicas}}')
-              W_RUNNING=\${WORKER%%/*}
-              W_WANTED=\${WORKER##*/}
-              CONTAINER=\$(docker ps --filter 'name=shazamer_app' --filter 'health=healthy' -q | head -1)
-              if [ -n \"\$CONTAINER\" ] && [ \"\$RUNNING\" = \"\$WANTED\" ] && [ \"\$W_RUNNING\" = \"\$W_WANTED\" ]; then
-                echo \"Healthy container: \$CONTAINER\"
-                docker exec \$CONTAINER python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()\"
-                exit 0
-              fi
-              sleep 10
-            done
-            echo \"No healthy task after 5 minutes (app: \$REPLICAS worker: \$WORKER).\"
-            docker service ps shazamer_app --no-trunc | head -20
-            CONTAINER=\$(docker ps --filter 'name=shazamer_app' -q | head -1)
-            [ -n \"\$CONTAINER\" ] && docker logs \$CONTAINER --tail 50
-            exit 1
-          "
+      # Il y avait ici une etape de verification post-deploiement, cote runner.
+      # Elle est retiree, et rien n'est perdu.
+      #
+      # Ce qu'elle faisait est DEJA fait par scripts/deploy.sh, sur le serveur,
+      # au moment ou le deploiement se termine vraiment — meme sondage, meme
+      # sortie en erreur. Elle le refaisait a distance, une seconde fois.
+      #
+      # Et depuis que le deploiement est detache, elle ne pourrait plus rien
+      # affirmer : elle sonderait pendant la construction, donc l'ANCIENNE
+      # version, encore en place et parfaitement saine. Elle aurait declare un
+      # succes a chaque fois, y compris pour un deploiement rate. Une
+      # verification qui passe toujours vaut moins que pas de verification.
+      #
+      # Le verdict du serveur remonte par les alertes Grafana deploy-stuck et
+      # deploy-failed.
 
       - name: Notify deployment status
         if: always()
