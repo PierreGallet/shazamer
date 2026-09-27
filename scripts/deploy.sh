@@ -24,6 +24,22 @@ cd "$(dirname "$0")/.."
 # reaches whoever launched this instead of vanishing into the log it quotes.
 DEPLOY_SERVICE="${DEPLOY_SERVICE:-shazamer_app}"
 
+#
+# Il ATTEND son tour, il ne refuse pas. C'etait un refus immediat (`flock -n`),
+# ecrit quand la CI tenait encore la session : faire patienter un runner facture
+# a la minute n'avait pas de sens. Maintenant que le deploiement est detache, ce
+# refus se retournait contre nous — deux poussees rapprochees lancent deux
+# deploiements en parallele, le second etait refuse en SILENCE, et le commit le
+# plus recent ne partait jamais. Le serveur restait sur l'avant-dernier, sans
+# que rien ne le dise.
+#
+# En attendant, le second reprend la main quand le premier a fini, refait son
+# `git reset --hard` et deploie ce qui est alors le plus recent. Attendre ne
+# coute plus rien a personne.
+#
+# La borne vaut 45 min, la meme fenetre que l'alerte « Deploy started but never
+# finished » : au-dela, ce n'est plus une file d'attente, c'est un deploiement
+# bloque, et il faut le dire plutot que d'attendre indefiniment.
 # One deploy at a time.
 #
 # Two overlapping runs make Swarm reject the second with "update out of
@@ -38,13 +54,28 @@ DEPLOY_SERVICE="${DEPLOY_SERVICE:-shazamer_app}"
 # does not leave the next one blocked for ever.
 LOCK_FILE="${DEPLOY_LOCK:-/tmp/deploy-${DEPLOY_SERVICE}.lock}"
 exec 9>"$LOCK_FILE"
+# Ces messages partent sur stderr et non sur le descripteur 3 que le reste du
+# script utilise : il n'est ouvert que plus bas (`exec 3>&2`), et nyew n'en a
+# pas du tout. Un `echo >&3` sur un descripteur ferme echoue, et `set -e` tue le
+# script — donc la branche « un autre deploiement tourne » mourait sur « Bad
+# file descriptor » au lieu d'attendre. Elle n'avait jamais ete exercee ; elle
+# le sera, maintenant que deux poussees rapprochees se mettent en file.
 if ! flock -n 9; then
-  echo ">> Another deploy of $DEPLOY_SERVICE is already running."
-  echo "   Not starting a second one — they would fight over the same"
-  echo "   services, and Swarm rejects both with 'update out of sequence'."
-  echo "   Wait for it to finish; nothing is wrong. Running deploys:"
-  pgrep -af "$(basename "$0")" | grep -v "^$$ " || true
-  exit 75          # EX_TEMPFAIL
+  echo ">> Un autre deploiement de $DEPLOY_SERVICE est en cours — on attend son tour."
+  echo "   Deux deploiements concurrents se disputeraient les memes services,"
+  echo "   et Swarm les rejetterait tous les deux (« update out of sequence »)."
+  if ! flock -w "${DEPLOY_LOCK_WAIT:-2700}" 9; then
+    echo ">> ECHEC : le verrou de $DEPLOY_SERVICE ne s'est pas libere en ${DEPLOY_LOCK_WAIT:-2700} s."
+    echo "   Ce n'est plus une file d'attente : le deploiement precedent est bloque."
+    # Pas de `pgrep` ici. Les six depots du serveur nomment tous leur script
+    # `deploy.sh`, donc il listait les deploiements des AUTRES piles ; et quand
+    # le script est source plutot qu'execute, `$0` vaut `bash` et il rendait
+    # tous les processus de la machine — 33 Ko de sortie pour une panne.
+    # Le journal du deploiement en cours, lui, nomme la bonne pile.
+    echo "   Deploiements en cours : ls -t ~/deploy-logs | head -3" >&2
+    exit 75          # EX_TEMPFAIL
+  fi
+  echo ">> Verrou obtenu, on reprend."
 fi
 
 DEPLOY_LOG_DIR="${DEPLOY_LOG_DIR:-$HOME/deploy-logs}"
