@@ -174,6 +174,17 @@ echo ">> Building shazamer image"
 # `name=` in --output is what sets the tag; there is no -t on this form.
 docker buildx build --output type=docker,name=shazamer_app:latest,compression=zstd .
 
+# L'EMPREINTE de l'image, relevee tout de suite apres la construction.
+#
+# Ce depot ne tague qu'en `:latest`, donc comparer des noms d'image ne prouve
+# rien : la spec du service et la tache disent « shazamer_app:latest » avant
+# comme apres, meme si Swarm a annule la mise a jour et sert encore l'image
+# precedente. Seul l'identifiant distingue les deux, et c'est la seule chose
+# qu'on puisse verifier ici.
+BUILT_IMAGE_ID="$(docker image inspect -f '{{.Id}}' shazamer_app:latest)"
+_short() { printf %.12s "${1#sha256:}"; }
+echo ">> Image construite : $(_short "$BUILT_IMAGE_ID")"
+
 echo ">> Deploying swarm stack (host/secrets from .env)"
 # Read .env by SPLITTING on the first `=`, never by sourcing it.
 #
@@ -341,20 +352,40 @@ for _ in $(seq 1 30); do
     # fait exactement, et le correctif ecrit pour debloquer une analyse n'a
     # jamais atteint le processus qui la tournait.
     _healthy=$(docker ps --filter 'name=shazamer_app' --filter 'health=healthy' -q | head -1)
+    # L'image que le conteneur sain fait REELLEMENT tourner. Un service peut
+    # etre 1/1 et sain sur l'image PRECEDENTE quand Swarm a annule la nouvelle
+    # spec : les repliques ne distinguent pas les deux, l'empreinte oui.
+    # `|| true` obligatoire : sous `set -e`, une substitution de commande qui
+    # echoue en fin d'affectation tue le script. Sans lui, la premiere iteration
+    # ou le conteneur n'est pas encore la interrompait tout le deploiement.
+    _live=$( [ -n "$_healthy" ] && docker inspect -f '{{.Image}}' "$_healthy" 2>/dev/null || true )
+    _wcid=$( docker ps --filter 'name=shazamer_worker' -q | head -1 || true )
+    _live_w=$( [ -n "$_wcid" ] && docker inspect -f '{{.Image}}' "$_wcid" 2>/dev/null || true )
     if [ -n "$_healthy" ] \
+       && [ "$_live" = "$BUILT_IMAGE_ID" ] \
+       && [ "$_live_w" = "$BUILT_IMAGE_ID" ] \
        && [ "${_replicas%%/*}" = "${_replicas##*/}" ] \
        && [ "${_worker%%/*}" = "${_worker##*/}" ] \
        && docker exec "$_healthy" python -c \
             "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()" \
             >/dev/null 2>&1; then
-        echo "   app $_replicas, worker $_worker, /api/health repond"
+        echo "   app $_replicas, worker $_worker, /api/health repond, image a jour"
         _verified=1
         break
     fi
     sleep 10
 done
 if [ "$_verified" != 1 ]; then
-    echo ">> ECHEC : aucune tache saine apres 5 minutes (app: $_replicas worker: $_worker)." >&2
+    echo ">> ECHEC : aucune tache saine sur la nouvelle image apres 5 minutes" >&2
+    echo "   (app: $_replicas worker: $_worker)" >&2
+    echo "   image construite : $(_short "$BUILT_IMAGE_ID")" >&2
+    echo "   image de l'app   : $(_short "${_live:-aucune}")" >&2
+    echo "   image du worker  : $(_short "${_live_w:-aucune}")" >&2
+    if [ -n "$_live" ] && [ "$_live" != "$BUILT_IMAGE_ID" ]; then
+        echo "   Les repliques sont saines mais sur l'ANCIENNE image : Swarm a" >&2
+        echo "   annule la mise a jour. Cause la plus frequente : le conteneur" >&2
+        echo "   quitte au demarrage (.env incomplet)." >&2
+    fi
     docker service ps shazamer_app --no-trunc 2>/dev/null | head -20 >&2
     _c=$(docker ps --filter 'name=shazamer_app' -q | head -1)
     [ -n "$_c" ] && docker logs "$_c" --tail 50 >&2 2>&1 || true
