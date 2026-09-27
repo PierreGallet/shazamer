@@ -186,8 +186,54 @@ deploy: ## Deploiement manuel sur genius (.env resolu depuis 1Password)
 	@$(MAKE) env-resolve
 	@$(MAKE) deploy-without-env
 
+# Ce commentaire est AU-DESSUS de la cible, pas entre deux lignes de recette, et
+# c'est deliberé : un commentaire en colonne 0 n'interrompt PAS une recette
+# commencee. Place au milieu, il laissait les lignes suivantes appartenir a la
+# cible precedente — `env-resolve` resolvait le .env ET deployait le code, tandis
+# que `deploy-without-env` restait une coquille vide qui ne disait rien. `make -n`
+# repondait « Nothing to be done » en sortant en 0 : la cible mentait en silence.
+#
+# L'INSTALLATION DU .env SE FAIT APRES `git reset --hard`, jamais avant.
+#
+# `.env` est VERSIONNE — c'est la premisse meme de `op inject -i .env`. Le poser
+# avant le reset revient a le faire ecraser deux commandes plus loin par la
+# version du depot : celle du developpement, references `op://` comprises. Le
+# piege est qu'il EST correct entre le scp et le reset, donc l'inspecter juste
+# apres l'etape qui le pose ne montre rien.
+#
+# Le `chmod` et l'installation sont CONDITIONNES a la presence du fichier. Sans
+# cela, `deploy-without-env` lance seul echouait sur sa premiere commande — le
+# fichier n'existe pas, `chmod` sort en erreur, et le `&&` arretait tout avant
+# meme le `git fetch`.
 .PHONY: deploy-without-env
+# Le .env du serveur est MIS DE COTE avant le `git reset --hard`, et remis apres
+# si aucun .env resolu n'a ete depose.
+#
+# Sans cela, `deploy-without-env` — dont le contrat est justement de ne pas
+# toucher au .env du serveur — le DETRUISAIT : `.env` est versionne (c'est la
+# premisse de `op inject -i .env`), le reset restaure donc la version du depot,
+# celle qui ne porte que des references `op://` non resolues. Et le message
+# annoncait « .env du serveur inchange » juste apres l'avoir ecrase.
+#
+# Ce n'est pas une hypothese : la meme faute, sous une autre forme, a envoye
+# tennis_cron en production le 27/09 avec ACCOUNT_1_PASSWORD et CARD_NUMBER
+# valant litteralement `op://…`. La reservation du lendemain aurait echoue.
 deploy-without-env: ## Deploie le code sans toucher au .env du serveur — n'exige pas 1Password
+	ssh $(DEPLOY_HOST) "set -e; cd $(DEPLOY_PATH); \
+	  [ -f .env ] && cp -p .env /tmp/env.keep.shazamer || true; \
+	  git fetch origin; git reset --hard origin/main; \
+	  if [ -f /tmp/env.shazamer ]; then \
+	    chmod 600 /tmp/env.shazamer; install -m 600 /tmp/env.shazamer .env; \
+	    rm -f /tmp/env.shazamer /tmp/env.keep.shazamer; \
+	    echo '>> .env resolu installe'; \
+	  elif [ -f /tmp/env.keep.shazamer ]; then \
+	    install -m 600 /tmp/env.keep.shazamer .env; rm -f /tmp/env.keep.shazamer; \
+	    echo '>> .env du serveur preserve a travers le reset'; \
+	  else \
+	    echo '>> ATTENTION : aucun .env sur le serveur' >&2; exit 1; \
+	  fi; \
+	  echo \">> env: \$$(grep -c '^[A-Z_]*=' .env) variable(s)\"; \
+	  chmod +x scripts/deploy.sh; bash scripts/deploy.sh"
 
 .PHONY: deploy-with-env
 deploy-with-env: deploy   ## Synonyme explicite de `deploy`, quand on veut le nommer
@@ -221,15 +267,3 @@ env-resolve:
 	  chmod 600 "$$TMP"; \
 	  scp -q "$$TMP" $(DEPLOY_HOST):/tmp/env.shazamer; \
 	  echo ">> .env resolu depose sur le serveur (PYTHON_ENV=Production)"
-# Le .env est installe APRES `git reset --hard`, dans le MEME ssh, parce que
-# `.env` est VERSIONNE — c'est la premisse meme de `op inject -i .env`. Pose
-# avant, le reset le remplacerait par la version du depot : celle du
-# developpement, references `op://` non resolues comprises. La CI ne s'y trompe
-# pas non plus, son `install` vient apres ses operations git.
-
-	ssh $(DEPLOY_HOST) "chmod 600 /tmp/env.shazamer \
-	  && cd $(DEPLOY_PATH) \
-	  && git fetch origin && git reset --hard origin/main \
-	  && { [ -f /tmp/env.shazamer ] && install -m 600 /tmp/env.shazamer .env && rm -f /tmp/env.shazamer || echo \">> .env du serveur inchange (deploy-without-env)\"; } \
-	  && echo \">> env: \$$(grep -c '^[A-Z_]*=' .env) variable(s)\" \
-	  && bash scripts/deploy.sh"
