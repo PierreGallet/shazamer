@@ -91,6 +91,28 @@ _deploy_finish() {
 }
 trap _deploy_finish EXIT
 
+# ── Metrique « demarrage » ────────────────────────────────────────────────
+#
+# Publiee AVANT le travail, la ou `_deploy_finish` publie la fin. Sans elle, un
+# deploiement tue net — `kill -9`, OOM killer, redemarrage du serveur pendant un
+# build de 18 minutes — ne reecrit jamais la metrique de fin : elle garde son
+# ancien `1` et RIEN ne sonne. C'etait GitHub qui attrapait ce cas, avec son
+# `timeout-minutes`, en immobilisant un runner tout du long.
+#
+# Le couple started/finished rend le cas visible sans immobiliser personne : une
+# alerte compare les deux et signale un deploiement commence sans verdict.
+#
+# Ce n'est pas theorique sur cette machine : 54 processus tues par l'OOM killer
+# sur le dernier mois, et un build ML qui swappe est une cible de choix.
+{
+    echo "# HELP genius_deploy_started_timestamp_seconds Unix time the last deploy STARTED."
+    echo "# TYPE genius_deploy_started_timestamp_seconds gauge"
+    echo "genius_deploy_started_timestamp_seconds{service=\"$DEPLOY_SERVICE\"} $DEPLOY_STARTED_AT"
+} > "$DEPLOY_METRICS_DIR/deploy_started_${DEPLOY_SERVICE}.prom.tmp" 2>/dev/null \
+  && mv "$DEPLOY_METRICS_DIR/deploy_started_${DEPLOY_SERVICE}.prom.tmp" \
+        "$DEPLOY_METRICS_DIR/deploy_started_${DEPLOY_SERVICE}.prom" 2>/dev/null || true
+
+
 
 # Bind mounts fail the whole service if the host path is missing, and the
 # stack now mounts a library database and a media store alongside uploads.
