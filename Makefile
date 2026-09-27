@@ -168,14 +168,32 @@ DEPLOY_HOST ?= genius
 DEPLOY_PATH ?= /home/sharon/shazamer
 
 .PHONY: deploy
-deploy: ## Deploiement manuel sur genius — memes etapes que la CI
-# Sert quand le quota GitHub Actions est epuise : la CI ne tourne alors pas et
-# cette cible fait le meme travail qu'elle, .env compris.
+# `deploy` NE POUSSE PLUS. Pousser et deployer sont deux gestes distincts, et
+# l'ordre correct est `git push` puis `make deploy`. Les melanger avait un effet
+# de bord concret : le push declenchait la CI, dont le job deploy partait en
+# parallele de celui-ci — deux deploiements concurrents sur le meme service.
 #
-# ATTENTION quand le quota est disponible : le `git push` ci-dessous DECLENCHE
-# aussi la CI, dont le job deploy s'execute sur push main. Deux deploiements
-# concurrents sur le meme service.
-	git push origin main
+# Deux cibles, aucune duplication : `deploy-without-env` EST l'etape commune, et
+# `deploy` se contente de resoudre le .env avant de l'appeler.
+#
+#   deploy / deploy-with-env   .env resolu depuis 1Password, puis code
+#   deploy-without-env         code seul, n'exige pas 1Password
+#
+# Enchainees par `$(MAKE)` dans la recette et non en prerequis : sous `make -j`
+# des prerequis peuvent partir en parallele, et poser le .env pendant que le code
+# se deploie rejouerait la panne corrigee en septembre.
+deploy: ## Deploiement manuel sur genius (.env resolu depuis 1Password)
+	@$(MAKE) env-resolve
+	@$(MAKE) deploy-without-env
+
+.PHONY: deploy-without-env
+deploy-without-env: ## Deploie le code sans toucher au .env du serveur — n'exige pas 1Password
+
+.PHONY: deploy-with-env
+deploy-with-env: deploy   ## Synonyme explicite de `deploy`, quand on veut le nommer
+
+.PHONY: env-resolve
+env-resolve:
 	@command -v op >/dev/null || { echo "1Password CLI absent — impossible de resoudre le .env."; exit 1; }
 # `op inject` resout les references `op://` du .env VERSIONNE, qui reste ainsi
 # l'unique endroit ou une variable d'execution est declaree.
@@ -208,9 +226,10 @@ deploy: ## Deploiement manuel sur genius — memes etapes que la CI
 # avant, le reset le remplacerait par la version du depot : celle du
 # developpement, references `op://` non resolues comprises. La CI ne s'y trompe
 # pas non plus, son `install` vient apres ses operations git.
+
 	ssh $(DEPLOY_HOST) "chmod 600 /tmp/env.shazamer \
 	  && cd $(DEPLOY_PATH) \
 	  && git fetch origin && git reset --hard origin/main \
-	  && install -m 600 /tmp/env.shazamer .env && rm -f /tmp/env.shazamer \
+	  && { [ -f /tmp/env.shazamer ] && install -m 600 /tmp/env.shazamer .env && rm -f /tmp/env.shazamer || echo \">> .env du serveur inchange (deploy-without-env)\"; } \
 	  && echo \">> env: \$$(grep -c '^[A-Z_]*=' .env) variable(s)\" \
 	  && bash scripts/deploy.sh"
