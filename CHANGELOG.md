@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.0](https://github.com/PierreGallet/shazamer/compare/v1.28.0...v1.29.0) (2026-09-29)
+
+
+### ✨ Features
+
+* **deploy:** publier l'heure de DEBUT du deploiement, et un verrou ([0e41db6](https://github.com/PierreGallet/shazamer/commit/0e41db619db878094d3af4a1895cb66b47b61321))
+* **deploy:** separer pousser et deployer, et pouvoir deployer sans 1Password ([1c51d0f](https://github.com/PierreGallet/shazamer/commit/1c51d0fc220c65cac8cd7cbd9d648731b43ffbdd))
+
+
+### 🐛 Fixes
+
+* **deploy:** faire ATTENDRE le verrou au lieu de refuser, et le rendre audible ([82ee550](https://github.com/PierreGallet/shazamer/commit/82ee5505a3307839ed7b3e632e57b6107f8775e6))
+* **deploy:** le .env de production ne survivait pas au `git reset --hard` ([ffadaa8](https://github.com/PierreGallet/shazamer/commit/ffadaa873c84751e47386a70811d0df24b1656b0))
+* **deploy:** verifier l'EMPREINTE de l'image, `:latest` ne prouve rien ([047a9dd](https://github.com/PierreGallet/shazamer/commit/047a9dde92cc12264a1430aaf04b6309dc19c8ca))
+
+
+### 🚀 Performance
+
+* **ci:** lancer le deploiement et rendre la main, au lieu de l'attendre ([d971e2c](https://github.com/PierreGallet/shazamer/commit/d971e2c8bbeefdb3dd75203ceac033dcc6baba90))
+
 ## [1.28.0](https://github.com/PierreGallet/shazamer/compare/v1.27.10...v1.28.0) (2026-09-16)
 
 
