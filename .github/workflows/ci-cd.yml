@@ -4,6 +4,24 @@ on:
   push:
     branches: [main]
   pull_request:
+    # BROUILLONS IGNORES, et la mise en « prête » DECLENCHE.
+    #
+    # Une PR en brouillon relançait tout le pipeline à chaque commit. C'est
+    # precisement la periode ou l'on pousse le plus souvent et ou le verdict
+    # importe le moins : le travail n'est pas fini, on ne va pas fusionner.
+    #
+    # `types` doit etre declare EN ENTIER des qu'on le declare : les trois
+    # valeurs par defaut (`opened`, `synchronize`, `reopened`) disparaissent
+    # sinon, et la PR ne testerait plus rien du tout a l'ouverture. On y ajoute
+    # `ready_for_review`, l'evenement emis quand on sort du brouillon — sans lui,
+    # passer une PR en prête ne declencherait aucune execution, puisque ce n'est
+    # ni un commit ni une reouverture.
+    #
+    # Le saut se fait par une condition de JOB (`draft == false`) et non par un
+    # filtre d'evenement, parce que GitHub n'en propose pas pour l'etat brouillon.
+    # Aucun contexte de statut n'est requis sur ces depots — verifie le 30/09 —
+    # donc un job saute ne bloque aucune fusion.
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -17,9 +35,19 @@ concurrency:
   # commits → only the latest tests+deploys). NEVER cancel a PR run, so
   # feature-branch tests always complete and verify mergeability. A
   # release-please release commit never cancels the in-flight real run.
+  # Les executions de PR superseded sont ANNULEES, comme celles de master.
+  #
+  # Elles ne l'etaient pas : « ne jamais annuler une PR, pour que les tests de
+  # branche aillent toujours au bout ». L'intention est bonne, le cout ne l'est
+  # pas — trois poussees d'affilee sur une branche faisaient trois pipelines
+  # complets, alors qu'on ne fusionne que le DERNIER commit. C'est donc lui seul
+  # qui doit rendre un verdict, et il verifie exactement l'etat qui sera fusionne.
+  # Meme raisonnement que noctambule, qui l'appliquait deja.
+  #
+  # Le commit de release reste epargne : il ne doit jamais tuer l'execution reelle
+  # en vol, qui ne serait remplacee par rien.
   cancel-in-progress: >-
-    ${{ github.event_name != 'pull_request'
-        && !contains(github.event.head_commit.message, '): release ')
+    ${{ !contains(github.event.head_commit.message, '): release ')
         && !contains(github.event.head_commit.message, 'release-please--branches--') }}
 
 jobs:
@@ -30,7 +58,10 @@ jobs:
     # job default (a missing-mock test once burned 6h × many runs of credit).
     timeout-minutes: 45
     if: >-
-      (github.event_name != 'pull_request' || github.head_ref != 'release-please--branches--main')
+      # `!draft` : rien sur une PR en brouillon — voir la note sur `types` en
+      # tete de fichier.
+      (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+      && (github.event_name != 'pull_request' || github.head_ref != 'release-please--branches--main')
       && (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(main): release'))
 
     steps:
