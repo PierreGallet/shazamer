@@ -31,10 +31,6 @@ permissions:
 
 concurrency:
   group: ci-cd-${{ github.ref }}
-  # Economy: cancel a superseded run only on protected-branch pushes (rapid
-  # commits → only the latest tests+deploys). NEVER cancel a PR run, so
-  # feature-branch tests always complete and verify mergeability. A
-  # release-please release commit never cancels the in-flight real run.
   # Les executions de PR superseded sont ANNULEES, comme celles de master.
   #
   # Elles ne l'etaient pas : « ne jamais annuler une PR, pour que les tests de
@@ -57,9 +53,9 @@ jobs:
     # Safety net: a hung test fails in 15 min instead of running to the 6h
     # job default (a missing-mock test once burned 6h × many runs of credit).
     timeout-minutes: 45
+    # `!draft` : rien sur une PR en brouillon — voir la note sur `types` en
+    # tete de fichier.
     if: >-
-      # `!draft` : rien sur une PR en brouillon — voir la note sur `types` en
-      # tete de fichier.
       (github.event_name != 'pull_request' || !github.event.pull_request.draft)
       && (github.event_name != 'pull_request' || github.head_ref != 'release-please--branches--main')
       && (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(main): release'))
