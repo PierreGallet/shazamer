@@ -55,10 +55,20 @@ jobs:
     timeout-minutes: 45
     # `!draft` : rien sur une PR en brouillon — voir la note sur `types` en
     # tete de fichier.
+    # LES TESTS NE TOURNENT QUE SUR UNE PR.
+    #
+    # Ils tournaient aussi a la fusion et rejouaient donc ce que la PR venait de
+    # valider. Mesure du 01/10 sur triton : 14 minutes facturees pour la PR dont
+    # 12 pour les tests, puis la fusion les a rejoues — ~28 minutes pour un
+    # changement.
+    #
+    # La contrepartie est assumee : la branche par defaut n'est plus testee telle
+    # qu'elle sera fusionnee. Elle se couvre en exigeant « branche a jour avec la
+    # base » avant fusion, auquel cas l'execution de la PR teste EXACTEMENT
+    # l'etat fusionne.
     if: >-
-      (github.event_name != 'pull_request' || !github.event.pull_request.draft)
-      && (github.event_name != 'pull_request' || github.head_ref != 'release-please--branches--main')
-      && (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(main): release'))
+      ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'pull_request' || github.head_ref != 'release-please--branches--main') && (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(main): release')))
+      && github.event_name == 'pull_request'
 
     steps:
       - uses: actions/checkout@v4
@@ -135,7 +145,11 @@ jobs:
 
   release-please:
     name: "\U0001F4E6 Release Please"
-    needs: [tests]
+    # Le job de tests a QUITTE ce `needs` : il ne tourne plus que sur une PR, donc
+    # il est SAUTE sur la branche par defaut. Le garder dependrait d'un
+    # comportement subtil — un `needs` saute ne fait pas sauter le dependant
+    # seulement si la condition contient une fonction de statut. On retire la
+    # dependance plutot que de s'appuyer la-dessus : la garantie vient de la PR.
     runs-on: ubuntu-latest
     if: >-
       !failure() && !cancelled()
@@ -220,7 +234,12 @@ jobs:
 
   auto-merge:
     name: "\U0001F500 Auto Merge Release"
-    needs: [tests, release-please]
+    # Le job de tests a QUITTE ce `needs` : il ne tourne plus que sur une PR, donc
+    # il est SAUTE sur la branche par defaut. Le garder dependrait d'un
+    # comportement subtil — un `needs` saute ne fait pas sauter le dependant
+    # seulement si la condition contient une fonction de statut. On retire la
+    # dependance plutot que de s'appuyer la-dessus : la garantie vient de la PR.
+    needs: [release-please]
     runs-on: ubuntu-latest
     if: >-
       !failure() && !cancelled()
@@ -269,7 +288,12 @@ jobs:
 
   deploy:
     name: "\U0001F680 Deploy"
-    needs: [tests, auto-merge]
+    # Le job de tests a QUITTE ce `needs` : il ne tourne plus que sur une PR, donc
+    # il est SAUTE sur la branche par defaut. Le garder dependrait d'un
+    # comportement subtil — un `needs` saute ne fait pas sauter le dependant
+    # seulement si la condition contient une fonction de statut. On retire la
+    # dependance plutot que de s'appuyer la-dessus : la garantie vient de la PR.
+    needs: [auto-merge]
     runs-on: ubuntu-latest
     if: >-
       !failure() && !cancelled()
