@@ -72,6 +72,44 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      # ── La branche est-elle a jour avec la base ? ──────────────────────
+      #
+      # Ce controle remplace le reglage GitHub « Require branches to be up to
+      # date before merging », INDISPONIBLE sur un plan free pour un depot prive
+      # (« Upgrade to GitHub Pro or make this repository public »). Verifie le
+      # 01/10 : l'API de protection de branche repond 403.
+      #
+      # Il compte parce que les tests ne tournent plus a la fusion. Si cette
+      # branche est en retard sur la base, l'execution valide un etat qui n'est
+      # PAS celui qui sera fusionne : deux PR sans conflit textuel mais
+      # incompatibles passeraient toutes les deux au vert et casseraient la prod
+      # une fois reunies.
+      #
+      # `merge-base --is-ancestor base HEAD` repond exactement a la question : la
+      # base est-elle un ancetre de ma tete ? Si oui, ma branche contient tout ce
+      # que la base contient, et la tester revient a tester l'etat fusionne.
+      #
+      # Place en PREMIER et sans `continue-on-error` : inutile de payer une suite
+      # complete pour apprendre ensuite qu'il faut rebaser et tout rejouer.
+      - name: "La branche est-elle a jour avec ${{ github.base_ref }} ?"
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --depth=1 origin "${{ github.base_ref }}"
+          # `--depth=1` ne suffit pas pour `merge-base` : il faut l'historique
+          # commun. On approfondit jusqu'a le trouver, par paliers, plutot que de
+          # cloner tout le depot d'entree de jeu.
+          for p in 50 200 1000; do
+            git merge-base "origin/${{ github.base_ref }}" HEAD >/dev/null 2>&1 && break
+            git fetch --deepen=$p origin "${{ github.base_ref }}" >/dev/null 2>&1 || true
+            git fetch --deepen=$p origin HEAD >/dev/null 2>&1 || true
+          done
+          if git merge-base --is-ancestor "origin/${{ github.base_ref }}" HEAD; then
+            echo "OK  la branche contient toute la base, l'execution teste l'etat fusionne"
+          else
+            n=$(git rev-list --count "HEAD..origin/${{ github.base_ref }}" 2>/dev/null || echo "?")
+            echo "::error title=Branche en retard::Cette branche est en retard de $n commit(s) sur ${{ github.base_ref }}. Les tests ne tournent plus a la fusion, donc ce verdict ne vaudrait pas pour l'etat fusionne. Rebase (git pull --rebase origin ${{ github.base_ref }}) puis repousse."
+            exit 1
+          fi
 
       - uses: actions/setup-python@v5
         with:
