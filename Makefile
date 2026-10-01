@@ -219,9 +219,33 @@ deploy: ## Deploiement manuel sur genius (.env resolu depuis 1Password)
 # tennis_cron en production le 27/09 avec ACCOUNT_1_PASSWORD et CARD_NUMBER
 # valant litteralement `op://…`. La reservation du lendemain aurait echoue.
 deploy-without-env: ## Deploie le code sans toucher au .env du serveur — n'exige pas 1Password
-	ssh $(DEPLOY_HOST) "set -e; cd $(DEPLOY_PATH); \
+# MEME ORCHESTRATION QUE LA CI, et pour les memes raisons.
+#
+# Le verrou est pris AVANT le `git fetch`/`reset`, pas seulement autour de
+# scripts/deploy.sh : les deploiements partagent un seul repertoire de travail sur
+# le serveur, et le reset hors verrou a produit le 01/10 une image construite
+# depuis un contexte qui n'etait plus celui de l'arbre.
+#
+# La cible est un SHA resolu une fois (`ls-remote`), pas une reference qui bouge
+# sous nous. Ecrite avant l'attente, relue apres : si une fusion atterrit pendant
+# qu'on patiente, c'est elle qu'on deploie — « le dernier gagne ».
+#
+# scripts/deploy.sh recoit DEPLOY_LOCK_HELD=1 pour ne pas attendre notre propre
+# verrou, et decide lui-meme s'il y a quelque chose a faire.
+	ssh $(DEPLOY_HOST) "set -e; \
+	  SVC=shazamer_app; \
+	  CIBLE=\$$(git -C $(DEPLOY_PATH) ls-remote origin -h refs/heads/main | cut -f1); \
+	  printf '%s\\n' \"\$$CIBLE\" > /tmp/deploy-target-\$$SVC; \
+	  exec 9>/tmp/deploy-\$$SVC.lock; \
+	  if ! flock -n 9; then \
+	    echo '>> Un autre deploiement est en cours — on attend son tour.'; \
+	    flock -w 2700 9 || { echo '>> ECHEC : verrou non libere en 2700 s.' >&2; exit 75; }; \
+	  fi; \
+	  CIBLE=\$$(cat /tmp/deploy-target-\$$SVC); \
+	  echo \">> Cible : \$${CIBLE:0:7}\"; \
+	  cd $(DEPLOY_PATH); \
 	  [ -f .env ] && cp -p .env /tmp/env.keep.shazamer || true; \
-	  git fetch origin; git reset --hard origin/main; \
+	  git fetch origin; git reset --hard \"\$$CIBLE\"; \
 	  if [ -f /tmp/env.shazamer ]; then \
 	    chmod 600 /tmp/env.shazamer; install -m 600 /tmp/env.shazamer .env; \
 	    rm -f /tmp/env.shazamer /tmp/env.keep.shazamer; \
@@ -233,7 +257,8 @@ deploy-without-env: ## Deploie le code sans toucher au .env du serveur — n'exi
 	    echo '>> ATTENTION : aucun .env sur le serveur' >&2; exit 1; \
 	  fi; \
 	  echo \">> env: \$$(grep -c '^[A-Z_]*=' .env) variable(s)\"; \
-	  chmod +x scripts/deploy.sh; bash scripts/deploy.sh"
+	  chmod +x scripts/deploy.sh; \
+	  DEPLOY_LOCK_HELD=1 bash scripts/deploy.sh"
 
 .PHONY: deploy-with-env
 deploy-with-env: deploy   ## Synonyme explicite de `deploy`, quand on veut le nommer

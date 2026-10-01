@@ -53,29 +53,71 @@ DEPLOY_SERVICE="${DEPLOY_SERVICE:-shazamer_app}"
 # flock, not a pidfile: the lock dies with the process, so a killed deploy
 # does not leave the next one blocked for ever.
 LOCK_FILE="${DEPLOY_LOCK:-/tmp/deploy-${DEPLOY_SERVICE}.lock}"
-exec 9>"$LOCK_FILE"
-# Ces messages partent sur stderr et non sur le descripteur 3 que le reste du
-# script utilise : il n'est ouvert que plus bas (`exec 3>&2`), et nyew n'en a
-# pas du tout. Un `echo >&3` sur un descripteur ferme echoue, et `set -e` tue le
-# script — donc la branche « un autre deploiement tourne » mourait sur « Bad
-# file descriptor » au lieu d'attendre. Elle n'avait jamais ete exercee ; elle
-# le sera, maintenant que deux poussees rapprochees se mettent en file.
-if ! flock -n 9; then
-  echo ">> Un autre deploiement de $DEPLOY_SERVICE est en cours — on attend son tour."
-  echo "   Deux deploiements concurrents se disputeraient les memes services,"
-  echo "   et Swarm les rejetterait tous les deux (« update out of sequence »)."
-  if ! flock -w "${DEPLOY_LOCK_WAIT:-2700}" 9; then
-    echo ">> ECHEC : le verrou de $DEPLOY_SERVICE ne s'est pas libere en ${DEPLOY_LOCK_WAIT:-2700} s."
-    echo "   Ce n'est plus une file d'attente : le deploiement precedent est bloque."
-    # Pas de `pgrep` ici. Les six depots du serveur nomment tous leur script
-    # `deploy.sh`, donc il listait les deploiements des AUTRES piles ; et quand
-    # le script est source plutot qu'execute, `$0` vaut `bash` et il rendait
-    # tous les processus de la machine — 33 Ko de sortie pour une panne.
-    # Le journal du deploiement en cours, lui, nomme la bonne pile.
-    echo "   Deploiements en cours : ls -t ~/deploy-logs | head -3" >&2
-    exit 75          # EX_TEMPFAIL
-  fi
-  echo ">> Verrou obtenu, on reprend."
+# LE VERROU PEUT ETRE DEJA TENU PAR L'APPELANT.
+#
+# Il ne couvrait que ce script, et c'etait insuffisant : l'enveloppe de
+# deploiement fait `git fetch && git reset --hard` AVANT de l'appeler, donc hors
+# du verrou. Les deploiements partagent un seul repertoire de travail sur le
+# serveur, et l'un pouvait donc reecrire l'arbre pendant qu'un autre le lisait.
+#
+# Ce n'est pas une hypothese. Le 01/10 : l'image `triton_app:20261001-140307` a
+# ete construite depuis le contexte de 7fe4350 alors que l'arbre etait passe a
+# 0ab43a5, et sur noctambule `docker buildx` capturait e736c91 pendant que
+# l'arbre etait a bd0029e. Une image dont personne ne peut dire quel commit elle
+# contient.
+#
+# L'enveloppe prend donc le verrou AVANT le `reset` et nous passe
+# DEPLOY_LOCK_HELD=1. Le reprendre ici nous ferait attendre notre propre verrou.
+if [ "${DEPLOY_LOCK_HELD:-0}" = "1" ]; then
+    echo ">> Verrou deja tenu par l'appelant, il couvre aussi les operations git." >&2
+else
+    exec 9>"$LOCK_FILE"
+    # Ces messages partent sur stderr et non sur le descripteur 3 que le reste du
+    # script utilise : il n'est ouvert que plus bas (`exec 3>&2`), et nyew n'en a
+    # pas du tout. Un `echo >&3` sur un descripteur ferme echoue, et `set -e` tue le
+    # script — donc la branche « un autre deploiement tourne » mourait sur « Bad
+    # file descriptor » au lieu d'attendre. Elle n'avait jamais ete exercee ; elle
+    # le sera, maintenant que deux poussees rapprochees se mettent en file.
+    if ! flock -n 9; then
+      echo ">> Un autre deploiement de $DEPLOY_SERVICE est en cours — on attend son tour."
+      echo "   Deux deploiements concurrents se disputeraient les memes services,"
+      echo "   et Swarm les rejetterait tous les deux (« update out of sequence »)."
+      if ! flock -w "${DEPLOY_LOCK_WAIT:-2700}" 9; then
+        echo ">> ECHEC : le verrou de $DEPLOY_SERVICE ne s'est pas libere en ${DEPLOY_LOCK_WAIT:-2700} s."
+        echo "   Ce n'est plus une file d'attente : le deploiement precedent est bloque."
+        # Pas de `pgrep` ici. Les six depots du serveur nomment tous leur script
+        # `deploy.sh`, donc il listait les deploiements des AUTRES piles ; et quand
+        # le script est source plutot qu'execute, `$0` vaut `bash` et il rendait
+        # tous les processus de la machine — 33 Ko de sortie pour une panne.
+        # Le journal du deploiement en cours, lui, nomme la bonne pile.
+        echo "   Deploiements en cours : ls -t ~/deploy-logs | head -3" >&2
+        exit 75          # EX_TEMPFAIL
+      fi
+      echo ">> Verrou obtenu, on reprend."
+    fi
+fi
+
+# ── Le travail est-il encore a faire ? ────────────────────────────────────
+#
+# Trois fusions rapprochees mettaient trois deploiements en file, chacun
+# reconstruisant la MEME image. L'annulation de GitHub n'y change rien : depuis
+# que le deploiement est detache, couper le job ne coupe plus le serveur.
+#
+# La deduplication se decide donc ICI, apres le verrou, quand on sait enfin quel
+# commit l'arbre porte. Si c'est deja celui qu'on a deploye avec succes, il n'y a
+# rien a faire — « le dernier gagne, les autres s'effacent ».
+#
+# Le controle vit dans ce script et non dans l'enveloppe pour profiter aussi a
+# `make deploy` lance a la main. DEPLOY_FORCE=1 le court-circuite, quand c'est
+# l'IMAGE qu'on veut reconstruire et non le code.
+DEPLOY_DONE_FILE="${DEPLOY_DONE_FILE:-$HOME/.deploy-done-${DEPLOY_SERVICE}}"
+DEPLOY_HEAD="$(git rev-parse HEAD 2>/dev/null || echo inconnu)"
+if [ "${DEPLOY_FORCE:-0}" != "1" ] \
+   && [ "$DEPLOY_HEAD" != "inconnu" ] \
+   && [ "$(cat "$DEPLOY_DONE_FILE" 2>/dev/null)" = "$DEPLOY_HEAD" ]; then
+    echo ">> ${DEPLOY_HEAD:0:7} est deja deploye et son deploiement avait reussi." >&2
+    echo "   Rien a faire. (DEPLOY_FORCE=1 pour reconstruire quand meme.)" >&2
+    exit 0
 fi
 
 DEPLOY_LOG_DIR="${DEPLOY_LOG_DIR:-$HOME/deploy-logs}"
@@ -91,6 +133,12 @@ _deploy_finish() {
     rc=$?
     dur=$(( $(date +%s) - DEPLOY_STARTED_AT ))
     ok=0; [ "$rc" -eq 0 ] && ok=1
+    # Le commit effectivement deploye, memorise UNIQUEMENT en cas de succes :
+    # c'est ce que relit le controle d'idempotence au debut. L'ecrire sur un
+    # echec ferait sauter le deploiement suivant alors que rien ne tourne.
+    if [ "$rc" -eq 0 ] && [ "${DEPLOY_HEAD:-inconnu}" != "inconnu" ]; then
+        printf '%s\n' "$DEPLOY_HEAD" > "${DEPLOY_DONE_FILE:-$HOME/.deploy-done-${DEPLOY_SERVICE}}"
+    fi
     # Scraped by node_exporter's textfile collector on the host. Written then
     # mv'd: the collector re-reads that directory on every scrape and would
     # happily parse a half-written file.

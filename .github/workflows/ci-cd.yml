@@ -382,12 +382,11 @@ jobs:
           esac
 
           # 1. Update code
-          ssh -p $PORT $SSH_USER@$HOST "
-            set -e
-            cd $DEPLOY_PATH
-            git fetch origin
-            git reset --hard origin/main
-          "
+          # Le `git fetch`/`reset --hard` ne se fait PLUS ici. Il etait dans son propre
+          # appel ssh, donc hors du verrou — et meme hors de la session qui deploie. Les
+          # deploiements partagent un seul repertoire de travail sur le serveur : le
+          # 01/10, une image a ete construite depuis un contexte qui n'etait plus celui
+          # de l'arbre. Il est desormais dans le bloc detache, sous verrou.
 
           # 2. Resolve .env with 1Password and ship it.
           #
@@ -448,8 +447,27 @@ jobs:
           # raison — un seul encore ouvert suffit a tenir le canal.
           LOG="deploy-logs/shazamer-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA:0:7}.log"
           ssh -n -p $PORT $SSH_USER@$HOST "{ mkdir -p ~/deploy-logs \
-            && cd $DEPLOY_PATH \
-            && setsid nohup bash scripts/deploy.sh ; \
+            && DEPLOY_SHA='$GITHUB_SHA' DEPLOY_PATH='$DEPLOY_PATH' setsid nohup bash -c '
+                 set -e
+                 SVC=shazamer_app; CIBLE_FILE="/tmp/deploy-target-$SVC"
+                 # La cible est un SHA fixe, pas origin/main qui bouge sous nous.
+                 # Ecrite AVANT l attente, relue APRES : celui qui obtient le
+                 # verrou deploie la demande la plus recente — le dernier gagne.
+                 printf "%s\\n" "$DEPLOY_SHA" > "$CIBLE_FILE"
+                 exec 9>"/tmp/deploy-$SVC.lock"
+                 if ! flock -n 9; then
+                   echo ">> Un autre deploiement de $SVC est en cours — on attend son tour."
+                   flock -w 2700 9 || { echo ">> ECHEC : verrou non libere en 2700 s." >&2; exit 75; }
+                 fi
+                 CIBLE="$(cat "$CIBLE_FILE" 2>/dev/null || echo "$DEPLOY_SHA")"
+                 echo ">> Cible : ${CIBLE:0:7}"
+                 cd "$DEPLOY_PATH"
+                 git fetch origin
+                 git reset --hard "$CIBLE"
+                 install -m 600 /tmp/env.shazamer .env 2>/dev/null || true
+                 rm -f /tmp/env.shazamer
+                 chmod +x scripts/deploy.sh
+                 DEPLOY_LOCK_HELD=1 bash scripts/deploy.sh' ; \
             } > ~/$LOG 2>&1 < /dev/null & \
             echo 'deploiement lance en tache de fond'"
           echo "::notice::Deploiement lance sur le serveur, sans attente du runner. Journal : ~/$LOG. Une panne remonte par les alertes Grafana deploy-stuck / deploy-failed."
