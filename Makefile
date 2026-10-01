@@ -226,26 +226,24 @@ deploy-without-env: ## Deploie le code sans toucher au .env du serveur — n'exi
 # le serveur, et le reset hors verrou a produit le 01/10 une image construite
 # depuis un contexte qui n'etait plus celui de l'arbre.
 #
-# La cible est un SHA resolu une fois (`ls-remote`), pas une reference qui bouge
-# sous nous. Ecrite avant l'attente, relue apres : si une fusion atterrit pendant
-# qu'on patiente, c'est elle qu'on deploie — « le dernier gagne ».
+# On deploie la TETE de branche, relue SOUS VERROU. J'avais d'abord fige le SHA,
+# croyant que la course venait de la reference mobile : elle venait du reset hors
+# verrou, et figer le SHA faisait deployer le commit d'AVANT le bump de version
+# de release-please — une production qui mentait sur sa version. Le verrou suffit,
+# et « le dernier gagne » vient gratuitement puisque la tete EST le plus recent.
 #
 # scripts/deploy.sh recoit DEPLOY_LOCK_HELD=1 pour ne pas attendre notre propre
 # verrou, et decide lui-meme s'il y a quelque chose a faire.
 	ssh $(DEPLOY_HOST) "set -e; \
 	  SVC=shazamer_app; \
-	  CIBLE=\$$(git -C $(DEPLOY_PATH) ls-remote origin -h refs/heads/main | cut -f1); \
-	  printf '%s\\n' \"\$$CIBLE\" > /tmp/deploy-target-\$$SVC; \
 	  exec 9>/tmp/deploy-\$$SVC.lock; \
 	  if ! flock -n 9; then \
 	    echo '>> Un autre deploiement est en cours — on attend son tour.'; \
 	    flock -w 2700 9 || { echo '>> ECHEC : verrou non libere en 2700 s.' >&2; exit 75; }; \
 	  fi; \
-	  CIBLE=\$$(cat /tmp/deploy-target-\$$SVC); \
-	  echo \">> Cible : \$${CIBLE:0:7}\"; \
 	  cd $(DEPLOY_PATH); \
 	  [ -f .env ] && cp -p .env /tmp/env.keep.shazamer || true; \
-	  git fetch origin; git reset --hard \"\$$CIBLE\"; \
+	  git fetch origin; git reset --hard origin/main; \
 	  if [ -f /tmp/env.shazamer ]; then \
 	    chmod 600 /tmp/env.shazamer; install -m 600 /tmp/env.shazamer .env; \
 	    rm -f /tmp/env.shazamer /tmp/env.keep.shazamer; \

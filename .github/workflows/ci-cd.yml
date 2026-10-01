@@ -471,23 +471,17 @@ jobs:
           # raison — un seul encore ouvert suffit a tenir le canal.
           LOG="deploy-logs/shazamer-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA:0:7}.log"
           ssh -n -p $PORT $SSH_USER@$HOST "{ mkdir -p ~/deploy-logs \
-            && DEPLOY_SHA='$GITHUB_SHA' DEPLOY_PATH='$DEPLOY_PATH' setsid nohup bash -c '
+            && DEPLOY_PATH='$DEPLOY_PATH' setsid nohup bash -c '
                  set -e
-                 SVC=shazamer_app; CIBLE_FILE="/tmp/deploy-target-$SVC"
-                 # La cible est un SHA fixe, pas origin/main qui bouge sous nous.
-                 # Ecrite AVANT l attente, relue APRES : celui qui obtient le
-                 # verrou deploie la demande la plus recente — le dernier gagne.
-                 printf "%s\\n" "$DEPLOY_SHA" > "$CIBLE_FILE"
+                                  # ON DEPLOIE LA TETE DE BRANCHE, relue SOUS VERROU — pas un SHA fige.
                  exec 9>"/tmp/deploy-$SVC.lock"
                  if ! flock -n 9; then
                    echo ">> Un autre deploiement de $SVC est en cours — on attend son tour."
                    flock -w 2700 9 || { echo ">> ECHEC : verrou non libere en 2700 s." >&2; exit 75; }
                  fi
-                 CIBLE="$(cat "$CIBLE_FILE" 2>/dev/null || echo "$DEPLOY_SHA")"
-                 echo ">> Cible : ${CIBLE:0:7}"
                  cd "$DEPLOY_PATH"
                  git fetch origin
-                 git reset --hard "$CIBLE"
+                 git reset --hard origin/main
                  install -m 600 /tmp/env.shazamer .env 2>/dev/null || true
                  rm -f /tmp/env.shazamer
                  chmod +x scripts/deploy.sh
