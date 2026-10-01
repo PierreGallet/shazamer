@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.4](https://github.com/PierreGallet/shazamer/compare/v1.29.3...v1.29.4) (2026-10-01)
+
+
+### 🐛 Fixes
+
+* **deploy:** deployer la TETE de branche, pas un SHA fige ([7d3f62d](https://github.com/PierreGallet/shazamer/commit/7d3f62dab6d4e589ff372aee52645b05cfcfdbe3))
+
 ## [1.29.3](https://github.com/PierreGallet/shazamer/compare/v1.29.2...v1.29.3) (2026-10-01)
 
 
