@@ -475,12 +475,20 @@ jobs:
           # laisse une fenetre ou le fichier est lisible par tous.
           scp -P $PORT /tmp/env.resolved $SSH_USER@$HOST:/tmp/env.shazamer
           rm -f /tmp/env.resolved
-          ssh -p $PORT $SSH_USER@$HOST "
-            set -e
-            install -m 600 /tmp/env.shazamer $DEPLOY_PATH/.env
-            rm -f /tmp/env.shazamer
-            echo \"env: \$(grep -c '^[A-Z_]*=' $DEPLOY_PATH/.env) variable(s)\"
-          "
+          # Le .env N'EST PLUS INSTALLE ICI.
+          #
+          # Cette etape le posait, puis SUPPRIMAIT /tmp/env.shazamer. Le bloc detache
+          # plus bas fait ensuite `git reset --hard`, qui remplace le fichier par
+          # la version du depot — celle qui ne porte que des references `op://` —
+          # et sa tentative de reinstallation ne trouvait plus rien.
+          #
+          # Resultat le 01/10 : le .env du serveur s'est retrouve avec 11 cles sur
+          # 11 non resolues, et tennis_cron a demarre avec CARD_NUMBER valant
+          # litteralement `op://…`. Le meme incident que le 27/09, que j'avais
+          # pourtant documente, reintroduit en deplaçant le reset sous verrou.
+          #
+          # L'installation vit desormais dans le bloc detache, APRES le reset et
+          # sous le meme verrou. Ici on ne fait plus que deposer le fichier.
 
           # DEPLOIEMENT DETACHE — le runner ne l'attend plus.
           #
@@ -519,9 +527,58 @@ jobs:
                  fi
                  cd "$DEPLOY_PATH"
                  git fetch origin
-                 git reset --hard origin/main
-                 install -m 600 /tmp/env.shazamer .env 2>/dev/null || true
-                 rm -f /tmp/env.shazamer
+                 # ── Est-ce encore a faire, AVANT de toucher a l'arbre ? ──────────────
+                 #
+                 # Ce controle etait dans scripts/deploy.sh, donc APRES le reset — et c'etait
+                 # faux. Le 01/10, trois deploiements de noctambule se sont mis en file : le
+                 # premier a installe le .env resolu et SUPPRIME /tmp/env.X ; les deux suivants
+                 # ont fait leur `reset --hard`, qui remet la version du depot (rien que des
+                 # `op://`), n'ont plus rien trouve a installer, puis ont constate qu'il n'y
+                 # avait rien a faire et sont sortis — en laissant le .env casse derriere eux.
+                 #
+                 # Journal : « install: cannot stat '/tmp/env.X': No such file or directory ».
+                 # Consequence : tennis_cron a demarre avec CARD_NUMBER valant `op://…`.
+                 #
+                 # On verifie donc AVANT, sur la tete distante, sans rien modifier.
+                 TETE="$(git rev-parse "origin/main")"
+                 DONE_FILE="$HOME/.deploy-done-shazamer_app"
+                 if [ "${DEPLOY_FORCE:-0}" != "1" ] && [ "$(cat "$DONE_FILE" 2>/dev/null)" = "$TETE" ]; then
+                   echo ">> ${TETE:0:7} est deja deploye. Rien a faire, l'arbre n'est pas touche."
+                   exit 0
+                 fi
+
+                 # Le .env en place est MIS DE COTE avant le reset.
+                 #
+                 # `.env` est un fichier SUIVI — c'est la premisse de `op inject -i .env` — donc
+                 # le reset le remplace par la version a references `op://`. Si le fichier resolu
+                 # n'est pas la (deja consomme par un deploiement precedent), on restaure celui
+                 # qui marchait plutot que de deployer des secrets factices.
+                 [ -f .env ] && cp -p .env "/tmp/env.keep.shazamer_app" || true
+                 git reset --hard "$TETE"
+                 echo ">> Deploie ${TETE:0:7}"
+
+                 if [ -f "/tmp/env.shazamer_app" ]; then
+                   chmod 600 "/tmp/env.shazamer_app"
+                   install -m 600 "/tmp/env.shazamer_app" .env
+                   rm -f "/tmp/env.shazamer_app" "/tmp/env.keep.shazamer_app"
+                   echo ">> .env resolu installe"
+                 elif [ -f "/tmp/env.keep.shazamer_app" ]; then
+                   install -m 600 "/tmp/env.keep.shazamer_app" .env
+                   rm -f "/tmp/env.keep.shazamer_app"
+                   echo ">> .env du serveur preserve a travers le reset"
+                 else
+                   echo ">> ECHEC : aucun .env. Deployer avec celui du depot mettrait des references op:// en production." >&2
+                   exit 1
+                 fi
+
+                 # Dernier filet : un .env qui porte encore des `op://` ne doit JAMAIS partir en
+                 # production. C'est ce qui a casse tennis_cron le 27/09 ET le 01/10.
+                 restes=$(grep -c "op://" .env || true)
+                 if [ "$restes" != 0 ]; then
+                   echo ">> ECHEC : $restes reference(s) op:// non resolue(s) dans le .env." >&2
+                   exit 1
+                 fi
+                 echo ">> env: $(grep -c "^[A-Z_]*=" .env) variable(s), 0 non resolue"
                  chmod +x scripts/deploy.sh
                  DEPLOY_LOCK_HELD=1 bash scripts/deploy.sh' ; \
             } > ~/$LOG 2>&1 < /dev/null & \
