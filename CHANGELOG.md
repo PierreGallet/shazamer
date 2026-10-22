@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.5](https://github.com/PierreGallet/shazamer/compare/v1.30.4...v1.30.5) (2026-10-22)
+
+
+### 🐛 Fixes
+
+* **deploy:** revenir au motif du parc — le script distant voyage dans un fichier ([#115](https://github.com/PierreGallet/shazamer/issues/115)) ([ecfe377](https://github.com/PierreGallet/shazamer/commit/ecfe3776afede8b665adf25de13df3dd0a8636bc))
+
 ## [1.30.4](https://github.com/PierreGallet/shazamer/compare/v1.30.3...v1.30.4) (2026-10-22)
 
 
