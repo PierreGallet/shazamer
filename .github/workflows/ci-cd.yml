@@ -392,7 +392,7 @@ jobs:
           TS_OAUTH_SECRET: op://Dev/Tailscale/identifiant
 
       - name: Setup Tailscale
-        uses: tailscale/github-action@v2
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
         with:
           # $TS_* et non secrets.* : l'etape 1Password ci-dessus les a exportes
           # dans l'environnement du job (export-env: true).
