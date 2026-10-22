@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.4](https://github.com/PierreGallet/shazamer/compare/v1.30.3...v1.30.4) (2026-10-22)
+
+
+### 🐛 Fixes
+
+* **deploy:** deux parentheses cassaient le deploiement depuis vingt jours ([#111](https://github.com/PierreGallet/shazamer/issues/111)) ([8b4f9b7](https://github.com/PierreGallet/shazamer/commit/8b4f9b7f2ae374a0769623286dae0f8aafa8a2c6))
+
 ## [1.30.3](https://github.com/PierreGallet/shazamer/compare/v1.30.2...v1.30.3) (2026-10-22)
 
 
