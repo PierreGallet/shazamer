@@ -554,6 +554,25 @@ jobs:
           # `sleep 15`. Les trois descripteurs sont rediriges pour la meme
           # raison — un seul encore ouvert suffit a tenir le canal.
           LOG="deploy-logs/shazamer-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA:0:7}.log"
+          # TOUT L ARGUMENT DE `ssh` CI-DESSOUS EST UNE SEULE CHAINE ENTRE GUILLEMETS
+          # DOUBLES, ET LE SHELL DU RUNNER LA PARSE AVANT DE L ENVOYER.
+          #
+          # Les quotes simples du `bash -c` qui sy trouvent ne lui disent RIEN : a
+          # linterieur de guillemets doubles, une quote simple est un caractere comme
+          # un autre. Ce sont les 66 guillemets doubles internes qui comptent, et
+          # chacun bascule letat de citation. Entre deux bascules, le texte nest plus
+          # cite localement.
+          #
+          # Consequence vecue le 02/10 : le mot « references » setait ecrit avec des
+          # parentheses, elles sont tombees dans une zone non citee, et bash a rendu
+          #     line 144: syntax error near unexpected token
+          # AVANT meme douvrir la connexion. Le deploiement est reste casse VINGT
+          # JOURS sans que rien ne le dise, parce que tous les runs suivants ont saute
+          # le job de deploiement : un run vert ne prouve pas quon a deploye.
+          #
+          # Donc : pas de parenthese ni de caractere special dans les chaines de ce
+          # bloc. Le controle qui tranche se rejoue en local sur le script genere :
+          #     bash -n <le bloc run extrait du YAML>
           ssh -n -p $PORT $SSH_USER@$HOST "{ mkdir -p ~/deploy-logs \
             && DEPLOY_PATH='$DEPLOY_PATH' setsid nohup bash -c '
                  set -e
@@ -613,10 +632,10 @@ jobs:
                  # production. C'est ce qui a casse tennis_cron le 27/09 ET le 01/10.
                  restes=$(grep -c "op://" .env || true)
                  if [ "$restes" != 0 ]; then
-                   echo ">> ECHEC : $restes reference(s) op:// non resolue(s) dans le .env." >&2
+                   echo ">> ECHEC : $restes references op:// non resolues dans le .env." >&2
                    exit 1
                  fi
-                 echo ">> env: $(grep -c "^[A-Z_]*=" .env) variable(s), 0 non resolue"
+                 echo ">> env: $(grep -c "^[A-Z_]*=" .env) variables, 0 non resolue"
                  chmod +x scripts/deploy.sh
                  DEPLOY_LOCK_HELD=1 bash scripts/deploy.sh' ; \
             } > ~/$LOG 2>&1 < /dev/null & \
