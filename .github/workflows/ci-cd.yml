@@ -115,10 +115,48 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Les .deb de ffmpeg sont gardes dun run a lautre.
+      #
+      # `--no-install-recommends ffmpeg` tire quand meme 82 paquets — toute la
+      # famille libav*, libass, libbluray — depuis azure.archive.ubuntu.com.
+      # Mesure du 22/10 sur le run 39763655960 : 229 s pour cette etape seule,
+      # dont 3 min 34 s de pur telechargement, sur un job qui en dure 348 au
+      # total. Les tests, eux, prennent 78 s. Les deux tiers du job servaient a
+      # telecharger ffmpeg.
+      #
+      # Ce nest pas une regression du depot : limage de runner a bascule sur un
+      # Ubuntu plus recent — le miroir sert `resolute/universe` et ffmpeg y est
+      # en 8.0.1 — avec une famille de dependances plus large. Les 16 s de
+      # septembre et les 229 s doctobre ne portent pas sur la meme chose.
+      - name: Cache des paquets ffmpeg
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /home/runner/aptcache
+          key: ffmpeg-deb-${{ runner.os }}-v1
+
       - name: Install ffmpeg
+        # UNE BORNE, PARCE QUE CETTE ETAPE A DEJA PENDU DEUX FOIS.
+        #
+        # Le 30/09 elle a tourne 2740 s avant detre annulee a la main, et le
+        # 22/10 elle pendait encore apres 17 min. Sans borne detape, le seul
+        # garde-fou est le `timeout-minutes: 45` du job : 45 minutes facturees
+        # pour une installation de paquet qui en demande normalement moins dune.
+        timeout-minutes: 6
         run: |
+          # Le cache est un REPERTOIRE DARCHIVES APT, pas une installation.
+          # apt y trouve les .deb deja telecharges et saute le reseau pour eux ;
+          # sil ny trouve rien, il telecharge comme avant. Un cache vide,
+          # partiel ou perime degrade donc vers le comportement actuel — il ne
+          # casse rien. `partial/` est exige par apt.
+          CACHE=/home/runner/aptcache
+          mkdir -p "$CACHE/partial"
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          sudo apt-get install -y --no-install-recommends \
+            -o Dir::Cache::archives="$CACHE" ffmpeg
+          # Le repertoire appartient a root apres le passage de sudo ; sans ca
+          # letape de cache ne saurait pas le relire.
+          sudo chown -R "$(id -u):$(id -g)" "$CACHE"
+          ffmpeg -version | head -1
 
       - name: Install uv
         run: pip install uv
