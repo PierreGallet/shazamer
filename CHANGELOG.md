@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.2](https://github.com/PierreGallet/shazamer/compare/v1.30.1...v1.30.2) (2026-10-22)
+
+
+### 🐛 Fixes
+
+* **ci:** le runner du 12/10 a casse lauthentification Tailscale ([#109](https://github.com/PierreGallet/shazamer/issues/109)) ([6e175b0](https://github.com/PierreGallet/shazamer/commit/6e175b059a92d0f60ea03aa7d68babbb25432873))
+
 ## [1.30.1](https://github.com/PierreGallet/shazamer/compare/v1.30.0...v1.30.1) (2026-10-02)
 
 
