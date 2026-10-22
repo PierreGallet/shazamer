@@ -115,47 +115,52 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Les .deb de ffmpeg sont gardes dun run a lautre.
+      # ffmpeg vient du depot canonique dUbuntu, PAS du miroir Azure.
       #
-      # `--no-install-recommends ffmpeg` tire quand meme 82 paquets — toute la
-      # famille libav*, libass, libbluray — depuis azure.archive.ubuntu.com.
-      # Mesure du 22/10 sur le run 39763655960 : 229 s pour cette etape seule,
-      # dont 3 min 34 s de pur telechargement, sur un job qui en dure 348 au
-      # total. Les tests, eux, prennent 78 s. Les deux tiers du job servaient a
-      # telecharger ffmpeg.
+      # `--no-install-recommends ffmpeg` tire 82 paquets — toute la famille
+      # libav*, libass, libbluray. Ce nest pas une regression du depot :
+      # limage de runner a bascule sur un Ubuntu plus recent, le miroir sert
+      # `resolute/universe` et ffmpeg y est en 8.0.1, avec une famille de
+      # dependances plus large. Les 16 s de septembre et les 229 s doctobre ne
+      # portent pas sur la meme chose.
       #
-      # Ce nest pas une regression du depot : limage de runner a bascule sur un
-      # Ubuntu plus recent — le miroir sert `resolute/universe` et ffmpeg y est
-      # en 8.0.1 — avec une famille de dependances plus large. Les 16 s de
-      # septembre et les 229 s doctobre ne portent pas sur la meme chose.
-      - name: Cache des paquets ffmpeg
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: /home/runner/aptcache
-          key: ffmpeg-deb-${{ runner.os }}-v1
-
+      # Mais le 22/10, `azure.archive.ubuntu.com` — le miroir servi aux
+      # runners heberges chez Azure — delivrait ~75 ko/s : `libavcodec62`
+      # (10,2 Mo) a pris 2 min 15 s, et letape est morte sur sa borne au
+      # paquet 40 sur 82, TROIS FOIS de suite. Le meme fichier recupere hors
+      # dAzure dans la minute qui suivait : 1,07 s, soit 9,5 Mo/s. Ce nest
+      # donc pas le volume a telecharger, cest ce miroir-la.
+      #
+      # On bascule sur `archive.ubuntu.com`. Ce nest pas une source tierce :
+      # meme organisation, meme contenu, memes signatures GPG — seul le miroir
+      # change, et apt verifie les paquets exactement comme avant.
+      #
+      # Il ny a PLUS de cache apt ici. Il y en a eu un, et il ne pouvait
+      # structurellement jamais servir : un cache nest partage entre branches
+      # que sil a ete ecrit sur la branche par defaut, or ce job est SAUTE a
+      # la fusion sur `main` (voir le `if` du job). Letape ny tournait donc
+      # jamais, le cache ny etait jamais ecrit, et chaque run lisait
+      # « Cache not found for input keys: ffmpeg-deb-Linux-v1 ».
       - name: Install ffmpeg
         # UNE BORNE, PARCE QUE CETTE ETAPE A DEJA PENDU DEUX FOIS.
         #
         # Le 30/09 elle a tourne 2740 s avant detre annulee a la main, et le
         # 22/10 elle pendait encore apres 17 min. Sans borne detape, le seul
         # garde-fou est le `timeout-minutes: 45` du job : 45 minutes facturees
-        # pour une installation de paquet qui en demande normalement moins dune.
+        # pour une installation de paquet qui en demande normalement moins
+        # dune. La borne a deja paye : trois echecs a 372 s au lieu de trois
+        # fois 45 min, soit 117 minutes de quota epargnees.
         timeout-minutes: 6
         run: |
-          # Le cache est un REPERTOIRE DARCHIVES APT, pas une installation.
-          # apt y trouve les .deb deja telecharges et saute le reseau pour eux ;
-          # sil ny trouve rien, il telecharge comme avant. Un cache vide,
-          # partiel ou perime degrade donc vers le comportement actuel — il ne
-          # casse rien. `partial/` est exige par apt.
-          CACHE=/home/runner/aptcache
-          mkdir -p "$CACHE/partial"
+          # Les deux emplacements sont couverts : le format `deb822`
+          # (`.sources`) de limage actuelle, et lancien `sources.list` — pour
+          # que le jour ou limage rebascule, letape ne redevienne pas
+          # silencieusement dependante dAzure.
+          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
+            /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true
+          grep -rhom1 'archive.ubuntu.com' /etc/apt/sources.list.d/ | head -1
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            -o Dir::Cache::archives="$CACHE" ffmpeg
-          # Le repertoire appartient a root apres le passage de sudo ; sans ca
-          # letape de cache ne saurait pas le relire.
-          sudo chown -R "$(id -u):$(id -g)" "$CACHE"
+          sudo apt-get install -y --no-install-recommends ffmpeg
           ffmpeg -version | head -1
 
       - name: Install uv
