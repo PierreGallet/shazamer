@@ -573,73 +573,94 @@ jobs:
           # Donc : pas de parenthese ni de caractere special dans les chaines de ce
           # bloc. Le controle qui tranche se rejoue en local sur le script genere :
           #     bash -n <le bloc run extrait du YAML>
+          # LE SCRIPT DISTANT VOYAGE DANS UN FICHIER, PAS DANS L ARGUMENT DE `ssh`.
+          #
+          # Il etait ecrit en ligne dans l argument de `ssh`, soit une seule chaine entre
+          # guillemets doubles que le shell du RUNNER parse avant de l envoyer. Chaque `"`
+          # interne y bascule l etat de citation et chaque `$(...)` non echappe s evalue
+          # sur le runner. La convention etait donc d echapper `\"` et `\$` partout —
+          # une regle invisible que rien ne verifiait.
+          #
+          # Le 02/10 un bloc de soixante lignes a ete ajoute sans la respecter. Le shell
+          # local a alors execute le script distant chez lui : `git reset --hard` sur le
+          # runner, `op://` pris pour une commande, `${TETE:0:7}` vide. Le deploiement est
+          # reste casse VINGT JOURS sans que rien ne le dise, parce que tous les runs
+          # suivants sautaient le job — un run vert ne prouve pas qu on a deploye.
+          #
+          # On revient au motif des autres depots du parc, celui de triton : un heredoc
+          # CITE ecrit le script tel quel, `scp` l envoie, et l argument de `ssh` tient en
+          # cinq lignes avec un seul guillemet. Plus rien n est interprete deux fois.
+          cat > /tmp/remote-deploy.sh << 'REMOTE_EOF'
+          set -e
+
+          # SVC nomme le verrou et les fichiers de travail. Il n etait defini NULLE PART
+          # — ni dans l env de l etape, ni dans le job, ni dans le workflow — donc le
+          # verrou s appelait « /tmp/deploy-.lock » et le message d attente ne nommait
+          # personne. Deux piles auraient partage le meme verrou.
+          SVC=shazamer_app
+
+          # Le nom du .env resolu DOIT correspondre a ce que `scp` a envoye plus haut.
+          # Le bloc cherchait « /tmp/env.shazamer_app » alors que scp depose
+          # « /tmp/env.shazamer » : meme la citation reparee, le fichier n aurait jamais
+          # ete trouve et le deploiement serait tombe sur « aucun .env ».
+          ENV_RESOLU=/tmp/env.shazamer
+          ENV_GARDE=/tmp/env.keep.shazamer
+
+          exec 9>"/tmp/deploy-$SVC.lock"
+          if ! flock -n 9; then
+            echo ">> Un autre deploiement de $SVC est en cours — on attend son tour."
+            flock -w 2700 9 || { echo ">> ECHEC : verrou de $SVC non libere en 2700 s." >&2; exit 75; }
+          fi
+
+          cd "$DEPLOY_PATH"
+          git fetch origin
+
+          # ON DEPLOIE LA TETE DE BRANCHE, relue SOUS VERROU — pas un SHA fige.
+          TETE="$(git rev-parse origin/main)"
+          DONE_FILE="$HOME/.deploy-done-$SVC"
+          if [ "${DEPLOY_FORCE:-0}" != "1" ] && [ "$(cat "$DONE_FILE" 2>/dev/null)" = "$TETE" ]; then
+            echo ">> ${TETE:0:7} est deja deploye. Rien a faire, l'arbre n'est pas touche."
+            exit 0
+          fi
+
+          [ -f .env ] && cp -p .env "$ENV_GARDE" || true
+          git reset --hard "$TETE"
+          echo ">> Deploie ${TETE:0:7}"
+
+          if [ -f "$ENV_RESOLU" ]; then
+            chmod 600 "$ENV_RESOLU"
+            install -m 600 "$ENV_RESOLU" .env
+            rm -f "$ENV_RESOLU" "$ENV_GARDE"
+            echo ">> .env resolu installe"
+          elif [ -f "$ENV_GARDE" ]; then
+            install -m 600 "$ENV_GARDE" .env
+            rm -f "$ENV_GARDE"
+            echo ">> .env du serveur preserve a travers le reset"
+          else
+            echo ">> ECHEC : aucun .env. Deployer avec celui du depot mettrait des references op:// en production." >&2
+            exit 1
+          fi
+
+          # Dernier filet : un .env qui porte encore des `op://` ne doit JAMAIS partir en
+          # production. C'est ce qui a casse tennis_cron le 27/09 et le 01/10.
+          restes=$(grep -c "op://" .env || true)
+          if [ "$restes" != 0 ]; then
+            echo ">> ECHEC : $restes reference(s) op:// non resolue(s) dans le .env." >&2
+            exit 1
+          fi
+          echo ">> env: $(grep -c "^[A-Z_]*=" .env) variable(s), 0 non resolue"
+
+          chmod +x scripts/deploy.sh
+          DEPLOY_LOCK_HELD=1 bash scripts/deploy.sh
+          REMOTE_EOF
+
+          scp -P $PORT /tmp/remote-deploy.sh $SSH_USER@$HOST:/tmp/remote-deploy.sh
+
           ssh -n -p $PORT $SSH_USER@$HOST "{ mkdir -p ~/deploy-logs \
-            && DEPLOY_PATH='$DEPLOY_PATH' setsid nohup bash -c '
-                 set -e
-                                  # ON DEPLOIE LA TETE DE BRANCHE, relue SOUS VERROU — pas un SHA fige.
-                 exec 9>"/tmp/deploy-$SVC.lock"
-                 if ! flock -n 9; then
-                   echo ">> Un autre deploiement de $SVC est en cours — on attend son tour."
-                   flock -w 2700 9 || { echo ">> ECHEC : verrou non libere en 2700 s." >&2; exit 75; }
-                 fi
-                 cd "$DEPLOY_PATH"
-                 git fetch origin
-                 # ── Est-ce encore a faire, AVANT de toucher a l'arbre ? ──────────────
-                 #
-                 # Ce controle etait dans scripts/deploy.sh, donc APRES le reset — et c'etait
-                 # faux. Le 01/10, trois deploiements de noctambule se sont mis en file : le
-                 # premier a installe le .env resolu et SUPPRIME /tmp/env.X ; les deux suivants
-                 # ont fait leur `reset --hard`, qui remet la version du depot (rien que des
-                 # `op://`), n'ont plus rien trouve a installer, puis ont constate qu'il n'y
-                 # avait rien a faire et sont sortis — en laissant le .env casse derriere eux.
-                 #
-                 # Journal : « install: cannot stat '/tmp/env.X': No such file or directory ».
-                 # Consequence : tennis_cron a demarre avec CARD_NUMBER valant `op://…`.
-                 #
-                 # On verifie donc AVANT, sur la tete distante, sans rien modifier.
-                 TETE="$(git rev-parse "origin/main")"
-                 DONE_FILE="$HOME/.deploy-done-shazamer_app"
-                 if [ "${DEPLOY_FORCE:-0}" != "1" ] && [ "$(cat "$DONE_FILE" 2>/dev/null)" = "$TETE" ]; then
-                   echo ">> ${TETE:0:7} est deja deploye. Rien a faire, l'arbre n'est pas touche."
-                   exit 0
-                 fi
-
-                 # Le .env en place est MIS DE COTE avant le reset.
-                 #
-                 # `.env` est un fichier SUIVI — c'est la premisse de `op inject -i .env` — donc
-                 # le reset le remplace par la version a references `op://`. Si le fichier resolu
-                 # n'est pas la (deja consomme par un deploiement precedent), on restaure celui
-                 # qui marchait plutot que de deployer des secrets factices.
-                 [ -f .env ] && cp -p .env "/tmp/env.keep.shazamer_app" || true
-                 git reset --hard "$TETE"
-                 echo ">> Deploie ${TETE:0:7}"
-
-                 if [ -f "/tmp/env.shazamer_app" ]; then
-                   chmod 600 "/tmp/env.shazamer_app"
-                   install -m 600 "/tmp/env.shazamer_app" .env
-                   rm -f "/tmp/env.shazamer_app" "/tmp/env.keep.shazamer_app"
-                   echo ">> .env resolu installe"
-                 elif [ -f "/tmp/env.keep.shazamer_app" ]; then
-                   install -m 600 "/tmp/env.keep.shazamer_app" .env
-                   rm -f "/tmp/env.keep.shazamer_app"
-                   echo ">> .env du serveur preserve a travers le reset"
-                 else
-                   echo ">> ECHEC : aucun .env. Deployer avec celui du depot mettrait des references op:// en production." >&2
-                   exit 1
-                 fi
-
-                 # Dernier filet : un .env qui porte encore des `op://` ne doit JAMAIS partir en
-                 # production. C'est ce qui a casse tennis_cron le 27/09 ET le 01/10.
-                 restes=$(grep -c "op://" .env || true)
-                 if [ "$restes" != 0 ]; then
-                   echo ">> ECHEC : $restes references op:// non resolues dans le .env." >&2
-                   exit 1
-                 fi
-                 echo ">> env: $(grep -c "^[A-Z_]*=" .env) variables, 0 non resolue"
-                 chmod +x scripts/deploy.sh
-                 DEPLOY_LOCK_HELD=1 bash scripts/deploy.sh' ; \
+            && DEPLOY_PATH='$DEPLOY_PATH' \
+               setsid nohup bash -c 'bash /tmp/remote-deploy.sh; rm -f /tmp/remote-deploy.sh' ; \
             } > ~/$LOG 2>&1 < /dev/null & \
-            echo 'deploiement lance en tache de fond'"
+            echo 'deploiement lance en tache de fond'" 
           echo "::notice::Deploiement lance sur le serveur, sans attente du runner. Journal : ~/$LOG. Une panne remonte par les alertes Grafana deploy-stuck / deploy-failed."
 
       # Il y avait ici une etape de verification post-deploiement, cote runner.
