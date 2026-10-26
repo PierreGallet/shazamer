@@ -1,6 +1,6 @@
 import { For, Show, createSignal, onCleanup } from "solid-js";
 import type { AcquirableTrack, Download, SoulseekCandidate } from "../lib/api";
-import { api, formatBytes } from "../lib/api";
+import { api, formatBytes, saveDownload } from "../lib/api";
 
 /**
  * Fetch one track from Soulseek.
@@ -34,7 +34,9 @@ export default function GetTrack(props: Props) {
       try {
         const state = await api.download(id);
         setDownload(state);
-        if (state.status !== "ready" && state.status !== "failed") {
+        if (state.status === "ready") {
+          saveDownload(id);
+        } else if (state.status !== "failed") {
           timer = window.setTimeout(tick, POLL_MS);
         }
       } catch {

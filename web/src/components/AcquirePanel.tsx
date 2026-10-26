@@ -2,7 +2,7 @@ import { For, Show, createEffect, createResource, createSignal,
          onCleanup } from "solid-js";
 import type { AcquirableTrack, Download, SoulseekCandidate } from "../lib/api";
 import GetTrack from "./GetTrack";
-import { api, formatBytes, formatSpeed } from "../lib/api";
+import { api, formatBytes, formatSpeed, saveDownload } from "../lib/api";
 
 /**
  * Where to get one track.
@@ -63,7 +63,9 @@ export default function AcquirePanel(props: Props) {
       try {
         const state = await api.download(id);
         setProgress(state);
-        if (state.status !== "ready" && state.status !== "failed") {
+        if (state.status === "ready") {
+          saveDownload(id);
+        } else if (state.status !== "failed") {
           timer = window.setTimeout(tick, 3000);
         }
       } catch {
