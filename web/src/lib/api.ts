@@ -595,6 +595,25 @@ export const api = {
  * Returns a disposer. The backend closes the stream itself once the task
  * reaches a terminal state, so the caller never has to poll for completion.
  */
+/**
+ * Hand a finished download to the browser without waiting for a click.
+ *
+ * The file has to stop on the server first — the browser cannot speak
+ * Soulseek, and the server holds the account, the shares and the tagging —
+ * but the second hop is seconds over HTTPS, so asking for a click on "Save"
+ * once it is ready made a one-step fetch feel like two. The Save button stays
+ * for when the browser blocks this (several at once, or a background tab).
+ */
+export function saveDownload(id: number): void {
+  const link = document.createElement("a");
+  link.href = api.downloadFileUrl(id);
+  link.download = "";
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 export function subscribeToTask(
   taskId: string,
   handlers: {
