@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.6](https://github.com/PierreGallet/shazamer/compare/v1.30.5...v1.30.6) (2026-10-26)
+
+
+### 🐛 Fixes
+
+* **download:** download the Instagram carousel slide the link points at ([#117](https://github.com/PierreGallet/shazamer/issues/117)) ([a1d9d48](https://github.com/PierreGallet/shazamer/commit/a1d9d482d2079fde7591c44df1e76355a769be81))
+
 ## [1.30.5](https://github.com/PierreGallet/shazamer/compare/v1.30.4...v1.30.5) (2026-10-22)
 
 
