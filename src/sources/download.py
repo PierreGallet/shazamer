@@ -31,6 +31,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
+from urllib.parse import parse_qs, urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,38 @@ def platform_for(url: str) -> str:
     return "default"
 
 
+def _instagram_slide(url: str) -> Optional[int]:
+    """The carousel slide a link points at, from its `img_index`.
+
+    Instagram writes it into the address bar as you swipe, so a copied link
+    names the slide that was on screen. yt-dlp never reads it.
+    """
+    values = parse_qs(urlparse(url).query).get("img_index", [])
+    try:
+        slide = int(values[0])
+    except (IndexError, ValueError):
+        return None
+    return slide if slide > 0 else None
+
+
+def _selection_args(url: str) -> List[str]:
+    """Which entries of an Instagram carousel to fetch.
+
+    yt-dlp treats a carousel as a playlist whatever `--no-playlist` says, and
+    a photo slide has no formats, so the plain command fails on the first
+    photo — and every video it did fetch lands on the same file name.
+    """
+    if "instagram.com" not in url.lower():
+        return []
+    slide = _instagram_slide(url)
+    if slide:
+        return ["--playlist-items", str(slide)]
+    # No slide named: skip photos and keep the first video. yt-dlp exits 101
+    # once --max-downloads is reached, which is the success case here.
+    return ["--ignore-no-formats-error", "--match-filter", "formats",
+            "--max-downloads", "1"]
+
+
 def _ytdlp_cmd() -> List[str]:
     """Prefer the standalone binary, fall back to the module in this venv."""
     binary = shutil.which("yt-dlp")
@@ -122,6 +155,7 @@ async def download_audio(url: str, dest_dir: Path, stem: str,
     dest_dir.mkdir(parents=True, exist_ok=True)
     platform = platform_for(url)
     info_path = dest_dir / f"{stem}.info.json"
+    selection = _selection_args(url)
 
     cmd = _ytdlp_cmd() + [
         "-f", FORMAT_LADDER[platform],
@@ -130,7 +164,11 @@ async def download_audio(url: str, dest_dir: Path, stem: str,
         "--no-warnings",
         "--force-ipv4",
         "--write-info-json",
+        # A carousel's own info.json shares the output name and would replace
+        # the video's.
+        "--no-write-playlist-metafiles",
         "--no-part",
+        *selection,
         "-o", str(dest_dir / f"{stem}.%(ext)s"),
         url,
     ]
@@ -171,13 +209,25 @@ async def download_audio(url: str, dest_dir: Path, stem: str,
         await proc.wait()
         raise DownloadError(f"Download timed out after {timeout:.0f}s")
 
-    if proc.returncode != 0:
-        raise DownloadError(_clean_ytdlp_error("\n".join(stderr_tail)))
+    slide = _instagram_slide(url) if selection else None
+    ok_codes = (0, 101) if "--max-downloads" in selection else (0,)
+    if proc.returncode not in ok_codes:
+        stderr = "\n".join(stderr_tail)
+        if slide and "no video formats" in stderr.lower():
+            raise DownloadError(
+                f"Slide {slide} of this Instagram post is a photo, so there is "
+                f"no audio to analyse. Open a video slide and copy its link.")
+        raise DownloadError(_clean_ytdlp_error(stderr))
 
     media_files = [
         p for p in dest_dir.glob(f"{stem}.*")
         if p.suffix not in (".json", ".part", ".ytdl")
     ]
+    if not media_files and selection and not slide:
+        info_path.unlink(missing_ok=True)
+        raise DownloadError(
+            "This Instagram post holds only photos, so there is no audio to "
+            "analyse.")
     if not media_files:
         raise DownloadError(
             "yt-dlp reported success but produced no audio file. The track may "
