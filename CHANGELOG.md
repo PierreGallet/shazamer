@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.0](https://github.com/PierreGallet/shazamer/compare/v1.30.6...v1.31.0) (2026-10-26)
+
+
+### ✨ Features
+
+* **acquire:** save a Soulseek download as soon as it is ready ([#119](https://github.com/PierreGallet/shazamer/issues/119)) ([f958baa](https://github.com/PierreGallet/shazamer/commit/f958baa8cfb61579473fe9770d6ac7c41b611de5))
+
 ## [1.30.6](https://github.com/PierreGallet/shazamer/compare/v1.30.5...v1.30.6) (2026-10-26)
 
 
