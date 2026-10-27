@@ -6,6 +6,33 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![CI](https://github.com/pierregallet/shazamer/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/pierregallet/shazamer/actions)
 
+<p align="center">
+  <a href="https://shazamer.pierregallet.com"><b>▶ Try it now at shazamer.pierregallet.com</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://shazamer.pierregallet.com/docs/">Read the docs</a>
+</p>
+
+## ☁️ Hosted version — nothing to install
+
+**[shazamer.pierregallet.com](https://shazamer.pierregallet.com)** runs the
+full app. Paste a link, get the tracklist.
+
+1. **Sign in with your email.** You get a one-time code. No password, and the
+   account is created the first time you sign in.
+2. **Paste a set** from YouTube, SoundCloud or Instagram, or upload the file.
+3. **Dig.** The timestamped tracklist with BPM and Camelot key is drawn on the
+   waveform, with buy links for every track and a Rekordbox export.
+
+Everything the self-hosted version does, without Python, ffmpeg or a build
+step. Long sets are fine: analysis runs on a queue, so you can close the tab
+and come back to a finished tracklist. Your sets stay in your library, and you
+can share one with a link.
+
+Prefer running it yourself? It is MIT-licensed and the whole stack is below —
+see [Install and run](#install-and-run).
+
+---
+
 Shazamer takes a mix — a URL or a file — and gives you a timestamped tracklist
 with BPM and key, drawn on an interactive waveform you can scrub through. Every
 track links out to where you can actually buy it, and everything you analyse
