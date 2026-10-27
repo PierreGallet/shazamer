@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .library import VerificationFailed, collect
+from .quota import QuotaExceeded
 from .slskd import (LOSSLESS, Candidate, SlskdClient, SlskdError,
                     _ordinal, search_query)
 
@@ -32,8 +33,8 @@ REQUIRE_VERIFICATION = os.environ.get("ACQUIRE_REQUIRE_VERIFICATION",
 
 
 async def rank_candidates(artist: str, title: str, limit: int = 5,
-                          client: Optional[SlskdClient] = None
-                          ) -> Dict[str, Any]:
+                          client: Optional[SlskdClient] = None,
+                          user_id: str = "") -> Dict[str, Any]:
     """Search Soulseek and return the best few, best first.
 
     Separate from fetching so the choice can be shown before anything is
@@ -46,7 +47,8 @@ async def rank_candidates(artist: str, title: str, limit: int = 5,
     if not client.configured:
         raise SlskdError("Soulseek is not configured on this server.")
 
-    candidates = await client.search(search_query(artist, title))
+    candidates = await client.search(search_query(artist, title),
+                                     user_id=user_id)
     return {
         "query": search_query(artist, title),
         "candidates": [c.to_dict() for c in candidates[:limit]],
@@ -151,7 +153,11 @@ async def acquire_track(library, destination: Path, track_key: str,
             )
         else:
             await note("queued", "Searching Soulseek...")
-            candidates = await client.search(search_query(artist, title))
+            # Booked against the person who asked: the row knows who that is,
+            # the worker running it does not.
+            row = await library.get_download(download_id, user_id=None) or {}
+            candidates = await client.search(search_query(artist, title),
+                                             user_id=row.get("user_id") or "")
             if not candidates:
                 await note("failed",
                            "No peer is sharing this one right now. The pool "
@@ -252,6 +258,11 @@ async def acquire_track(library, destination: Path, track_key: str,
         await settle_progress()
         await note("failed", str(exc))
     except SlskdError as exc:
+        await settle_progress()
+        await note("failed", str(exc))
+    except QuotaExceeded as exc:
+        # The reason and when to retry, not "unexpected failure": this is the
+        # shared account being protected, which the person should know.
         await settle_progress()
         await note("failed", str(exc))
     except Exception as exc:

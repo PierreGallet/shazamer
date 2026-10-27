@@ -42,6 +42,23 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+def _no_leaked_soulseek_quota():
+    """Each test starts without the Soulseek quota, and leaves none behind.
+
+    Importing `web` installs one on `slskd.QUOTA`, a module global, so it
+    outlived the test that imported it: later tests then waited out its
+    5-second search spacing (12 s for one acquisition test). Tests about the
+    quota install their own; the `client` fixture reloads `web`, which
+    installs one scoped to that test's data directory.
+    """
+    import src.acquire.slskd as slskd
+
+    slskd.QUOTA = None
+    yield
+    slskd.QUOTA = None
+
+
 def _make_set(path: Path, plan: List[Optional[tuple]], seconds: float) -> Path:
     """Write a synthetic 'set': one tone per planned track, hard-cut between."""
     parts = []
