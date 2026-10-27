@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.32.0](https://github.com/PierreGallet/shazamer/compare/v1.31.2...v1.32.0) (2026-10-27)
+
+
+### ✨ Features
+
+* **share:** inbox, playable copies, sender control and a findable Share button (RFC [#123](https://github.com/PierreGallet/shazamer/issues/123)) ([#125](https://github.com/PierreGallet/shazamer/issues/125)) ([4f54394](https://github.com/PierreGallet/shazamer/commit/4f5439422fa22b7c8bd76f52e8b7c3dc5bbb5231))
+
 ## [1.31.2](https://github.com/PierreGallet/shazamer/compare/v1.31.1...v1.31.2) (2026-10-27)
 
 
