@@ -227,6 +227,50 @@ export default function SetView(props: Props) {
               </div>
             </Show>
 
+            {/* A reused analysis came back in seconds instead of the full
+                run, which is the point — but it predates any pipeline fix
+                since, so the way to a fresh one is one click, on the set's
+                own link. */}
+            <Show when={data().reused && data().source_url}>
+              <div class="legacy-banner">
+                <div>
+                  <strong>Already analysed — reused.</strong>{" "}
+                  <span class="muted">
+                    This tracklist comes from an earlier analysis of the same
+                    source
+                    <Show when={data().analysed_at}>
+                      {" "}({data().analysed_at!.slice(0, 10)})
+                    </Show>
+                    , so you did not have to wait for it. Run it again to pick
+                    up anything the analysis has learned since.
+                  </span>
+                </div>
+                <button class="btn btn-ghost btn-sm" type="button"
+                        disabled={reanalysing()}
+                        onClick={async () => {
+                          setReanalysing(true);
+                          setReanalyseError("");
+                          try {
+                            const { task_id } = await api.analyzeUrl(
+                              data().source_url, props.setId);
+                            props.onReanalyse(task_id);
+                          } catch (err) {
+                            setReanalysing(false);
+                            setReanalyseError(err instanceof Error
+                              ? err.message : "Could not start the analysis");
+                          }
+                        }}>
+                  <Show when={reanalysing()}><span class="spinner" /></Show>
+                  Re-analyse
+                </button>
+                <Show when={reanalyseError()}>
+                  <div class="tiny" style={{ color: "var(--crit)" }}>
+                    {reanalyseError()}
+                  </div>
+                </Show>
+              </div>
+            </Show>
+
             <Show when={data().source_kind === "legacy"}>
               <div class="legacy-banner">
                 <div>

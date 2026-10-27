@@ -113,6 +113,10 @@ export interface SetSummary {
 export interface SetDetail extends SetSummary {
   waveform: number[];
   tracks: Track[];
+  /** True when this is a copy of an analysis someone already ran. */
+  reused?: boolean;
+  /** When the analysis itself ran (differs from created_at when reused). */
+  analysed_at?: string;
 }
 
 export interface TaskState {

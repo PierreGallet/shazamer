@@ -218,3 +218,30 @@ async def test_a_task_persisted_before_force_still_resumes(client, monkeypatch):
     assert seen == {"task_id": "t-old", "set_id": None, "force": False}
     await web._run_inline(fake, "t-new", "https://youtu.be/abc", None, True)
     assert seen["force"] is True
+
+
+async def test_a_reused_copy_says_when_it_was_analysed(client, world):
+    world["keys"]["https://youtu.be/abc"] = "Youtube:abc"
+    first = await _analyse(client, "https://youtu.be/abc")
+    await _seed_account(client.web.accounts, BOB, BOB_EMAIL)
+    task = await _analyse(client, "https://youtu.be/abc", user_id=BOB)
+
+    origin = await client.web.library.get_set(first.set_id, user_id=TEST_USER)
+    copy = await client.web.library.get_set(task.set_id, user_id=BOB)
+    assert copy["analysed_at"] == origin["created_at"]
+    assert origin["analysed_at"] == origin["created_at"]
+
+
+async def test_re_analysing_a_reused_copy_makes_it_an_original(client, world):
+    """The Re-analyse button posts the set's own URL with `replaces`."""
+    world["keys"]["https://youtu.be/abc"] = "Youtube:abc"
+    await _analyse(client, "https://youtu.be/abc")
+    await _seed_account(client.web.accounts, BOB, BOB_EMAIL)
+    reused = await _analyse(client, "https://youtu.be/abc", user_id=BOB)
+
+    again = await _analyse(client, "https://youtu.be/abc", user_id=BOB,
+                           replaces=reused.set_id)
+
+    assert world["analyses"] == 2
+    redone = await client.web.library.get_set(again.set_id, user_id=BOB)
+    assert again.set_id == reused.set_id and redone["reused"] is False

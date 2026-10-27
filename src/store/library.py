@@ -534,9 +534,18 @@ class Library:
             starred = {r["track_key"] for r in conn.execute(
                 "SELECT track_key FROM crate WHERE user_id = ?",
                 (user_id,)).fetchall()}
+            # When the analysis was really run, for a reused copy: its own
+            # created_at is the moment it was copied. A date, never an owner.
+            origin = None
+            if "reused_from" in row.keys() and row["reused_from"]:
+                origin = conn.execute(
+                    "SELECT created_at FROM sets WHERE id = ?",
+                    (row["reused_from"],)).fetchone()
         data = _set_row(row)
         data["waveform"] = json.loads(row["waveform"] or "[]")
         data["tracks"] = [_track_row(t, starred) for t in tracks]
+        data["analysed_at"] = (origin["created_at"] if origin
+                               else data["created_at"])
         return data
 
     async def delete_set(self, set_id: str, *, user_id: str) -> bool:
