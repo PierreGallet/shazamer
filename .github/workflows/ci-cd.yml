@@ -90,6 +90,13 @@ jobs:
           ffmpeg -version | head -1
 
       - uses: actions/checkout@v4
+
+      # Dans le conteneur, le depot appartient a l'uid du runner et git
+      # tourne en root : sans cette ligne il refuse d'y lire (« dubious
+      # ownership »). actions/checkout ne l'ajoute que pour sa propre etape.
+      - name: Trust the workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       # ── La branche est-elle a jour avec la base ? ──────────────────────
       #
       # Ce controle remplace le reglage GitHub « Require branches to be up to
@@ -176,10 +183,12 @@ jobs:
 
       # Codecov, aligne sur triton. Le jeton vient de 1Password et non d'un
       # secret GitHub, pour qu'il n'en reste qu'un seul dans l'interface.
-      - name: Install 1Password CLI
-        if: ${{ !cancelled() }}
-        uses: 1password/install-cli-action@v1
-
+      #
+      # Pas de `1password/install-cli-action` ici : c'est une action
+      # composite, qui lance son script par `github.action_path`. Dans un job
+      # en conteneur, ce chemin designe l'hote (/home/runner/...) et non le
+      # conteneur, donc exit 127. load-secrets-action embarque son propre
+      # CLI et n'en a pas besoin.
       - name: Load Codecov token from 1Password
         if: ${{ !cancelled() }}
         uses: 1password/load-secrets-action@v2
