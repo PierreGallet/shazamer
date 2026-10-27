@@ -137,6 +137,14 @@ class SoulseekCredentials:
 
     # ── Reading ──────────────────────────────────────────────────────────
 
+    async def user_ids(self) -> list:
+        return await self._run(self._user_ids_sync)
+
+    def _user_ids_sync(self) -> list:
+        with closing(self._connect()) as conn:
+            return [r[0] for r in conn.execute(
+                "SELECT user_id FROM soulseek_credentials")]
+
     async def has(self, user_id: str) -> bool:
         return (await self._run(self._row_sync, user_id)) is not None
 

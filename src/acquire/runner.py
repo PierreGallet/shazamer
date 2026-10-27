@@ -233,6 +233,10 @@ async def acquire_track(library, destination: Path, track_key: str,
             declared_bitrate=int(best.bitrate or 0),
             lossless=best.extension in LOSSLESS,
         )
+        if not getattr(client, "keeps_raw", True):
+            # An own Soulseek account (RFC #137): the copy it downloaded is
+            # shared with nobody, and the library now has its own.
+            source.unlink(missing_ok=True)
 
         # Ready either way, and for both verdicts. The fingerprint says whether
         # this is the right record; the spectrum says whether it is the quality

@@ -114,7 +114,12 @@ class OwnSoulseekSessions:
 
     def __init__(self, root: Path, *, client_factory: Optional[Callable] = None,
                  clock: Callable[[], float] = time.monotonic,
-                 idle_seconds: float = IDLE_SECONDS) -> None:
+                 idle_seconds: float = IDLE_SECONDS,
+                 on_login: Optional[Callable] = None,
+                 on_failure: Optional[Callable] = None) -> None:
+        """`on_login(user_id)` and `on_failure(user_id, reason)` are told
+        how each login went, and of an eviction — for Profile to show the
+        last outcome without logging in to find out."""
         if client_factory is None:
             from aioslsk.client import SoulSeekClient
             client_factory = SoulSeekClient
@@ -125,6 +130,16 @@ class OwnSoulseekSessions:
         self._sessions: Dict[str, Session] = {}
         self._locks: Dict[str, asyncio.Lock] = {}
         self._reaper: Optional[asyncio.Task] = None
+        self.on_login = on_login
+        self.on_failure = on_failure
+
+    async def _tell(self, callback, *args) -> None:
+        if callback is None:
+            return
+        try:
+            await callback(*args)
+        except Exception:
+            logger.exception("Recording a Soulseek outcome failed")
 
     def download_dir(self, user_id: str) -> Path:
         return self.root / user_id
@@ -201,6 +216,7 @@ class OwnSoulseekSessions:
 
         async def on_kicked(event) -> None:
             session.dead = KICKED
+            await self._tell(self.on_failure, user_id, KICKED)
 
         async def on_destroyed(event) -> None:
             session.dead = session.dead or "The Soulseek session ended."
@@ -216,17 +232,22 @@ class OwnSoulseekSessions:
             await client.start()
             await client.login()
         except AuthenticationError as exc:
-            await self._stop(session)
-            raise OwnSoulseekError(
+            error = OwnSoulseekError(
                 f"Soulseek refused the login for {credentials.username}: "
-                f"{exc.reason or 'no reason given'}.") from None
+                f"{exc.reason or 'no reason given'}.")
         except Exception as exc:
             # The type only: a traceback here would carry the settings.
-            await self._stop(session)
-            raise OwnSoulseekError(
-                f"Could not reach Soulseek ({type(exc).__name__}).") from None
+            error = OwnSoulseekError(
+                f"Could not reach Soulseek ({type(exc).__name__}).")
+        else:
+            error = None
         finally:
             loop.set_exception_handler(handler)
+        if error is not None:
+            await self._stop(session)
+            await self._tell(self.on_failure, user_id, str(error))
+            raise error
+        await self._tell(self.on_login, user_id)
         return session
 
     async def _stop(self, session: Session) -> None:
@@ -287,7 +308,7 @@ class OwnSoulseekClient:
 
     def __init__(self, sessions: OwnSoulseekSessions, user_id: str,
                  credentials, *, quota=None,
-                 search_wait: float = SEARCH_WAIT) -> None:
+                 search_wait: Optional[float] = None) -> None:
         self.sessions = sessions
         self.user_id = user_id
         self.credentials = credentials
@@ -307,7 +328,10 @@ class OwnSoulseekClient:
         session.busy += 1
         try:
             request = await session.client.searches.search(query)
-            await asyncio.sleep(self.search_wait if wait is None else wait)
+            if wait is None:
+                wait = SEARCH_WAIT if self.search_wait is None \
+                    else self.search_wait
+            await asyncio.sleep(wait)
             if session.dead:
                 raise OwnSoulseekError(session.dead)
             candidates = []
