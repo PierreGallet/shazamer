@@ -330,7 +330,7 @@ async def test_reanalysing_replaces_the_set_in_place(client, monkeypatch):
 
     captured = {}
 
-    async def fake_run(task_id, url, set_id=None):
+    async def fake_run(task_id, url, set_id=None, force=False):
         captured["task_id"] = task_id
         captured["url"] = url
         captured["set_id"] = set_id
@@ -358,13 +358,16 @@ async def test_a_plain_analysis_still_gets_its_own_id(client, monkeypatch):
 
     captured = {}
 
-    async def fake_run(task_id, url, set_id=None):
+    async def fake_run(task_id, url, set_id=None, force=False):
         captured["set_id"] = set_id
+        captured["force"] = force
 
     monkeypatch.setattr(client.web, "run_url_analysis", fake_run)
     await client.post("/api/analyze/url", json={"url": "https://x/y"})
     await asyncio.sleep(0)
     assert captured["set_id"] is None
+    # Reuse stays on unless asked otherwise (RFC #130).
+    assert captured["force"] is False
 
 
 async def test_failed_analysis_does_not_leave_its_audio_behind(client, monkeypatch):

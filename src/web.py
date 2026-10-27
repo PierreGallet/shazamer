@@ -330,6 +330,8 @@ class URLRequest(BaseModel):
     # get them is to run the source again. Re-analysing under the same id
     # replaces the stub instead of leaving a duplicate beside it.
     replaces: Optional[str] = None
+    # Analyse even if this media was analysed before (RFC #130).
+    force: bool = False
 
 
 class StarRequest(BaseModel):
@@ -374,7 +376,8 @@ class AcquireRequest(BaseModel):
 async def run_analysis(task_id: str, path: Path, title: str, *,
                        source_url: str = "", source_kind: str = "upload",
                        uploader: str = "", quality: str = "",
-                       set_id: Optional[str] = None) -> None:
+                       set_id: Optional[str] = None,
+                       source_key: str = "") -> None:
     """Analyse a local file and store the result. Runs as a background task."""
     task = tasks.get(task_id)
     if task is None:
@@ -423,7 +426,7 @@ async def run_analysis(task_id: str, path: Path, title: str, *,
             # which has neither a request nor a cookie to ask.
             user_id=task.user_id,
             source_url=source_url, source_kind=source_kind, uploader=uploader,
-            audio_path=str(path), quality=quality,
+            audio_path=str(path), quality=quality, source_key=source_key,
         )
         tasks.finish(task, status="completed",
                      message=f"{result.stats.get('identified', 0)} tracks identified",
@@ -449,9 +452,59 @@ async def run_analysis(task_id: str, path: Path, title: str, *,
         tasks.finish(task, status="error", message="Analysis failed", error=str(exc))
 
 
+async def _reuse_existing(task, url: str) -> bool:
+    """Finish `task` from an analysis that already exists, if there is one.
+
+    The same media analysed before — by this person or anyone — becomes their
+    own copy at once instead of a download and a pipeline run (47 minutes for
+    a 2-hour mix). True when the task was finished here.
+
+    Any doubt means False and an ordinary analysis: a lookup that fails, a
+    link whose media cannot be named, an origin deleted meanwhile.
+    """
+    key = await dl.media_key(url)
+    if not key:
+        return False
+
+    mine = await library.own_by_source_key(key, user_id=task.user_id)
+    if mine:
+        tasks.finish(task, status="completed",
+                     message="Already in your library", set_id=mine)
+        return True
+
+    origin = await library.find_by_source_key(key)
+    if not origin:
+        return False
+    copy = await library.copy_for_reuse(origin, user_id=task.user_id,
+                                        link_audio=_link_shared_audio)
+    if copy is None:
+        return False
+
+    if not copy["audio"]:
+        # Q-B: the tracklist is reused; only the audio is fetched again, for
+        # playback. Minutes, against the analysis it replaces. A failure here
+        # leaves a playable-later copy rather than failing a set that exists.
+        tasks.update(task, status="downloading", stage="downloading",
+                     progress=50, message="Reused — fetching the audio...")
+        try:
+            media = await dl.download_audio(url, MEDIA_DIR, copy["set_id"])
+            await library.set_audio_path(copy["set_id"], str(media.path))
+        except dl.DownloadError as exc:
+            logger.warning("Reused %s without audio: %s", copy["set_id"], exc)
+
+    tasks.finish(task, status="completed",
+                 message="Already analysed — reused", set_id=copy["set_id"])
+    return True
+
+
 async def run_url_analysis(task_id: str, url: str,
-                           set_id: Optional[str] = None) -> None:
-    """Download then analyse. Progress spans both phases."""
+                           set_id: Optional[str] = None,
+                           force: bool = False) -> None:
+    """Download then analyse. Progress spans both phases.
+
+    First, unless re-analysing a set in place (`set_id`) or asked not to
+    (`force`), an analysis of the same media is reused (RFC #130).
+    """
     task = tasks.get(task_id)
     if task is None:
         return
@@ -460,6 +513,9 @@ async def run_url_analysis(task_id: str, url: str,
     try:
         tasks.update(task, status="downloading", stage="downloading", progress=1,
                      message="Resolving URL...")
+
+        if set_id is None and not force and await _reuse_existing(task, url):
+            return
 
         def on_download(pct: float, phase: str) -> None:
             # Downloading occupies the first 12% of the bar; analysis, which
@@ -482,7 +538,8 @@ async def run_url_analysis(task_id: str, url: str,
                            source_kind=media.extractor.lower(),
                            uploader=media.uploader,
                            quality=media.quality_label,
-                           set_id=set_id)
+                           set_id=set_id,
+                           source_key=media.source_key)
 
     except asyncio.CancelledError:
         discard_media(downloaded)
@@ -546,8 +603,11 @@ async def _run_inline(target, *args) -> None:
         task_id, path, title = args
         await target(task_id, Path(path), title)
     else:
-        task_id, url, set_id = args
-        await target(task_id, url, set_id=set_id)
+        # `force` arrived with RFC #130; a task persisted before it carries
+        # three arguments, and must still resume.
+        task_id, url, set_id, *rest = args
+        await target(task_id, url, set_id=set_id,
+                     force=bool(rest[0]) if rest else False)
 
 
 def discard_media(path: Optional[Path]) -> None:
@@ -653,7 +713,8 @@ async def analyze_url(request: URLRequest, user: Dict[str, Any] = Depends(curren
     task_id = str(uuid.uuid4())
     task = tasks.create(task_id, filename="Resolving...", source_url=url,
                         user_id=user["id"])
-    await dispatch(task, "analyze_url_job", task_id, url, replaces)
+    await dispatch(task, "analyze_url_job", task_id, url, replaces,
+                   bool(request.force))
     return {"task_id": task_id, "url": url, "replaces": replaces}
 
 
