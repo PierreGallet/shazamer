@@ -142,8 +142,8 @@ export default function ShareSet(props: {
           {/* The part worth being explicit about: they get their own copy, so
               nothing you do afterwards reaches them and nothing they do
               reaches you. */}
-          Whoever opens it gets their own copy — theirs to keep, star and
-          delete. Deleting yours does not touch theirs.
+          Whoever opens it gets their own copy, audio included — theirs to
+          keep, star and delete. Deleting yours does not touch theirs.
         </div>
 
         <Show when={error()}>

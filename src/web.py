@@ -1029,9 +1029,29 @@ async def peek_share(token: str):
     return details
 
 
+def _link_shared_audio(source: str, new_set_id: str) -> str:
+    """Give a claimed copy its own name for the sender's audio.
+
+    A hard link, like the dedupe of re-analysed sets: no bytes are copied,
+    each set can be deleted on its own, and the file goes with the last name.
+    Only audio this app owns is linked — a path outside the media and upload
+    folders is not followed. "" when it cannot be done, which the claim
+    reports rather than hides.
+    """
+    path = Path(source).resolve()
+    if not (path.is_relative_to(MEDIA_DIR.resolve())
+            or path.is_relative_to(UPLOAD_DIR.resolve())):
+        return ""
+    if not path.exists():
+        return ""
+    target = MEDIA_DIR / f"{new_set_id}{path.suffix}"
+    return str(target) if dedupe.link_to(path, target) else ""
+
+
 @app.post("/api/shares/{token}/claim")
 async def claim_share(token: str, user: Dict[str, Any] = Depends(current_user)):
-    result = await library.claim_share(token, user_id=user["id"])
+    result = await library.claim_share(token, user_id=user["id"],
+                                       link_audio=_link_shared_audio)
     if result is None:
         raise HTTPException(status_code=404,
                             detail="That invitation no longer points anywhere")

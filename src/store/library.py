@@ -20,7 +20,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from ..core.timecode import format_timestamp
 
@@ -1096,27 +1096,34 @@ class Library:
                 "from_name": row["from_name"],
                 "already_claimed": bool(row["claimed_at"])}
 
-    async def claim_share(self, token: str, *,
-                          user_id: str) -> Optional[Dict[str, Any]]:
+    async def claim_share(self, token: str, *, user_id: str,
+                          link_audio: Optional[Callable[[str, str], str]] = None
+                          ) -> Optional[Dict[str, Any]]:
         """Copy the shared set into `user_id`'s library.
 
         A copy rather than a grant of access: the recipient gets their own
         row, their own stars, and the right to delete it — and the sender
         cannot see what they do with it or take it back.
 
-        The audio is deliberately *not* copied. It is a byproduct kept so the
-        waveform can be scrubbed, it is swept on a timer anyway, and
-        duplicating a 69 MB file for every share would fill the disk to give
-        each person their own copy of the same bytes. The tracklist, the
-        waveform and the timings — everything the set actually is — come
-        across.
+        The audio comes along without its bytes being copied. `link_audio`
+        is given the source's audio path and the new set's id, and returns the
+        copy's own path — a hard link, so each set can be deleted on its own
+        and the file goes with the last of them. It used to be left behind,
+        on the grounds that set audio was swept on a timer; it is not any
+        more, and a copy that could not play was half a set.
+
+        Without `link_audio`, or when it returns "", the copy is made without
+        audio and the result says so (`audio: False`) — the tracklist is what
+        the set is, and it must not be lost to a file that could not follow.
 
         Claiming twice returns the copy already made rather than a second one.
         """
-        return await self._run(self._claim_share_sync, token, user_id)
+        return await self._run(self._claim_share_sync, token, user_id,
+                               link_audio)
 
-    def _claim_share_sync(self, token: str,
-                          user_id: str) -> Optional[Dict[str, Any]]:
+    def _claim_share_sync(self, token: str, user_id: str,
+                          link_audio: Optional[Callable[[str, str], str]] = None
+                          ) -> Optional[Dict[str, Any]]:
         import secrets
 
         with closing(self._connect()) as conn:
@@ -1144,9 +1151,14 @@ class Library:
             values = {k: source[k] for k in columns}
             values["user_id"] = user_id
             values["shared_by"] = share["from_name"] or ""
-            # Not the audio: see the docstring. The copy plays nothing until
-            # its owner re-analyses the source, which the UI offers.
             values["audio_path"] = ""
+            if link_audio is not None and source["audio_path"]:
+                try:
+                    values["audio_path"] = link_audio(
+                        source["audio_path"], new_id) or ""
+                except Exception:          # noqa: BLE001 - see docstring
+                    logger.warning("Audio for share %s did not follow the "
+                                   "copy", token, exc_info=True)
             values["created_at"] = _now()
             if "shared_from" in values:
                 values["shared_from"] = token
@@ -1173,7 +1185,8 @@ class Library:
                 (_now(), user_id, token))
             conn.commit()
             logger.info("Share %s copied to %s as %s", token, user_id, new_id)
-            return {"set_id": new_id, "from_name": share["from_name"]}
+            return {"set_id": new_id, "from_name": share["from_name"],
+                    "audio": bool(values["audio_path"])}
 
     # ── Watches ──────────────────────────────────────────────────────────
 

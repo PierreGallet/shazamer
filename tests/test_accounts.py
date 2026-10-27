@@ -415,9 +415,9 @@ async def test_a_shared_set_becomes_the_recipient_s_own(library):
     assert theirs["title"] == "A Night Out"
     assert len(theirs["tracks"]) == 1
     assert theirs["shared_by"] == "Alice"
-    assert not theirs["audio_path"], (
-        "the audio was copied; it is a byproduct swept on a timer and "
-        "duplicating it per share fills the disk")
+    # The store copies no bytes itself: the audio follows only through the
+    # `link_audio` the web layer passes (tests/test_sharing.py).
+    assert not theirs["audio_path"], "the store wrote an audio path itself"
 
     await library.delete_set("s1", user_id="alice")
     assert await library.get_set(claimed["set_id"], user_id="bob") is not None
