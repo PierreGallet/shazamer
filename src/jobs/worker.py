@@ -31,11 +31,12 @@ async def analyze_upload_job(ctx: Dict[str, Any], task_id: str, path: str,
 
 
 async def analyze_url_job(ctx: Dict[str, Any], task_id: str, url: str,
-                          set_id: Optional[str] = None) -> None:
+                          set_id: Optional[str] = None,
+                          force: bool = False) -> None:
     from src import web
 
     logger.info("Analysing %s for task %s", url, task_id)
-    await web.run_url_analysis(task_id, url, set_id=set_id)
+    await web.run_url_analysis(task_id, url, set_id=set_id, force=force)
 
 
 async def enrich_set_job(ctx: Dict[str, Any], set_id: str) -> Dict[str, int]:

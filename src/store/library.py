@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS sets (
     audio_path   TEXT DEFAULT '',
     shared_by    TEXT DEFAULT '',
     shared_from  TEXT DEFAULT '',
+    source_key   TEXT DEFAULT '',
+    reused_from  TEXT DEFAULT '',
     quality      TEXT DEFAULT '',
     duration     REAL DEFAULT 0,
     waveform     TEXT DEFAULT '[]',
@@ -238,6 +240,12 @@ class Library:
         # Which invitation produced this copy, so following the same link
         # twice returns the copy already made rather than a second one.
         ("sets", "shared_from", "TEXT DEFAULT ''"),
+        # What was analysed, as yt-dlp names it ("Youtube:<id>"), so the same
+        # media is found again whatever way its link was written (RFC #130).
+        ("sets", "source_key", "TEXT DEFAULT ''"),
+        # The set an analysis was reused from. Internal only: a reused copy
+        # never names whose analysis it was.
+        ("sets", "reused_from", "TEXT DEFAULT ''"),
         # The addressee said no thanks: out of their inbox, link still valid.
         ("shares", "dismissed_at", "TEXT"),
         # The sender took the invitation back. Copies already made stay.
@@ -391,6 +399,10 @@ class Library:
             if column not in existing:
                 logger.info("Adding %s.%s to the library", table, column)
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        # After the columns, not in SCHEMA: on a library older than the
+        # column, SCHEMA runs first and the index would name nothing.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sets_source_key"
+                     " ON sets(source_key)")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=15)
@@ -410,7 +422,8 @@ class Library:
                        *, user_id: str, source_url: str = "",
                        source_kind: str = "upload",
                        uploader: str = "", audio_path: str = "",
-                       quality: str = "", created_at: Optional[str] = None) -> None:
+                       quality: str = "", created_at: Optional[str] = None,
+                       source_key: str = "") -> None:
         """Store a set and its tracks, replacing any set with the same id.
 
         `created_at` defaults to now. It is overridable so an import can keep
@@ -420,11 +433,11 @@ class Library:
         async with self._lock:
             await self._run(self._save_set_sync, set_id, title, result,
                             source_url, source_kind, uploader, audio_path,
-                            quality, created_at, user_id)
+                            quality, created_at, user_id, source_key)
 
     def _save_set_sync(self, set_id, title, result, source_url, source_kind,
                        uploader, audio_path, quality, created_at=None,
-                       user_id="") -> None:
+                       user_id="", source_key="") -> None:
         with closing(self._connect()) as conn:
             # Scoped, so re-analysing an id cannot overwrite another account's
             # set of the same name — ids are ours, but an import supplies them.
@@ -433,12 +446,12 @@ class Library:
             conn.execute(
                 "INSERT INTO sets (id, title, source_url, source_kind, uploader,"
                 " audio_path, quality, duration, waveform, stats, created_at,"
-                " user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                " user_id, source_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (set_id, title, source_url, source_kind, uploader, audio_path,
                  quality, result.get("duration", 0),
                  json.dumps(result.get("waveform", [])),
                  json.dumps(result.get("stats", {})), created_at or _now(),
-                 user_id),
+                 user_id, source_key),
             )
             conn.executemany(
                 "INSERT INTO tracks (set_id, position, start, end, identified,"
@@ -521,9 +534,18 @@ class Library:
             starred = {r["track_key"] for r in conn.execute(
                 "SELECT track_key FROM crate WHERE user_id = ?",
                 (user_id,)).fetchall()}
+            # When the analysis was really run, for a reused copy: its own
+            # created_at is the moment it was copied. A date, never an owner.
+            origin = None
+            if "reused_from" in row.keys() and row["reused_from"]:
+                origin = conn.execute(
+                    "SELECT created_at FROM sets WHERE id = ?",
+                    (row["reused_from"],)).fetchone()
         data = _set_row(row)
         data["waveform"] = json.loads(row["waveform"] or "[]")
         data["tracks"] = [_track_row(t, starred) for t in tracks]
+        data["analysed_at"] = (origin["created_at"] if origin
+                               else data["created_at"])
         return data
 
     async def delete_set(self, set_id: str, *, user_id: str) -> bool:
@@ -1293,38 +1315,9 @@ class Library:
             if source is None:
                 return None             # the sender deleted it since
 
-            new_id = secrets.token_hex(8)
-            columns = [k for k in source.keys() if k != "id"]
-            values = {k: source[k] for k in columns}
-            values["user_id"] = user_id
-            values["shared_by"] = share["from_name"] or ""
-            values["audio_path"] = ""
-            if link_audio is not None and source["audio_path"]:
-                try:
-                    values["audio_path"] = link_audio(
-                        source["audio_path"], new_id) or ""
-                except Exception:          # noqa: BLE001 - see docstring
-                    logger.warning("Audio for share %s did not follow the "
-                                   "copy", token, exc_info=True)
-            values["created_at"] = _now()
-            if "shared_from" in values:
-                values["shared_from"] = token
-
-            names = ", ".join(["id"] + list(values))
-            marks = ", ".join(["?"] * (len(values) + 1))
-            conn.execute(f"INSERT INTO sets ({names}) VALUES ({marks})",
-                         (new_id, *values.values()))
-
-            rows = conn.execute("SELECT * FROM tracks WHERE set_id = ?"
-                                " ORDER BY position", (share["set_id"],)).fetchall()
-            if rows:
-                keep = [k for k in rows[0].keys() if k != "id"]
-                names = ", ".join(keep)
-                marks = ", ".join(["?"] * len(keep))
-                conn.executemany(
-                    f"INSERT INTO tracks ({names}) VALUES ({marks})",
-                    [tuple(new_id if k == "set_id" else r[k] for k in keep)
-                     for r in rows])
+            new_id, values = self._copy_set(
+                conn, source, user_id, link_audio=link_audio,
+                shared_by=share["from_name"] or "", shared_from=token)
 
             conn.execute(
                 "UPDATE shares SET claimed_at = ?, claimed_by = ?"
@@ -1334,6 +1327,124 @@ class Library:
             logger.info("Share %s copied to %s as %s", token, user_id, new_id)
             return {"set_id": new_id, "from_name": share["from_name"],
                     "audio": bool(values["audio_path"])}
+
+    def _copy_set(self, conn: sqlite3.Connection, source: sqlite3.Row,
+                  user_id: str, *, link_audio: Optional[Callable[[str, str], str]],
+                  shared_by: str = "", shared_from: str = "",
+                  reused_from: str = "") -> Tuple[str, Dict[str, Any]]:
+        """Copy one set and its tracks into `user_id`'s library.
+
+        Shared by claiming a share and by reusing an analysis: both give the
+        requester their own row, their own tracks and the audio under its own
+        name (a hard link from `link_audio`, or none). Not committed here; the
+        caller owns the transaction. Returns the new id and the row written.
+        """
+        import secrets
+
+        new_id = secrets.token_hex(8)
+        columns = [k for k in source.keys() if k != "id"]
+        values = {k: source[k] for k in columns}
+        values["user_id"] = user_id
+        values["shared_by"] = shared_by
+        values["audio_path"] = ""
+        values["created_at"] = _now()
+        if "shared_from" in values:
+            values["shared_from"] = shared_from
+        if "reused_from" in values:
+            values["reused_from"] = reused_from
+        if link_audio is not None and source["audio_path"]:
+            try:
+                values["audio_path"] = link_audio(
+                    source["audio_path"], new_id) or ""
+            except Exception:              # noqa: BLE001 - copy without it
+                logger.warning("Audio for %s did not follow the copy",
+                               source["id"], exc_info=True)
+
+        names = ", ".join(["id"] + list(values))
+        marks = ", ".join(["?"] * (len(values) + 1))
+        conn.execute(f"INSERT INTO sets ({names}) VALUES ({marks})",
+                     (new_id, *values.values()))
+
+        rows = conn.execute("SELECT * FROM tracks WHERE set_id = ?"
+                            " ORDER BY position", (source["id"],)).fetchall()
+        if rows:
+            keep = [k for k in rows[0].keys() if k != "id"]
+            conn.executemany(
+                f"INSERT INTO tracks ({', '.join(keep)})"
+                f" VALUES ({', '.join(['?'] * len(keep))})",
+                [tuple(new_id if k == "set_id" else r[k] for k in keep)
+                 for r in rows])
+        return new_id, values
+
+    # ── Reuse ────────────────────────────────────────────────────────────
+
+    async def find_by_source_key(self, key: str) -> Optional[str]:
+        """The newest original analysis of this media, from any account.
+
+        Originals only: a share copy or a reused copy is never an origin, so
+        a chain of reuses always leads back to an analysis that really ran.
+        """
+        return await self._run(self._find_by_source_key_sync, key)
+
+    def _find_by_source_key_sync(self, key: str) -> Optional[str]:
+        if not key:
+            return None
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT id FROM sets WHERE source_key = ? AND shared_from = ''"
+                " AND reused_from = '' ORDER BY created_at DESC LIMIT 1",
+                (key,)).fetchone()
+        return row["id"] if row else None
+
+    async def own_by_source_key(self, key: str, *,
+                                user_id: str) -> Optional[str]:
+        """A set of yours for this media already — yours, a copy, anything."""
+        return await self._run(self._own_by_source_key_sync, key, user_id)
+
+    def _own_by_source_key_sync(self, key: str, user_id: str) -> Optional[str]:
+        if not key:
+            return None
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT id FROM sets WHERE source_key = ? AND user_id = ?"
+                " ORDER BY created_at DESC LIMIT 1", (key, user_id)).fetchone()
+        return row["id"] if row else None
+
+    async def copy_for_reuse(self, origin_id: str, *, user_id: str,
+                             link_audio: Optional[Callable[[str, str], str]] = None
+                             ) -> Optional[Dict[str, Any]]:
+        """Give `user_id` their own copy of an analysis someone already ran.
+
+        Names nobody (`shared_by` stays empty); `reused_from` records the
+        origin for us, not for them. None if the origin is gone.
+        """
+        return await self._run(self._copy_for_reuse_sync, origin_id, user_id,
+                               link_audio)
+
+    def _copy_for_reuse_sync(self, origin_id, user_id,
+                             link_audio) -> Optional[Dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            source = conn.execute("SELECT * FROM sets WHERE id = ?",
+                                  (origin_id,)).fetchone()
+            if source is None:
+                return None
+            new_id, values = self._copy_set(
+                conn, source, user_id, link_audio=link_audio,
+                reused_from=origin_id)
+            conn.commit()
+        logger.info("Analysis %s reused for %s as %s", origin_id, user_id,
+                    new_id)
+        return {"set_id": new_id, "audio": bool(values["audio_path"])}
+
+    async def set_audio_path(self, set_id: str, path: str) -> None:
+        """Attach audio fetched after the fact to a set that had none."""
+        await self._run(self._set_audio_path_sync, set_id, path)
+
+    def _set_audio_path_sync(self, set_id: str, path: str) -> None:
+        with closing(self._connect()) as conn:
+            conn.execute("UPDATE sets SET audio_path = ? WHERE id = ?",
+                         (path, set_id))
+            conn.commit()
 
     # ── Watches ──────────────────────────────────────────────────────────
 
@@ -1450,6 +1561,9 @@ def _set_row(r: sqlite3.Row) -> Dict[str, Any]:
         # Who passed it on, when it came from somebody else. Guarded like the
         # rest: a database written before sharing existed has no column.
         "shared_by": r["shared_by"] if "shared_by" in keys else "",
+        "source_key": r["source_key"] if "source_key" in keys else "",
+        # Only whether, never from whom: see the reused_from migration.
+        "reused": bool(r["reused_from"]) if "reused_from" in keys else False,
         "track_count": r["track_count"] if "track_count" in keys else None,
         "identified_count": r["identified_count"] if "identified_count" in keys else None,
     }

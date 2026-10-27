@@ -62,6 +62,14 @@ class DownloadedMedia:
     format_note: str = ""
     abr: Optional[float] = None
     acodec: str = ""
+    # yt-dlp's own id for the media: a video, a track, one carousel slide.
+    # With the extractor it names the source whatever way the link was
+    # written, which is what reusing an analysis keys on (media_key).
+    media_id: str = ""
+
+    @property
+    def source_key(self) -> str:
+        return f"{self.extractor}:{self.media_id}" if self.media_id else ""
 
     @property
     def quality_label(self) -> str:
@@ -253,7 +261,45 @@ async def download_audio(url: str, dest_dir: Path, stem: str,
         format_note=info.get("format_note") or "",
         abr=info.get("abr"),
         acodec=info.get("acodec") or "",
+        media_id=str(info.get("id") or ""),
     )
+
+
+async def media_key(url: str, timeout: float = 60.0) -> Optional[str]:
+    """`extractor:id` for what downloading `url` would fetch, without fetching.
+
+    The same key `DownloadedMedia.source_key` stores after a download, so an
+    analysis can be found before paying for another one. None whenever it
+    cannot be known for sure: a failed lookup, a playlist, or an Instagram
+    carousel with no slide named — the download would take its first video,
+    which the metadata alone does not say. None only ever means "analyse as
+    usual".
+    """
+    slide = _instagram_slide(url) if "instagram.com" in url.lower() else None
+    try:
+        if slide:
+            cmd = _ytdlp_cmd() + [
+                "--dump-json", "--skip-download", "--no-warnings",
+                "--ignore-no-formats-error", "--playlist-items", str(slide),
+                url,
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            lines = [l for l in out.decode(errors="replace").splitlines()
+                     if l.strip()]
+            info = json.loads(lines[0]) if lines else {}
+        else:
+            info = await probe_url(url, timeout=timeout)
+    except (DownloadError, asyncio.TimeoutError, json.JSONDecodeError,
+            OSError) as exc:
+        logger.info("No media key for %s: %s", url, exc)
+        return None
+    if info.get("_type") == "playlist" or not info.get("id"):
+        return None
+    extractor = info.get("extractor_key") or ""
+    return f"{extractor}:{info['id']}" if extractor else None
 
 
 async def list_channel(url: str, limit: int = 50) -> List[dict]:
