@@ -174,6 +174,15 @@ def test_aioslsk_never_logs_below_warning():
     assert logging.getLogger("aioslsk").level == logging.WARNING
 
 
+def test_unreachable_peers_do_not_flood_the_log():
+    """Without a listening port, every peer behind a firewall that answers a
+    search fails to connect, logged as a warning with its IP: 257 lines in
+    40 minutes in production, for a normal outcome."""
+    network = logging.getLogger("aioslsk.network.network")
+    assert network.getEffectiveLevel() == logging.ERROR
+    assert not network.isEnabledFor(logging.WARNING)
+
+
 # ── Sessions (AC-2.1, 2.2, 2.4) ─────────────────────────────────────────────
 
 async def test_one_session_per_user_reused(sessions):
