@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.33.0](https://github.com/PierreGallet/shazamer/compare/v1.32.0...v1.33.0) (2026-10-27)
+
+
+### ✨ Features
+
+* **share:** suggest accounts while typing an address ([#129](https://github.com/PierreGallet/shazamer/issues/129)) ([daad988](https://github.com/PierreGallet/shazamer/commit/daad98837343bc1479d8d5939428ccb8792278be))
+
 ## [1.32.0](https://github.com/PierreGallet/shazamer/compare/v1.31.2...v1.32.0) (2026-10-27)
 
 
