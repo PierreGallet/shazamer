@@ -242,3 +242,147 @@ async def test_the_inbox_upgrades_an_existing_database(tmp_path):
     with sqlite3.connect(db) as conn:
         columns = {r[1] for r in conn.execute("PRAGMA table_info(shares)")}
     assert {"dismissed_at", "revoked_at"} <= columns
+
+
+# ── F3: the sender sees and controls ──────────────────────────────────────
+
+async def test_the_owner_lists_a_set_s_shares_with_their_state(client):
+    await _seed_set(client)
+    link = await _share(client)
+    addressed = await _share(client, email=BOB_EMAIL)
+    bob = await _session(client, BOB, BOB_EMAIL)
+    async with _As(client, bob):
+        await client.post(f"/api/shares/{addressed}/claim")
+
+    response = await client.get("/api/sets/s1/shares")
+    assert response.status_code == 200
+    rows = {r["token"]: r for r in response.json()}
+    assert rows[link]["to_email"] == "" and rows[link]["claims"] == 0
+    assert rows[addressed]["to_email"] == BOB_EMAIL
+    assert rows[addressed]["claims"] == 1
+    assert rows[addressed]["claimed_at"]
+
+
+async def test_only_the_owner_lists_a_set_s_shares(client):
+    await _seed_set(client)
+    await _share(client)
+    bob = await _session(client, BOB, BOB_EMAIL)
+    async with _As(client, bob):
+        assert (await client.get("/api/sets/s1/shares")).status_code == 404
+
+
+async def test_a_revoked_link_stops_working_and_copies_stay(client):
+    await _seed_set(client)
+    token = await _share(client)
+    bob = await _session(client, BOB, BOB_EMAIL)
+    async with _As(client, bob):
+        copy = (await client.post(f"/api/shares/{token}/claim")).json()
+
+    assert (await client.delete(f"/api/shares/{token}")).status_code == 200
+
+    assert (await client.get(f"/api/shares/{token}")).status_code == 404
+    eve = await _session(client, "eve-account", "eve@example.com")
+    async with _As(client, eve):
+        assert (await client.post(
+            f"/api/shares/{token}/claim")).status_code == 404
+    async with _As(client, bob):
+        assert (await client.get(
+            f"/api/sets/{copy['set_id']}")).status_code == 200
+
+
+async def test_a_revoked_share_leaves_the_inbox(client):
+    await _seed_set(client)
+    token = await _share(client, email=BOB_EMAIL)
+    await client.delete(f"/api/shares/{token}")
+    bob = await _session(client, BOB, BOB_EMAIL)
+    async with _As(client, bob):
+        assert await _incoming(client) == []
+
+
+async def test_only_the_sender_revokes(client):
+    await _seed_set(client)
+    token = await _share(client)
+    bob = await _session(client, BOB, BOB_EMAIL)
+    async with _As(client, bob):
+        assert (await client.delete(f"/api/shares/{token}")).status_code == 404
+    assert (await client.get(f"/api/shares/{token}")).status_code == 200
+
+
+async def test_an_addressed_share_is_for_its_addressee(client):
+    """Q-B: a link sent to one person is not a link for whoever finds it."""
+    await _seed_set(client)
+    token = await _share(client, email=BOB_EMAIL)
+    eve = await _session(client, "eve-account", "eve@example.com")
+
+    async with _As(client, eve):
+        response = await client.post(f"/api/shares/{token}/claim")
+    assert response.status_code == 403
+    assert "someone else" in response.json()["detail"]
+
+    bob = await _session(client, BOB, BOB_EMAIL)
+    async with _As(client, bob):
+        assert (await client.post(
+            f"/api/shares/{token}/claim")).status_code == 200
+
+
+async def test_a_link_share_is_open_to_anyone_holding_it(client):
+    await _seed_set(client)
+    token = await _share(client)
+    for user, email in ((BOB, BOB_EMAIL), ("eve-account", "eve@example.com")):
+        session = await _session(client, user, email)
+        async with _As(client, session):
+            assert (await client.post(
+                f"/api/shares/{token}/claim")).status_code == 200
+
+
+async def test_an_unclaimed_share_expires(client):
+    """Q-A: SHARE_TTL_DAYS after it was made, an unclaimed share is gone."""
+    import sqlite3
+
+    await _seed_set(client)
+    token = await _share(client, email=BOB_EMAIL)
+    with sqlite3.connect(client.web.library.path) as conn:
+        conn.execute("UPDATE shares SET created_at = '2020-01-01T00:00:00+00:00'"
+                     " WHERE token = ?", (token,))
+
+    assert (await client.get(f"/api/shares/{token}")).status_code == 404
+    bob = await _session(client, BOB, BOB_EMAIL)
+    async with _As(client, bob):
+        assert await _incoming(client) == []
+        assert (await client.post(
+            f"/api/shares/{token}/claim")).status_code == 404
+
+
+async def test_expiry_can_be_switched_off(client):
+    import sqlite3
+
+    client.web.library.share_ttl_days = 0
+    await _seed_set(client)
+    token = await _share(client)
+    with sqlite3.connect(client.web.library.path) as conn:
+        conn.execute("UPDATE shares SET created_at = '2020-01-01T00:00:00+00:00'"
+                     " WHERE token = ?", (token,))
+    assert (await client.get(f"/api/shares/{token}")).status_code == 200
+
+
+async def test_the_library_says_which_sets_are_shared(client):
+    """F4.4: a card can mark a shared set without opening it.
+
+    Counted in people, not links. The share dialog mints a link every time it
+    opens, so counting links would mark every set anyone ever looked at the
+    dialog of; an addressed share or a link somebody took is a person.
+    """
+    await _seed_set(client)
+    await _seed_set(client, set_id="s2")
+    await _share(client)                               # opened, never used
+    await _share(client, email=BOB_EMAIL)              # a person
+    taken = await _share(client)
+    eve = await _session(client, "eve-account", "eve@example.com")
+    async with _As(client, eve):
+        await client.post(f"/api/shares/{taken}/claim")  # a person
+    revoked = await _share(client, "s2", email=BOB_EMAIL)
+    await client.delete(f"/api/shares/{revoked}")
+
+    sets = {s["id"]: s for s in (await client.get("/api/sets")).json()}
+    assert sets["s1"]["share_count"] == 2
+    assert sets["s2"]["share_count"] == 0

@@ -721,3 +721,20 @@
   border-radius: 999px; background: var(--accent); color: #fff;
   font-family: var(--mono); font-size: 0.66rem; font-weight: 700;
 }
+
+/* "Share · 2": who already has it, on the button itself. */
+.share-count { font-family: var(--mono); font-weight: 600; opacity: 0.85; }
+.share-icon-btn { position: relative; }
+.share-dot {
+  position: absolute; top: 5px; right: 4px;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+}
+.share-people {
+  display: flex; flex-direction: column; gap: 0.35rem;
+  margin-top: 0.9rem; padding-top: 0.8rem; border-top: 1px solid var(--line);
+}
+.share-person { display: flex; align-items: center; gap: 0.6rem; }
+.share-person-who {
+  font-size: 0.82rem; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

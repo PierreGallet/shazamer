@@ -94,6 +94,8 @@ export interface SetStats {
 export interface SetSummary {
   /** Set when this copy came from somebody else. */
   shared_by?: string;
+  /** Invitations you made for this set that still stand. */
+  share_count?: number;
   id: string;
   title: string;
   source_url: string;
@@ -294,6 +296,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+export interface OutgoingShare {
+  token: string;
+  /** Empty for a link share. */
+  to_email: string;
+  created_at: string;
+  claimed_at: string | null;
+  claims: number;
+  dismissed: boolean;
+  revoked: boolean;
+  expired: boolean;
+}
+
 export interface IncomingShare {
   token: string;
   title: string;
@@ -354,7 +368,9 @@ export const api = {
       { method: "POST" }),
 
   shareSet: (setId: string, email?: string) =>
-    request<{ token: string; link: string; emailed: boolean }>(
+    request<{ token: string; link: string; emailed: boolean;
+              /** 0 when links do not expire. */
+              expires_in_days: number }>(
       `/api/sets/${setId}/share`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -372,6 +388,13 @@ export const api = {
     request<{ set_id: string; from_name?: string; already_yours?: boolean;
               audio?: boolean }>(
       `/api/shares/${encodeURIComponent(token)}/claim`, { method: "POST" }),
+
+  /** Who a set of yours was passed to, and what became of it. */
+  setShares: (setId: string) => request<OutgoingShare[]>(`/api/sets/${setId}/shares`),
+
+  revokeShare: (token: string) =>
+    request<{ revoked: boolean }>(
+      `/api/shares/${encodeURIComponent(token)}`, { method: "DELETE" }),
 
   /** Sets addressed to you, waiting to be taken or declined. */
   incomingShares: () => request<IncomingShare[]>("/api/shares/incoming"),

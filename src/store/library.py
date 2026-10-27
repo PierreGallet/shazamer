@@ -18,9 +18,9 @@ import logging
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..core.timecode import format_timestamp
 
@@ -201,6 +201,10 @@ def _now() -> str:
 @dataclass
 class Library:
     path: Path
+    # An invitation nobody has taken stops working after this many days; 0
+    # keeps it forever. Once claimed it no longer expires: the copy exists,
+    # and a link already used once is a link the sender meant.
+    share_ttl_days: int = 30
 
     def __post_init__(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -473,7 +477,13 @@ class Library:
                 "SELECT s.*,"
                 " (SELECT COUNT(*) FROM tracks t WHERE t.set_id = s.id) AS track_count,"
                 " (SELECT COUNT(*) FROM tracks t WHERE t.set_id = s.id"
-                "   AND t.identified = 1) AS identified_count"
+                "   AND t.identified = 1) AS identified_count,"
+                # People, not links: the dialog mints a link each time it
+                # opens, so only an address or a claim counts as someone.
+                " (SELECT COUNT(*) FROM shares h WHERE h.set_id = s.id"
+                "   AND h.from_user = s.user_id AND h.revoked_at IS NULL"
+                "   AND (h.to_email != '' OR EXISTS (SELECT 1 FROM sets c"
+                "        WHERE c.shared_from = h.token))) AS share_count"
                 " FROM sets s WHERE s.user_id = ?"
                 " ORDER BY s.created_at DESC LIMIT ?",
                 (user_id, limit),
@@ -482,6 +492,9 @@ class Library:
         for row in rows:
             item = _set_row(row)
             item.pop("audio_path", None)
+            # People this was passed to, so a card can say so without
+            # opening the set.
+            item["share_count"] = row["share_count"]
             summaries.append(item)
         return summaries
 
@@ -1059,6 +1072,21 @@ class Library:
 
     # ── Sharing ──────────────────────────────────────────────────────────
 
+    def _live_share_sql(self, alias: str = "s") -> Tuple[str, tuple]:
+        """The condition for an invitation that still works.
+
+        Not revoked, and either claimed already or younger than
+        `share_ttl_days`. A WHERE fragment rather than a Python check so the
+        inbox, the landing page and the claim all apply the same rule.
+        """
+        if self.share_ttl_days <= 0:
+            return f"{alias}.revoked_at IS NULL", ()
+        cutoff = (datetime.now(timezone.utc)
+                  - timedelta(days=self.share_ttl_days)
+                  ).isoformat(timespec="seconds")
+        return (f"{alias}.revoked_at IS NULL AND ({alias}.claimed_at IS NOT NULL"
+                f" OR {alias}.created_at >= ?)", (cutoff,))
+
     async def create_share(self, set_id: str, *, user_id: str,
                            from_name: str, to_email: str = "") -> Optional[str]:
         """Mint an invitation to copy one of your sets. Returns its token."""
@@ -1089,19 +1117,65 @@ class Library:
         return await self._run(self._peek_share_sync, token)
 
     def _peek_share_sync(self, token: str) -> Optional[Dict[str, Any]]:
+        live, live_args = self._live_share_sql()
         with closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT s.token, s.set_id, s.from_name, s.claimed_at,"
                 " t.title, t.duration,"
                 " (SELECT COUNT(*) FROM tracks WHERE set_id = t.id) AS track_count"
                 " FROM shares s JOIN sets t ON t.id = s.set_id"
-                " WHERE s.token = ?", (token,)).fetchone()
+                f" WHERE s.token = ? AND {live}", (token, *live_args)).fetchone()
         if row is None:
             return None
         return {"token": row["token"], "title": row["title"],
                 "duration": row["duration"], "track_count": row["track_count"],
                 "from_name": row["from_name"],
                 "already_claimed": bool(row["claimed_at"])}
+
+    async def list_shares(self, set_id: str, *,
+                          user_id: str) -> Optional[List[Dict[str, Any]]]:
+        """Every invitation made for one of your sets, and what became of it.
+
+        None when the set is not yours. Revoked and expired ones are listed
+        too, marked as such, so the sender can see that a link is dead
+        rather than wonder why nobody opened it.
+        """
+        if await self.get_set(set_id, user_id=user_id) is None:
+            return None
+        return await self._run(self._list_shares_sync, set_id, user_id)
+
+    def _list_shares_sync(self, set_id: str,
+                          user_id: str) -> List[Dict[str, Any]]:
+        live, live_args = self._live_share_sql()
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT s.token, s.to_email, s.created_at, s.claimed_at,"
+                " s.dismissed_at, s.revoked_at,"
+                f" CASE WHEN {live} THEN 1 ELSE 0 END AS live,"
+                " (SELECT COUNT(*) FROM sets c WHERE c.shared_from = s.token)"
+                "   AS claims"
+                " FROM shares s WHERE s.set_id = ? AND s.from_user = ?"
+                " ORDER BY s.created_at DESC",
+                (*live_args, set_id, user_id)).fetchall()
+        return [{
+            "token": r["token"], "to_email": r["to_email"] or "",
+            "created_at": r["created_at"], "claimed_at": r["claimed_at"],
+            "claims": r["claims"], "dismissed": bool(r["dismissed_at"]),
+            "revoked": bool(r["revoked_at"]),
+            "expired": not r["revoked_at"] and not r["live"],
+        } for r in rows]
+
+    async def revoke_share(self, token: str, *, user_id: str) -> bool:
+        """Take an invitation back. The sender only; copies made stay."""
+        return await self._run(self._revoke_share_sync, token, user_id)
+
+    def _revoke_share_sync(self, token: str, user_id: str) -> bool:
+        with closing(self._connect()) as conn:
+            cursor = conn.execute(
+                "UPDATE shares SET revoked_at = COALESCE(revoked_at, ?)"
+                " WHERE token = ? AND from_user = ?", (_now(), token, user_id))
+            conn.commit()
+            return cursor.rowcount > 0
 
     async def incoming_shares(self, email: str, *,
                               user_id: str) -> List[Dict[str, Any]]:
@@ -1118,6 +1192,7 @@ class Library:
                               user_id: str) -> List[Dict[str, Any]]:
         if not email:
             return []
+        live, live_args = self._live_share_sql()
         with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT s.token, s.from_name, s.created_at, t.title,"
@@ -1126,11 +1201,11 @@ class Library:
                 "   AS track_count"
                 " FROM shares s JOIN sets t ON t.id = s.set_id"
                 " WHERE s.to_email = ? AND s.from_user != ?"
-                "   AND s.dismissed_at IS NULL AND s.revoked_at IS NULL"
+                f"   AND s.dismissed_at IS NULL AND {live}"
                 "   AND NOT EXISTS (SELECT 1 FROM sets c WHERE c.user_id = ?"
                 "                   AND c.shared_from = s.token)"
                 " ORDER BY s.created_at DESC",
-                (email, user_id, user_id)).fetchall()
+                (email, user_id, *live_args, user_id)).fetchall()
         return [{k: r[k] for k in r.keys()} for r in rows]
 
     async def dismiss_share(self, token: str, *, email: str) -> bool:
@@ -1153,6 +1228,7 @@ class Library:
             return cursor.rowcount > 0
 
     async def claim_share(self, token: str, *, user_id: str,
+                          email: Optional[str] = None,
                           link_audio: Optional[Callable[[str, str], str]] = None
                           ) -> Optional[Dict[str, Any]]:
         """Copy the shared set into `user_id`'s library.
@@ -1173,12 +1249,19 @@ class Library:
         the set is, and it must not be lost to a file that could not follow.
 
         Claiming twice returns the copy already made rather than a second one.
+
+        A share addressed to someone is theirs to claim: with `email` given
+        and different from the address, the result is `{"elsewhere": True}`
+        and nothing is copied. A link share, with no address, is for whoever
+        holds it. Revoked or expired, it is None, like a token that never
+        existed.
         """
         return await self._run(self._claim_share_sync, token, user_id,
-                               link_audio)
+                               link_audio, email)
 
     def _claim_share_sync(self, token: str, user_id: str,
-                          link_audio: Optional[Callable[[str, str], str]] = None
+                          link_audio: Optional[Callable[[str, str], str]] = None,
+                          email: Optional[str] = None
                           ) -> Optional[Dict[str, Any]]:
         import secrets
 
@@ -1196,6 +1279,14 @@ class Library:
                     conn, "sets", "shared_from") else None
             if existing:
                 return {"set_id": existing["id"], "already_claimed": True}
+
+            live, live_args = self._live_share_sql("shares")
+            if conn.execute(f"SELECT 1 FROM shares WHERE token = ? AND {live}",
+                            (token, *live_args)).fetchone() is None:
+                return None             # revoked, or expired unclaimed
+            if (email is not None and share["to_email"]
+                    and share["to_email"] != email):
+                return {"elsewhere": True}
 
             source = conn.execute("SELECT * FROM sets WHERE id = ?",
                                   (share["set_id"],)).fetchone()

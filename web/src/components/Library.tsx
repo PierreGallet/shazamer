@@ -199,7 +199,8 @@ export default function Library(props: Props) {
                       set underneath the dialog. */}
                   <div class="set-card-share"
                        onClick={(e) => e.stopPropagation()}>
-                    <ShareSet setId={item.id} title={item.title} variant="icon" />
+                    <ShareSet setId={item.id} title={item.title} variant="icon"
+                              count={item.share_count} />
                   </div>
 
                   <div class="set-card-meta">
