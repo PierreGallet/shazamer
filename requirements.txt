@@ -27,3 +27,14 @@ cffi>=1.0
 # so this floor will need raising again.
 yt-dlp>=2026.7.4
 sentry-sdk[fastapi]>=2.20.0,<3.0.0
+# A user's own Soulseek account (RFC #137). aioslsk is an in-process client,
+# no daemon: one session per user, in the API process. GPL-3.0-or-later.
+# 1.5.0, not 1.6+: from 1.6 it needs pydantic>=2.12, and shazamio 0.7.0
+# pins pydantic==2.9.2.
+aioslsk==1.5.0
+# Their Soulseek password is stored encrypted (Fernet), never in clear.
+cryptography==50.0.1
+# What aioslsk pulls in, pinned: left open, a build takes whatever was
+# released this morning.
+pydantic-settings==2.15.0
+async-upnp-client==0.44.0
