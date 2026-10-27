@@ -5,7 +5,7 @@
 <h1 align="center">Shazamer</h1>
 
 <p align="center">
-  <b>Identify every track in a DJ set, see it on the waveform, and go find the records.</b>
+  <b>Identify every track in a playlist, see it on the waveform, and go find the records.</b>
 </p>
 
 <p align="center">
@@ -25,7 +25,8 @@
   <img src="docs/screenshot-set.png" alt="A DJ set in Shazamer: the waveform with one block per identified track, and the timestamped tracklist with BPM and key below" width="100%" />
 </p>
 
-Paste a mix from YouTube, SoundCloud or Instagram, or upload the file.
+Paste a DJ set, a mix or any playlist from YouTube, SoundCloud or Instagram,
+or upload the file.
 Shazamer gives you back a timestamped tracklist with BPM and key, drawn on a
 waveform you can scrub through, and every track links to where you can buy it.
 
