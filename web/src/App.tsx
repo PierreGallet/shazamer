@@ -1,5 +1,5 @@
 import { Router, Route, Navigate, useNavigate, useParams, useLocation, A } from "@solidjs/router";
-import { For, Show, createResource, createSignal, onCleanup, type ParentProps } from "solid-js";
+import { For, Show, createEffect, createResource, createSignal, onCleanup, type ParentProps } from "solid-js";
 import Analyze from "./components/Analyze";
 import Crate from "./components/Crate";
 import Downloads from "./components/Downloads";
@@ -10,6 +10,7 @@ import { SignIn } from "./components/SignIn";
 import Profile from "./components/Profile";
 import SharedSet from "./components/SharedSet";
 import { api } from "./lib/api";
+import { inbox } from "./lib/inbox";
 
 /**
  * Routes, so the app has addresses.
@@ -52,6 +53,15 @@ function Shell(props: ParentProps) {
 
   // Keep the last good value while a poll is in flight, so the pill does not
   // blink out and back on every refresh.
+  // Shell renders only once signed in, so this is the first moment the inbox
+  // can be asked — wherever the app was opened, since the badge is in the
+  // nav. Again on every page change, so a share sent while the tab was open
+  // does not wait for a reload. One small indexed query.
+  createEffect(() => {
+    void location.pathname;
+    inbox.refresh();
+  });
+
   const running = () => active.latest ?? [];
   const onItsPage = () => location.pathname.startsWith("/analyzing/");
 
@@ -90,6 +100,16 @@ function Shell(props: ParentProps) {
               {item.label}
               <Show when={item.href === "/library" && sets()?.length}>
                 <span class="nav-count">{sets()!.length}</span>
+              </Show>
+              {/* Sets sent to you and not taken yet. A dot with a number,
+                  in the accent, because the plain count beside it is only
+                  how many sets you already have. */}
+              <Show when={item.href === "/library"
+                          && (inbox.shares() ?? []).length > 0}>
+                <span class="nav-inbox"
+                      title="Shared with you, waiting in your library">
+                  {inbox.shares()!.length}
+                </span>
               </Show>
             </A>
           ))}

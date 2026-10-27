@@ -172,10 +172,13 @@ CREATE TABLE IF NOT EXISTS shares (
     to_email    TEXT DEFAULT '',
     created_at  TEXT NOT NULL,
     claimed_at  TEXT,
-    claimed_by  TEXT
+    claimed_by  TEXT,
+    dismissed_at TEXT,
+    revoked_at  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_shares_set ON shares(set_id);
+CREATE INDEX IF NOT EXISTS idx_shares_to_email ON shares(to_email);
 
 CREATE TABLE IF NOT EXISTS watches (
     id           TEXT PRIMARY KEY,
@@ -231,6 +234,10 @@ class Library:
         # Which invitation produced this copy, so following the same link
         # twice returns the copy already made rather than a second one.
         ("sets", "shared_from", "TEXT DEFAULT ''"),
+        # The addressee said no thanks: out of their inbox, link still valid.
+        ("shares", "dismissed_at", "TEXT"),
+        # The sender took the invitation back. Copies already made stay.
+        ("shares", "revoked_at", "TEXT"),
         # What the downloaded file turns out to be, measured from the audio
         # rather than from the mix it was heard in. The tempo of a record and
         # the tempo the DJ played it at are both true and they are not the
@@ -1095,6 +1102,55 @@ class Library:
                 "duration": row["duration"], "track_count": row["track_count"],
                 "from_name": row["from_name"],
                 "already_claimed": bool(row["claimed_at"])}
+
+    async def incoming_shares(self, email: str, *,
+                              user_id: str) -> List[Dict[str, Any]]:
+        """Addressed shares waiting for whoever owns `email`.
+
+        Matched on the address when asked, not stored against an account when
+        sent: the account may not exist yet, and the one production share
+        addressed to someone was sent two weeks before they signed up. The two
+        stores are separate files, so there is no user id to join on anyway.
+        """
+        return await self._run(self._incoming_shares_sync, email, user_id)
+
+    def _incoming_shares_sync(self, email: str,
+                              user_id: str) -> List[Dict[str, Any]]:
+        if not email:
+            return []
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT s.token, s.from_name, s.created_at, t.title,"
+                " t.duration,"
+                " (SELECT COUNT(*) FROM tracks WHERE set_id = t.id)"
+                "   AS track_count"
+                " FROM shares s JOIN sets t ON t.id = s.set_id"
+                " WHERE s.to_email = ? AND s.from_user != ?"
+                "   AND s.dismissed_at IS NULL AND s.revoked_at IS NULL"
+                "   AND NOT EXISTS (SELECT 1 FROM sets c WHERE c.user_id = ?"
+                "                   AND c.shared_from = s.token)"
+                " ORDER BY s.created_at DESC",
+                (email, user_id, user_id)).fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+
+    async def dismiss_share(self, token: str, *, email: str) -> bool:
+        """Take an addressed share out of its addressee's inbox.
+
+        Declining, not revoking: the link keeps working, because only the
+        sender can take it back. False when it was not addressed to `email`,
+        so nobody can clear someone else's inbox.
+        """
+        return await self._run(self._dismiss_share_sync, token, email)
+
+    def _dismiss_share_sync(self, token: str, email: str) -> bool:
+        if not email:
+            return False
+        with closing(self._connect()) as conn:
+            cursor = conn.execute(
+                "UPDATE shares SET dismissed_at = COALESCE(dismissed_at, ?)"
+                " WHERE token = ? AND to_email = ?", (_now(), token, email))
+            conn.commit()
+            return cursor.rowcount > 0
 
     async def claim_share(self, token: str, *, user_id: str,
                           link_audio: Optional[Callable[[str, str], str]] = None

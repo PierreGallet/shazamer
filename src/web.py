@@ -1013,6 +1013,27 @@ async def share_set(set_id: str, request: ShareRequest,
     return {"token": token, "link": link, "emailed": sent}
 
 
+# Before /api/shares/{token}, which would otherwise take "incoming" for a token.
+@app.get("/api/shares/incoming")
+async def incoming_shares(user: Dict[str, Any] = Depends(current_user)):
+    """Sets addressed to you that you have not taken or declined yet.
+
+    Email is how a share used to reach anyone, and a mail that is filtered,
+    missed, or sent before the account existed lost it for good. This is the
+    same invitation, waiting in the app.
+    """
+    return await library.incoming_shares(
+        normalise_email(user.get("email") or ""), user_id=user["id"])
+
+
+@app.post("/api/shares/{token}/dismiss")
+async def dismiss_share(token: str, user: Dict[str, Any] = Depends(current_user)):
+    if not await library.dismiss_share(
+            token, email=normalise_email(user.get("email") or "")):
+        raise HTTPException(status_code=404, detail="Not a share sent to you")
+    return {"dismissed": True}
+
+
 @app.get("/api/shares/{token}")
 async def peek_share(token: str):
     """What is behind an invitation. Deliberately open.

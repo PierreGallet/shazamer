@@ -703,3 +703,21 @@
   border-color: color-mix(in srgb, var(--warn, #d97706) 38%, transparent);
   color: var(--warn, #d97706);
 }
+
+/* Sets someone sent you, above your own. Same card shape as the library so
+   it reads as "these are sets", with the accent edge saying "and new". */
+.shared-inbox { margin-bottom: 2.25rem; }
+.shared-inbox-card {
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: 0.8rem 1rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+}
+.nav-inbox {
+  margin-left: 0.35rem; min-width: 1.1rem; height: 1.1rem; padding: 0 0.3rem;
+  display: inline-grid; place-items: center;
+  border-radius: 999px; background: var(--accent); color: #fff;
+  font-family: var(--mono); font-size: 0.66rem; font-weight: 700;
+}

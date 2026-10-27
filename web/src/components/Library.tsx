@@ -1,6 +1,7 @@
 import { A } from "@solidjs/router";
 import { For, Show, createEffect, createResource, createSignal } from "solid-js";
 import ShareSet from "./ShareSet";
+import SharedWithYou from "./SharedWithYou";
 import { ShareIcon } from "./icons";
 import type { LibraryTrack } from "../lib/api";
 import { api, formatDuration } from "../lib/api";
@@ -94,6 +95,7 @@ export default function Library(props: Props) {
           )}
         </Show>
       </dialog>
+      <SharedWithYou onOpen={props.onOpen} onTaken={refetch} />
       <Show when={recurring() && recurring()!.length > 0}>
         <section class="stack" style={{ "margin-bottom": "2.25rem" }}>
           <div class="row">

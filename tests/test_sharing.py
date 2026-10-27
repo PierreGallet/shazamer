@@ -138,3 +138,107 @@ async def test_a_copy_is_still_made_when_the_audio_cannot_follow(client):
     copy = await client.web.library.get_set(claimed["set_id"], user_id=BOB)
     assert copy["title"] == "A Night Out"
     assert not copy["audio_path"]
+
+
+# ── F1: the inbox ──────────────────────────────────────────────────────────
+
+async def _incoming(client):
+    response = await client.get("/api/shares/incoming")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+async def test_an_addressed_share_waits_in_the_recipient_s_inbox(client):
+    """The production case: the mail went out, the person never saw it."""
+    await _seed_set(client)
+    token = await _share(client, email=BOB_EMAIL)
+    bob = await _session(client, BOB, BOB_EMAIL)
+
+    async with _As(client, bob):
+        inbox = await _incoming(client)
+
+    assert [s["token"] for s in inbox] == [token]
+    assert inbox[0]["title"] == "A Night Out"
+    assert inbox[0]["track_count"] == 1
+
+
+async def test_a_share_sent_before_the_account_existed_shows_up(client):
+    """Matched on the email at read time, so signing up later still finds it."""
+    await _seed_set(client)
+    token = await _share(client, email=BOB_EMAIL)
+
+    bob = await _session(client, BOB, BOB_EMAIL)     # the account comes after
+    async with _As(client, bob):
+        assert [s["token"] for s in await _incoming(client)] == [token]
+
+
+async def test_the_address_is_matched_whatever_its_case(client):
+    await _seed_set(client)
+    await _share(client, email="Bob@Example.com")
+    bob = await _session(client, BOB, BOB_EMAIL)
+    async with _As(client, bob):
+        assert len(await _incoming(client)) == 1
+
+
+async def test_claimed_and_dismissed_shares_leave_the_inbox(client):
+    await _seed_set(client)
+    await _seed_set(client, set_id="s2")
+    taken = await _share(client, email=BOB_EMAIL)
+    declined = await _share(client, "s2", email=BOB_EMAIL)
+    bob = await _session(client, BOB, BOB_EMAIL)
+
+    async with _As(client, bob):
+        assert (await client.post(f"/api/shares/{taken}/claim")).status_code == 200
+        response = await client.post(f"/api/shares/{declined}/dismiss")
+        assert response.status_code == 200
+        assert await _incoming(client) == []
+
+
+async def test_dismissing_is_not_revoking(client):
+    """Declining hides it from the inbox; the link itself still works."""
+    await _seed_set(client)
+    token = await _share(client, email=BOB_EMAIL)
+    bob = await _session(client, BOB, BOB_EMAIL)
+
+    async with _As(client, bob):
+        await client.post(f"/api/shares/{token}/dismiss")
+        claimed = await client.post(f"/api/shares/{token}/claim")
+    assert claimed.status_code == 200
+
+
+async def test_nobody_else_sees_or_dismisses_someone_s_inbox(client):
+    await _seed_set(client)
+    token = await _share(client, email=BOB_EMAIL)
+    eve = await _session(client, "eve-account", "eve@example.com")
+
+    async with _As(client, eve):
+        assert await _incoming(client) == []
+        response = await client.post(f"/api/shares/{token}/dismiss")
+    assert response.status_code == 404
+
+
+async def test_a_link_share_never_lands_in_an_inbox(client):
+    await _seed_set(client)
+    await _share(client)
+    bob = await _session(client, BOB, BOB_EMAIL)
+    async with _As(client, bob):
+        assert await _incoming(client) == []
+
+
+async def test_the_inbox_upgrades_an_existing_database(tmp_path):
+    """The new columns must reach a library created before them."""
+    import sqlite3
+
+    from src.store.library import Library
+
+    db = tmp_path / "old.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE shares (token TEXT PRIMARY KEY, set_id TEXT"
+                     " NOT NULL, from_user TEXT NOT NULL, from_name TEXT"
+                     " DEFAULT '', to_email TEXT DEFAULT '', created_at TEXT"
+                     " NOT NULL, claimed_at TEXT, claimed_by TEXT)")
+    Library(db)
+    Library(db)                                       # and twice is harmless
+    with sqlite3.connect(db) as conn:
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(shares)")}
+    assert {"dismissed_at", "revoked_at"} <= columns
