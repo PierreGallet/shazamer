@@ -31,6 +31,31 @@ Two facts about the network that are not optional:
   you offer back what you have taken — which is why downloads are kept for six
   months rather than the fortnight set audio gets.
 
+### Your own account
+
+Everyone on an instance shares the account slskd logs in with, within limits
+that keep it from being banned: 20 searches every 220 seconds for everyone,
+and per person 30 searches an hour and 20 downloads an hour, 60 a day.
+
+In **Profile → Soulseek** you can enter your own account instead. From then on
+your searches and downloads go through it, and only through it:
+
+- **No fallback.** If your account fails — a changed password, a ban — you see
+  that, rather than being moved back onto the shared account.
+- **One session per account still applies.** While Shazamer is using your
+  account, your own Soulseek app is logged out, and the other way round. The
+  session closes after five idle minutes so your app can log back in. A
+  dedicated account avoids the tug of war.
+- **Your own limits.** Your searches take nothing from the shared budget. They
+  are still spaced five seconds apart and capped at 30 an hour, so going
+  through Shazamer does not get your account banned either.
+- **The password is checked, then stored encrypted.** Saving logs in once to
+  check it. The password is never shown again or sent back by the API.
+- **Nothing is shared from your account.** A download on it runs on the
+  server; a restart interrupts it, and you fetch it again.
+
+It works on an instance with no slskd at all, too.
+
 ### Choosing a candidate
 
 Pressing **Get** searches and shows the best five rather than picking blind,

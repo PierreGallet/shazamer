@@ -166,6 +166,37 @@ _slskd.QUOTA = SOULSEEK_QUOTA
 # library.db costs them their work.
 accounts = Accounts(DATA_DIR / "accounts.db")
 current_user_optional, current_user = make_dependencies(accounts)
+
+# A user's own Soulseek account (RFC #137): credentials beside the accounts
+# they belong to, sessions held by this process only — the worker never opens
+# one, since the server evicts a second login of the same account.
+from src.acquire.own_soulseek import (OwnSoulseekClient, OwnSoulseekError,
+                                      OwnSoulseekSessions)
+from src.store.soulseek_credentials import LOST_KEY, SoulseekCredentials
+soulseek_credentials = SoulseekCredentials(DATA_DIR / "accounts.db",
+                                           key_path=DATA_DIR / "soulseek.key")
+OWN_SOULSEEK = OwnSoulseekSessions(
+    DATA_DIR / "own-soulseek", on_login=soulseek_credentials.note_ok,
+    on_failure=soulseek_credentials.note_error)
+# Own-account downloads run here rather than in the worker; held so a task is
+# not collected while it runs.
+_own_downloads: set = set()
+
+
+async def soulseek_for(user_id: str):
+    """The client this user's Soulseek requests go through.
+
+    Their own account if they saved one, the shared slskd otherwise — and no
+    fallback between the two: an own account that fails says so.
+    """
+    credentials = await soulseek_credentials.get(user_id)
+    if credentials is not None:
+        return OwnSoulseekClient(OWN_SOULSEEK, user_id, credentials,
+                                 quota=SOULSEEK_QUOTA)
+    if await soulseek_credentials.has(user_id):
+        raise OwnSoulseekError(LOST_KEY)
+    return SlskdClient()
+
 tasks = TaskManager(TMP_DIR / "tasks")
 
 
@@ -275,7 +306,15 @@ async def lifespan(app: FastAPI):
     if swept:
         logger.info("Swept %d media file(s) past the %d-day window",
                     swept, KEEP_AUDIO_DAYS)
+    # Downloads on an own Soulseek account ran in this process, so a restart
+    # ended them; left alone, their rows would say "downloading" forever.
+    stale = await library.fail_unfinished_downloads(
+        await soulseek_credentials.user_ids(),
+        "Interrupted by a server restart. Fetch it again.")
+    if stale:
+        logger.info("Marked %d own-account download(s) interrupted", stale)
     yield
+    await OWN_SOULSEEK.close_all()
 
 
 # /docs belongs to the written documentation, which people read; the
@@ -1013,6 +1052,58 @@ async def patch_profile(request: ProfileRequest,
     return await accounts.profile(user["id"])
 
 
+class SoulseekCredentialsRequest(BaseModel):
+    username: str
+    password: str
+
+
+# Each save logs in to Soulseek once: a handful is a person retyping a
+# password, more is someone using this to test passwords against the server.
+soulseek_login_limiter = RateLimiter(limit=5, window_seconds=600)
+
+
+@app.get("/api/profile/soulseek")
+async def get_soulseek_account(user: Dict[str, Any] = Depends(current_user)):
+    """Their own Soulseek account, if saved. Never the password."""
+    return await soulseek_credentials.describe(user["id"])
+
+
+@app.put("/api/profile/soulseek")
+async def put_soulseek_account(request: SoulseekCredentialsRequest,
+                               user: Dict[str, Any] = Depends(current_user)):
+    """Save their own Soulseek account, once a login with it succeeds.
+
+    Checked before it is stored: a wrong password found at the first
+    download, an hour later, is a worse place to learn it.
+    """
+    username = request.username.strip()
+    if not username or not request.password:
+        raise HTTPException(status_code=400,
+                            detail="A Soulseek username and password are needed.")
+    if len(username) > 64 or len(request.password) > 128:
+        raise HTTPException(status_code=400, detail="That is too long.")
+    if not soulseek_login_limiter.allow(user["id"]):
+        raise HTTPException(status_code=429,
+                            detail="Too many attempts — wait ten minutes.")
+    from src.store.soulseek_credentials import Credentials
+
+    try:
+        await OWN_SOULSEEK.verify(user["id"],
+                                  Credentials(username, request.password))
+    except OwnSoulseekError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    await soulseek_credentials.save(user["id"], username, request.password)
+    return await soulseek_credentials.describe(user["id"])
+
+
+@app.delete("/api/profile/soulseek", status_code=204)
+async def delete_soulseek_account(user: Dict[str, Any] = Depends(current_user)):
+    """Forget it: back to the shared account, if this server has one."""
+    await OWN_SOULSEEK.close(user["id"])
+    await soulseek_credentials.forget(user["id"])
+    return Response(status_code=204)
+
+
 @app.post("/api/profile/email")
 async def request_email_change(request: EmailChangeRequest, http: Request,
                                user: Dict[str, Any] = Depends(current_user)):
@@ -1570,15 +1661,25 @@ async def star_track(request: StarRequest, user: Dict[str, Any] = Depends(curren
 @app.get("/api/acquire/sources")
 async def acquisition_sources(artist: str = "", title: str = "", isrc: str = "",
                               user: Dict[str, Any] = Depends(current_user)):
-    sources = acquire_resolve.resolve(
-        artist, title, isrc=isrc,
-        soulseek_configured=acquire_resolve.soulseek_configured())
+    # Per person: an own Soulseek account enables it even where the server
+    # has no slskd.
+    available = (acquire_resolve.soulseek_configured()
+                 or await soulseek_credentials.has(user["id"]))
+    sources = acquire_resolve.resolve(artist, title, isrc=isrc,
+                                      soulseek_configured=available)
     return {"sources": [s.to_dict() for s in sources],
-            "soulseek_configured": acquire_resolve.soulseek_configured()}
+            "soulseek_configured": available}
 
 
 @app.get("/api/acquire/soulseek/status")
 async def soulseek_status(user: Dict[str, Any] = Depends(current_user)):
+    own = await soulseek_credentials.describe(user["id"])
+    if own["configured"] or own["last_error"] == LOST_KEY:
+        # Not logged in just to answer: that would evict the user's own
+        # client for a status check. The last outcome stands in for it.
+        return {"configured": own["configured"],
+                "reachable": own["configured"] and not own["last_error"],
+                "own_account": own["username"], "hint": own["last_error"]}
     client = SlskdClient()
     if not client.configured:
         return {"configured": False, "reachable": False,
@@ -1592,7 +1693,8 @@ async def soulseek_search(request: SoulseekSearchRequest, user: Dict[str, Any] =
     if not query.strip():
         raise HTTPException(status_code=400, detail="Nothing to search for")
     try:
-        candidates = await SlskdClient().search(query, user_id=user["id"])
+        client = await soulseek_for(user["id"])
+        candidates = await client.search(query, user_id=user["id"])
     except SlskdError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     # Capped so a popular record does not ship a thousand rows to the
@@ -1612,9 +1714,12 @@ async def soulseek_download(request: SoulseekDownloadRequest, user: Dict[str, An
         extension=request.filename.rsplit(".", 1)[-1].lower(), bitrate=None,
         sample_rate=None, bit_depth=None, length=None, queue_length=0,
         free_slot=False, upload_speed=0, score=0.0)
-    SOULSEEK_QUOTA.reserve_download(user["id"])
     try:
-        return await SlskdClient().enqueue(candidate)
+        client = await soulseek_for(user["id"])
+        if isinstance(client, SlskdClient):
+            # The shared account's budget; an own account spends its own.
+            SOULSEEK_QUOTA.reserve_download(user["id"])
+        return await client.enqueue(candidate)
     except SlskdError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
@@ -1633,7 +1738,8 @@ async def soulseek_transfer(username: str, filename: str,
     long enough ago to be swept.
     """
     try:
-        state = await SlskdClient().transfer_state(username, filename)
+        client = await soulseek_for(user["id"])
+        state = await client.transfer_state(username, filename)
     except SlskdError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     if state is None:
@@ -1674,8 +1780,9 @@ async def acquire_candidates(artist: str, title: str,
     if not (artist and title):
         raise HTTPException(status_code=400, detail="Artist and title required")
     try:
+        client = await soulseek_for(user["id"])
         return await rank_candidates(artist, title, limit=limit,
-                                     user_id=user["id"])
+                                     client=client, user_id=user["id"])
     except SlskdError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
@@ -1692,6 +1799,30 @@ async def acquire_track_endpoint(request: AcquireRequest,
     if not (request.key and request.artist and request.title):
         raise HTTPException(status_code=400,
                             detail="A track key, artist and title are required")
+    meta = {"label": request.label, "year": request.year,
+            "album": request.album, "genre": request.genre}
+
+    try:
+        client = await soulseek_for(user["id"])
+    except SlskdError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    if isinstance(client, OwnSoulseekClient):
+        # Their own account: here, not in the worker, which must never log
+        # it in a second time. Not counted against the shared budget.
+        from src.acquire.runner import acquire_track
+        from src.identify.shazam import ShazamIdentifier
+
+        download_id = await library.start_download(
+            request.key, request.artist, request.title, user_id=user["id"])
+
+        task = asyncio.create_task(acquire_track(
+            library, DOWNLOAD_DIR, request.key, request.artist, request.title,
+            download_id=download_id, meta=meta, chosen=request.chosen,
+            client=client, identifier=ShazamIdentifier(concurrency=1)))
+        _own_downloads.add(task)
+        task.add_done_callback(_own_downloads.discard)
+        return {"download_id": download_id, "queued": False}
+
     if not acquire_resolve.soulseek_configured():
         raise HTTPException(
             status_code=503,
@@ -1703,8 +1834,6 @@ async def acquire_track_endpoint(request: AcquireRequest,
     download_id = await library.start_download(
         request.key, request.artist, request.title, user_id=user["id"])
 
-    meta = {"label": request.label, "year": request.year,
-            "album": request.album, "genre": request.genre}
     queued = await jobs.enqueue("acquire_track_job", download_id, request.key,
                                 request.artist, request.title, meta,
                                 request.chosen,

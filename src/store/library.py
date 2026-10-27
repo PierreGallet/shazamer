@@ -718,6 +718,31 @@ class Library:
                          (*writable.values(), download_id))
             conn.commit()
 
+    async def fail_unfinished_downloads(self, user_ids: List[str],
+                                        message: str) -> int:
+        """Mark these users' downloads still in flight as failed.
+
+        For downloads that ran in the API process (an own Soulseek account,
+        RFC #137): after a restart nothing is running them any more, and a
+        row left at "downloading" would wait forever.
+        """
+        if not user_ids:
+            return 0
+        async with self._lock:
+            return await self._run(self._fail_unfinished_sync, user_ids,
+                                   message)
+
+    def _fail_unfinished_sync(self, user_ids: List[str], message: str) -> int:
+        marks = ", ".join("?" for _ in user_ids)
+        with closing(self._connect()) as conn:
+            cur = conn.execute(
+                f"UPDATE downloads SET status = 'failed', message = ?,"
+                f" updated_at = ? WHERE status IN ('queued', 'downloading',"
+                f" 'verifying') AND user_id IN ({marks})",
+                (message, _now(), *user_ids))
+            conn.commit()
+            return cur.rowcount
+
     async def get_download(self, download_id: int, *, user_id: Optional[str]
                            ) -> Optional[Dict[str, Any]]:
         """One download, scoped — or unscoped when user_id is None.

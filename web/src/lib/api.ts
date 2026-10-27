@@ -269,6 +269,15 @@ export interface Profile {
   pending_email: string | null;
 }
 
+/** Your own Soulseek account (RFC #137). The password never comes back. */
+export interface SoulseekAccount {
+  configured: boolean;
+  username: string | null;
+  last_ok_at: string | null;
+  /** Why it last failed: a refused login, or logged out from elsewhere. */
+  last_error: string | null;
+}
+
 export interface AuthState {
   authenticated: boolean;
   auth_required: boolean;
@@ -366,6 +375,19 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
     }),
+
+  soulseekAccount: () => request<SoulseekAccount>("/api/profile/soulseek"),
+
+  /** Logs in once to check, and saves only if that worked. */
+  saveSoulseekAccount: (username: string, password: string) =>
+    request<SoulseekAccount>("/api/profile/soulseek", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    }),
+
+  removeSoulseekAccount: () =>
+    request<void>("/api/profile/soulseek", { method: "DELETE" }),
 
   logoutEverywhere: () =>
     request<{ sessions_ended: number }>("/api/auth/logout-everywhere",

@@ -154,6 +154,41 @@ class SoulseekQuota:
                 conn.execute("ROLLBACK")
                 raise
 
+    def reserve_own_search(self, user_id: str) -> float:
+        """Book a search on the user's own account (RFC #137).
+
+        Their account, not the shared one: it takes nothing from the global
+        budget and a ban on the shared account does not stop it. It is still
+        spaced and capped like anyone's, against that account alone, so going
+        through us never gets their own account banned either.
+        """
+        now = self.clock()
+        with closing(self._connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                n, oldest = conn.execute(
+                    "SELECT COUNT(*), MIN(at) FROM events WHERE kind = 'own_search'"
+                    " AND user_id = ? AND at > ?",
+                    (user_id, now - HOUR)).fetchone()
+                if n >= self.user_searches_per_hour:
+                    left = oldest + HOUR - now
+                    raise QuotaExceeded(
+                        f"Your Soulseek account has run {n} searches through "
+                        f"Shazamer in the last hour, the most we send for one "
+                        f"account. Try again in {_in(left)}.",
+                        retry_after=left, scope="user")
+                last = conn.execute(
+                    "SELECT MAX(at) FROM events WHERE kind = 'own_search'"
+                    " AND user_id = ?", (user_id,)).fetchone()[0]
+                start = max(now, (last or 0) + self.min_gap)
+                conn.execute("INSERT INTO events (kind, user_id, at)"
+                             " VALUES ('own_search', ?, ?)", (user_id, start))
+                conn.execute("COMMIT")
+                return start - now
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+
     # ── Downloads ────────────────────────────────────────────────────────
 
     def reserve_download(self, user_id: str) -> None:

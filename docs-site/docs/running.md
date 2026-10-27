@@ -93,6 +93,11 @@ Soulseek stays off unless `SLSKD_URL` is set. It needs your own account and a
 shared folder in return — the network runs on reciprocity — which is why the
 purchase links are the default path and this is opt-in.
 
+Users can also enter their own Soulseek account in Profile, which needs no
+slskd. The passwords are encrypted with a key created in the data directory
+(`soulseek.key`, mode 0600): back it up with `accounts.db`, or users will have
+to enter their passwords again.
+
 ## Tests
 
 ```bash

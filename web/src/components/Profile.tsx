@@ -1,5 +1,6 @@
 import { Show, createResource, createSignal } from "solid-js";
 import { api, ApiError } from "../lib/api";
+import SoulseekAccount from "./SoulseekAccount";
 
 /**
  * Who you are, as far as this app is concerned.
@@ -217,6 +218,8 @@ export default function Profile() {
                 </div>
               </Show>
             </div>
+
+            <SoulseekAccount />
 
             <div class="profile-block">
               <div class="tiny faint">Sessions</div>
