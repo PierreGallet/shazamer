@@ -1,4 +1,8 @@
-<h1 align="center">Shazamer 🎛️</h1>
+<p align="center">
+  <a href="https://shazamer.pierregallet.com"><img src="docs/logo.svg" alt="Shazamer logo" width="96" height="96" /></a>
+</p>
+
+<h1 align="center">Shazamer</h1>
 
 <p align="center">
   <b>Identify every track in a DJ set, see it on the waveform, and go find the records.</b>
