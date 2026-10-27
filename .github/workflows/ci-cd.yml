@@ -50,6 +50,12 @@ jobs:
   tests:
     name: "\U0001F9EA Tests"
     runs-on: ubuntu-latest
+    # Dans la meme base que l'image de prod (Dockerfile), pour que le ffmpeg
+    # teste soit celui qui tourne : Debian 13, ffmpeg 7.1. L'apt du runner
+    # donnait 8.0 alors que la prod tournait en 5.1. Et apt passe par
+    # deb.debian.org au lieu du miroir Azure du runner, qui calait (voir
+    # l'etape ffmpeg plus bas).
+    container: python:3.12-slim-trixie
     # Safety net: a hung test fails in 15 min instead of running to the 6h
     # job default (a missing-mock test once burned 6h × many runs of credit).
     timeout-minutes: 45
@@ -71,7 +77,26 @@ jobs:
       && github.event_name == 'pull_request'
 
     steps:
+      # AVANT le checkout : sans git dans le conteneur, actions/checkout
+      # telecharge une archive sans .git, et le controle `merge-base` qui suit
+      # n'aurait rien a lire. curl, gnupg et unzip servent a Codecov et au CLI
+      # 1Password en fin de job ; ffmpeg est la dependance systeme des tests.
+      - name: Install system packages (git, ffmpeg)
+        timeout-minutes: 6
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            git ca-certificates curl gnupg unzip ffmpeg
+          ffmpeg -version | head -1
+
       - uses: actions/checkout@v4
+
+      # Dans le conteneur, le depot appartient a l'uid du runner et git
+      # tourne en root : sans cette ligne il refuse d'y lire (« dubious
+      # ownership »). actions/checkout ne l'ajoute que pour sa propre etape.
+      - name: Trust the workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       # ── La branche est-elle a jour avec la base ? ──────────────────────
       #
       # Ce controle remplace le reglage GitHub « Require branches to be up to
@@ -111,58 +136,15 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      # ffmpeg vient du depot canonique dUbuntu, PAS du miroir Azure.
+      # Ni setup-python (Python 3.12 est dans l'image) ni etape ffmpeg : les
+      # deux viennent du conteneur.
       #
-      # `--no-install-recommends ffmpeg` tire 82 paquets — toute la famille
-      # libav*, libass, libbluray. Ce nest pas une regression du depot :
-      # limage de runner a bascule sur un Ubuntu plus recent, le miroir sert
-      # `resolute/universe` et ffmpeg y est en 8.0.1, avec une famille de
-      # dependances plus large. Les 16 s de septembre et les 229 s doctobre ne
-      # portent pas sur la meme chose.
-      #
-      # Mais le 22/10, `azure.archive.ubuntu.com` — le miroir servi aux
-      # runners heberges chez Azure — delivrait ~75 ko/s : `libavcodec62`
-      # (10,2 Mo) a pris 2 min 15 s, et letape est morte sur sa borne au
-      # paquet 40 sur 82, TROIS FOIS de suite. Le meme fichier recupere hors
-      # dAzure dans la minute qui suivait : 1,07 s, soit 9,5 Mo/s. Ce nest
-      # donc pas le volume a telecharger, cest ce miroir-la.
-      #
-      # On bascule sur `archive.ubuntu.com`. Ce nest pas une source tierce :
-      # meme organisation, meme contenu, memes signatures GPG — seul le miroir
-      # change, et apt verifie les paquets exactement comme avant.
-      #
-      # Il ny a PLUS de cache apt ici. Il y en a eu un, et il ne pouvait
-      # structurellement jamais servir : un cache nest partage entre branches
-      # que sil a ete ecrit sur la branche par defaut, or ce job est SAUTE a
-      # la fusion sur `main` (voir le `if` du job). Letape ny tournait donc
-      # jamais, le cache ny etait jamais ecrit, et chaque run lisait
-      # « Cache not found for input keys: ffmpeg-deb-Linux-v1 ».
-      - name: Install ffmpeg
-        # UNE BORNE, PARCE QUE CETTE ETAPE A DEJA PENDU DEUX FOIS.
-        #
-        # Le 30/09 elle a tourne 2740 s avant detre annulee a la main, et le
-        # 22/10 elle pendait encore apres 17 min. Sans borne detape, le seul
-        # garde-fou est le `timeout-minutes: 45` du job : 45 minutes facturees
-        # pour une installation de paquet qui en demande normalement moins
-        # dune. La borne a deja paye : trois echecs a 372 s au lieu de trois
-        # fois 45 min, soit 117 minutes de quota epargnees.
-        timeout-minutes: 6
-        run: |
-          # Les deux emplacements sont couverts : le format `deb822`
-          # (`.sources`) de limage actuelle, et lancien `sources.list` — pour
-          # que le jour ou limage rebascule, letape ne redevienne pas
-          # silencieusement dependante dAzure.
-          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' \
-            /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true
-          grep -rhom1 'archive.ubuntu.com' /etc/apt/sources.list.d/ | head -1
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
-          ffmpeg -version | head -1
-
+      # L'ancienne etape installait ffmpeg depuis l'apt du runner, en
+      # remplacant `azure.archive.ubuntu.com` par `archive.ubuntu.com` dans les
+      # `.sources`. Ce remplacement ne faisait plus rien : l'image du runner
+      # met l'URL derriere `mirror+file:/etc/apt/apt-mirrors.txt`. Le 26/10
+      # (PR #117), Azure etait toujours utilise et l'etape est morte sur sa
+      # borne de 6 minutes.
       - name: Install uv
         run: pip install uv
 
@@ -201,10 +183,12 @@ jobs:
 
       # Codecov, aligne sur triton. Le jeton vient de 1Password et non d'un
       # secret GitHub, pour qu'il n'en reste qu'un seul dans l'interface.
-      - name: Install 1Password CLI
-        if: ${{ !cancelled() }}
-        uses: 1password/install-cli-action@v1
-
+      #
+      # Pas de `1password/install-cli-action` ici : c'est une action
+      # composite, qui lance son script par `github.action_path`. Dans un job
+      # en conteneur, ce chemin designe l'hote (/home/runner/...) et non le
+      # conteneur, donc exit 127. load-secrets-action embarque son propre
+      # CLI et n'en a pas besoin.
       - name: Load Codecov token from 1Password
         if: ${{ !cancelled() }}
         uses: 1password/load-secrets-action@v2
