@@ -389,6 +389,11 @@ export const api = {
               audio?: boolean }>(
       `/api/shares/${encodeURIComponent(token)}/claim`, { method: "POST" }),
 
+  /** Accounts whose address or name starts with `q` (3+ characters). */
+  people: (q: string) =>
+    request<{ email: string; display_name: string }[]>(
+      `/api/people?q=${encodeURIComponent(q)}`),
+
   /** Who a set of yours was passed to, and what became of it. */
   setShares: (setId: string) => request<OutgoingShare[]>(`/api/sets/${setId}/shares`),
 

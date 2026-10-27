@@ -52,8 +52,9 @@ from src.sentry_setup import init_sentry
 from src.sources import download as dl
 from src.store.library import Library
 from src import auth, mail
-from src.auth import (clear_session_cookie, client_key, email_limiter,
-                      ip_limiter, make_dependencies, set_session_cookie,
+from src.auth import (RateLimiter, clear_session_cookie, client_key,
+                      email_limiter, ip_limiter, make_dependencies,
+                      set_session_cookie,
                       verify_limiter)
 from src.store.accounts import (Accounts, CODE_TTL, looks_like_email,
                                 normalise_email)
@@ -1016,6 +1017,26 @@ async def share_set(set_id: str, request: ShareRequest,
     # repeat a default that may not be this server's.
     return {"token": token, "link": link, "emailed": sent,
             "expires_in_days": library.share_ttl_days}
+
+
+# Suggestions are made while typing, one request per pause, so the limit is
+# generous for a person and tight for a script walking the alphabet.
+people_limiter = RateLimiter(limit=120, window_seconds=3600)
+
+
+@app.get("/api/people")
+async def search_people(q: str = Query("", max_length=100),
+                        user: Dict[str, Any] = Depends(current_user)):
+    """Accounts to share with, from the start of an address or a name.
+
+    The way GitHub suggests collaborators: knowing the first letters of
+    someone's address means knowing them. Signed in only, three characters
+    at least, five results at most, never yourself (Accounts.search_people).
+    """
+    if not people_limiter.allow(user["id"]):
+        raise HTTPException(status_code=429,
+                            detail="Too many searches — wait a moment.")
+    return await accounts.search_people(q, exclude_user_id=user["id"])
 
 
 # Before /api/shares/{token}, which would otherwise take "incoming" for a token.
