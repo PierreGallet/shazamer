@@ -1,5 +1,5 @@
 import { Show, createEffect, createResource, createSignal } from "solid-js";
-import { useNavigate, useParams } from "@solidjs/router";
+import { useParams } from "@solidjs/router";
 import { api, ApiError, formatDuration } from "../lib/api";
 import { SignIn } from "./SignIn";
 
@@ -15,7 +15,6 @@ import { SignIn } from "./SignIn";
  */
 export default function SharedSet() {
   const params = useParams();
-  const navigate = useNavigate();
 
   const token = () => params.token ?? "";
   const [share] = createResource(token, (t) => api.peekShare(t));
@@ -28,7 +27,11 @@ export default function SharedSet() {
     setError("");
     try {
       const { set_id } = await api.claimShare(token());
-      navigate(`/sets/${set_id}`, { replace: true });
+      // A full page load, not the router: this page runs under its own
+      // router that only knows /shared/:token (App.tsx), so navigating from
+      // here to /sets/... matched nothing and left a black screen until a
+      // reload brought up the real app.
+      window.location.replace(`/sets/${set_id}`);
     } catch (err) {
       setError(err instanceof ApiError
         ? err.message
