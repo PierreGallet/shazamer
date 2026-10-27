@@ -153,6 +153,13 @@ ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
 # How long an invitation nobody has taken keeps working. 0 means forever.
 SHARE_TTL_DAYS = int(os.environ.get("SHARE_TTL_DAYS", "30"))
 library = Library(DATA_DIR / "library.db", share_ttl_days=SHARE_TTL_DAYS)
+
+# One ledger for the one Soulseek account, in the shared data directory so
+# the worker books against the same budget as the API (src/acquire/quota.py).
+from src.acquire import slskd as _slskd
+from src.acquire.quota import QuotaExceeded, SoulseekQuota
+SOULSEEK_QUOTA = SoulseekQuota(DATA_DIR / "soulseek_quota.db")
+_slskd.QUOTA = SOULSEEK_QUOTA
 # Its own file, not a table in the library. Sessions and login codes have a
 # different lifetime, a different backup story and a different blast radius
 # from a tracklist — losing accounts.db costs everyone a sign-in; losing
@@ -273,9 +280,19 @@ async def lifespan(app: FastAPI):
 
 # /docs belongs to the written documentation, which people read; the
 # generated OpenAPI page moves under /api where the rest of the API lives.
+async def _quota_exceeded(request: Request, exc: QuotaExceeded):
+    """429 with the reason and Retry-After, wherever a quota refuses."""
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=429, content={"detail": str(exc),
+                                                  "scope": exc.scope},
+                        headers={"Retry-After": str(int(exc.retry_after))})
+
+
 app = FastAPI(title="Shazamer", version=_version(), lifespan=lifespan,
               docs_url="/api/docs", redoc_url=None,
               openapi_url="/api/openapi.json")
+app.add_exception_handler(QuotaExceeded, _quota_exceeded)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -1575,7 +1592,7 @@ async def soulseek_search(request: SoulseekSearchRequest, user: Dict[str, Any] =
     if not query.strip():
         raise HTTPException(status_code=400, detail="Nothing to search for")
     try:
-        candidates = await SlskdClient().search(query)
+        candidates = await SlskdClient().search(query, user_id=user["id"])
     except SlskdError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     # Capped so a popular record does not ship a thousand rows to the
@@ -1595,6 +1612,7 @@ async def soulseek_download(request: SoulseekDownloadRequest, user: Dict[str, An
         extension=request.filename.rsplit(".", 1)[-1].lower(), bitrate=None,
         sample_rate=None, bit_depth=None, length=None, queue_length=0,
         free_slot=False, upload_speed=0, score=0.0)
+    SOULSEEK_QUOTA.reserve_download(user["id"])
     try:
         return await SlskdClient().enqueue(candidate)
     except SlskdError as exc:
@@ -1656,7 +1674,8 @@ async def acquire_candidates(artist: str, title: str,
     if not (artist and title):
         raise HTTPException(status_code=400, detail="Artist and title required")
     try:
-        return await rank_candidates(artist, title, limit=limit)
+        return await rank_candidates(artist, title, limit=limit,
+                                     user_id=user["id"])
     except SlskdError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
@@ -1679,6 +1698,8 @@ async def acquire_track_endpoint(request: AcquireRequest,
             detail="Soulseek is not configured on this server. Set SLSKD_URL "
                    "and SLSKD_API_KEY to enable it.")
 
+    # Booked before the row exists: a refused download leaves nothing behind.
+    SOULSEEK_QUOTA.reserve_download(user["id"])
     download_id = await library.start_download(
         request.key, request.artist, request.title, user_id=user["id"])
 

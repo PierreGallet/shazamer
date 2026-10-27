@@ -34,6 +34,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# The shared budget for the one Soulseek account (src/acquire/quota.py). Set
+# by the web module at import, which the worker imports too, so both
+# processes book against the same ledger. None in a bare script: no limits.
+QUOTA = None
+
+# What the Soulseek server says when it bans an account for doing too much.
+_BAN_SIGNS = ("banned", "too many operations")
+
 LOSSLESS = {"flac", "wav", "aiff", "aif", "alac"}
 _LOSSLESS = LOSSLESS          # the older private name, still used below
 
@@ -335,7 +343,7 @@ class SlskdClient:
     SEARCH_WAIT = float(os.environ.get("SLSKD_SEARCH_WAIT", "45"))
 
     async def search(self, query: str, *, wait: Optional[float] = None,
-                     poll: float = 2.0) -> List[Candidate]:
+                     poll: float = 2.0, user_id: str = "") -> List[Candidate]:
         """Run a search and return candidates, best first.
 
         Soulseek searches are asynchronous by nature — peers answer over
@@ -346,11 +354,24 @@ class SlskdClient:
         end, so stopping early does not return fewer results, it returns none.
         """
         wait = self.SEARCH_WAIT if wait is None else wait
+        if QUOTA is not None:
+            # Raises QuotaExceeded before anything reaches the network; a
+            # short wait spaces this search from the previous one instead.
+            delay = QUOTA.reserve_search(user_id)
+            if delay > 0:
+                await asyncio.sleep(delay)
         search_id = str(uuid.uuid4())
-        await self._request("POST", "/searches", json={
-            "id": search_id, "searchText": query,
-            "fileLimit": 200, "responseLimit": 100,
-        })
+        try:
+            await self._request("POST", "/searches", json={
+                "id": search_id, "searchText": query,
+                "fileLimit": 200, "responseLimit": 100,
+            })
+        except SlskdError as exc:
+            if QUOTA is not None and any(
+                    sign in str(exc).lower() for sign in _BAN_SIGNS):
+                logger.error("Soulseek limited the account; pausing: %s", exc)
+                QUOTA.pause(str(exc))
+            raise
 
         elapsed = 0.0
         payload: Dict[str, Any] = {}
