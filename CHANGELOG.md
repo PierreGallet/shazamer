@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.1](https://github.com/PierreGallet/shazamer/compare/v1.35.0...v1.35.1) (2026-10-27)
+
+
+### 🐛 Fixes
+
+* **acquire:** stop unreachable Soulseek peers flooding the log ([#140](https://github.com/PierreGallet/shazamer/issues/140)) ([e564a7d](https://github.com/PierreGallet/shazamer/commit/e564a7d1dbec7b1cea309d9b11b7e808540d86f8))
+
 ## [1.35.0](https://github.com/PierreGallet/shazamer/compare/v1.34.1...v1.35.0) (2026-10-27)
 
 
