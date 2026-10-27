@@ -19,7 +19,12 @@ COPY docs-site/ ./
 RUN npm run build
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────
-FROM python:3.12-slim-bookworm
+# Debian 13 for ffmpeg 7.1 (Debian 12 shipped 5.1). Measured on 2026-10-27:
+# MP3 and Opus decode the same on both; on AAC/m4a, 5.1's full decode ran
+# 114.7 ms ahead of its own seek-based probes (the waveform against the
+# fingerprint windows), and 7.1 lines them up. The CI tests job runs in this
+# same base, so the ffmpeg the tests see is the one that ships.
+FROM python:3.12-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
