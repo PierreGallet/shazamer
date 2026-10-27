@@ -1,5 +1,6 @@
 import { Show, createSignal } from "solid-js";
 import { api, ApiError } from "../lib/api";
+import { ShareIcon } from "./icons";
 
 /**
  * Pass a set to someone.
@@ -10,8 +11,17 @@ import { api, ApiError } from "../lib/api";
  *
  * The invitation is minted when the dialog opens, not when it is sent, so the
  * link exists to copy whether or not an address is filled in.
+ *
+ * Two shapes for the trigger. On a set page it is the one accent button of
+ * the toolbar, with its label: it was a ghost button lost among five exports
+ * that looked exactly like it. On a library card it is an icon, always shown
+ * rather than on hover, because a phone has no hover.
  */
-export default function ShareSet(props: { setId: string; title: string }) {
+export default function ShareSet(props: {
+  setId: string;
+  title: string;
+  variant?: "button" | "icon";
+}) {
   const [link, setLink] = createSignal("");
   const [email, setEmail] = createSignal("");
   const [busy, setBusy] = createSignal(false);
@@ -72,12 +82,25 @@ export default function ShareSet(props: { setId: string; title: string }) {
 
   return (
     <>
-      <button class="btn btn-ghost btn-sm" onClick={open}>Share</button>
+      <Show
+        when={props.variant === "icon"}
+        fallback={
+          <button class="btn btn-primary btn-sm" onClick={open}>
+            <ShareIcon />
+            Share
+          </button>
+        }
+      >
+        <button class="btn-icon" onClick={open}
+                title="Share with someone" aria-label="Share with someone">
+          <ShareIcon />
+        </button>
+      </Show>
 
       <dialog class="picker" ref={dialog}>
         <div class="picker-head">
           <div>
-            <div class="eyebrow">Share</div>
+            <div class="picker-title">Share this set</div>
             <div class="tiny faint">{props.title}</div>
           </div>
           <button class="btn btn-ghost btn-sm" onClick={() => dialog?.close()}>

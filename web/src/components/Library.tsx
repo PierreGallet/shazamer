@@ -1,6 +1,7 @@
 import { A } from "@solidjs/router";
 import { For, Show, createEffect, createResource, createSignal } from "solid-js";
 import ShareSet from "./ShareSet";
+import { ShareIcon } from "./icons";
 import type { LibraryTrack } from "../lib/api";
 import { api, formatDuration } from "../lib/api";
 
@@ -177,7 +178,9 @@ export default function Library(props: Props) {
                       </Show>
                       <Show when={item.shared_by}>
                         <span>·</span>
-                        <span>shared by {item.shared_by}</span>
+                        <span class="chip-icon">
+                          <ShareIcon size={12} />shared by {item.shared_by}
+                        </span>
                       </Show>
                       <Show when={!item.has_audio}>
                         <span>·</span>
@@ -194,7 +197,7 @@ export default function Library(props: Props) {
                       set underneath the dialog. */}
                   <div class="set-card-share"
                        onClick={(e) => e.stopPropagation()}>
-                    <ShareSet setId={item.id} title={item.title} />
+                    <ShareSet setId={item.id} title={item.title} variant="icon" />
                   </div>
 
                   <div class="set-card-meta">
