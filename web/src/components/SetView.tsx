@@ -1,6 +1,7 @@
 import { useSearchParams } from "@solidjs/router";
 import { For, Show, createEffect, createResource, createSignal } from "solid-js";
 import ShareSet from "./ShareSet";
+import { ShareIcon } from "./icons";
 import { api, formatDuration, formatTime } from "../lib/api";
 import Player from "./Player";
 import TrackList from "./TrackList";
@@ -35,6 +36,9 @@ const EXPORTS: { fmt: string; label: string; hint: string }[] = [
 
 export default function SetView(props: Props) {
   const [detail] = createResource(() => props.setId, api.set);
+  // The export menu, closed again once a format is picked: a <details> stays
+  // open otherwise, covering the tracklist it was opened above.
+  let exports: HTMLDetailsElement | undefined;
   // ?t=<seconds> deep-links into a moment. Sharing "the bit at 47 minutes" is
   // most of what a set is worth passing around for.
   const [searchParams, setSearchParams] = useSearchParams<{ t?: string }>();
@@ -152,7 +156,8 @@ export default function SetView(props: Props) {
                       place otherwise, and it is the only trace of the share. */}
                   <Show when={data().shared_by}>
                     <span>·</span>
-                    <span class="chip chip-accent">
+                    <span class="chip chip-accent chip-icon">
+                      <ShareIcon size={12} />
                       shared by {data().shared_by}
                     </span>
                   </Show>
@@ -170,22 +175,29 @@ export default function SetView(props: Props) {
               </div>
               <div class="spacer" />
               <div class="export-menu">
-                {/* Ahead of the exports: passing a set to someone is a
-                    different kind of act from saving a file, and the exports
-                    are a row of near-identical buttons to get lost in. */}
+                {/* Passing a set to someone is a different kind of act from
+                    saving a file, so Share is the one accent button here and
+                    the five exports — a row of near-identical buttons to get
+                    lost in — fold into a single menu. */}
                 <ShareSet setId={props.setId} title={data().title} />
-                <For each={EXPORTS}>
-                  {(item) => (
-                    <a
-                      class="btn btn-ghost btn-sm"
-                      href={api.exportUrl(props.setId, item.fmt)}
-                      title={item.hint}
-                      download=""
-                    >
-                      {item.label}
-                    </a>
-                  )}
-                </For>
+                <details class="export-dropdown" ref={exports}>
+                  <summary class="btn btn-ghost btn-sm">Export ▾</summary>
+                  <div class="export-list">
+                    <For each={EXPORTS}>
+                      {(item) => (
+                        <a
+                          class="export-item"
+                          href={api.exportUrl(props.setId, item.fmt)}
+                          download=""
+                          onClick={() => exports?.removeAttribute("open")}
+                        >
+                          <span>{item.label}</span>
+                          <span class="tiny faint">{item.hint}</span>
+                        </a>
+                      )}
+                    </For>
+                  </div>
+                </details>
               </div>
             </div>
 

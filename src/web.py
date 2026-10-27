@@ -149,7 +149,9 @@ ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
     "ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8000").split(",")
     if o.strip()]
 
-library = Library(DATA_DIR / "library.db")
+# How long an invitation nobody has taken keeps working. 0 means forever.
+SHARE_TTL_DAYS = int(os.environ.get("SHARE_TTL_DAYS", "30"))
+library = Library(DATA_DIR / "library.db", share_ttl_days=SHARE_TTL_DAYS)
 # Its own file, not a table in the library. Sessions and login codes have a
 # different lifetime, a different backup story and a different blast radius
 # from a tracklist — losing accounts.db costs everyone a sign-in; losing
@@ -1010,7 +1012,31 @@ async def share_set(set_id: str, request: ShareRequest,
             # The link still works; the invitation just has to be passed on
             # by hand. Reporting success here would be a lie.
             pass
-    return {"token": token, "link": link, "emailed": sent}
+    # The lifetime goes with the link so the dialog can state it rather than
+    # repeat a default that may not be this server's.
+    return {"token": token, "link": link, "emailed": sent,
+            "expires_in_days": library.share_ttl_days}
+
+
+# Before /api/shares/{token}, which would otherwise take "incoming" for a token.
+@app.get("/api/shares/incoming")
+async def incoming_shares(user: Dict[str, Any] = Depends(current_user)):
+    """Sets addressed to you that you have not taken or declined yet.
+
+    Email is how a share used to reach anyone, and a mail that is filtered,
+    missed, or sent before the account existed lost it for good. This is the
+    same invitation, waiting in the app.
+    """
+    return await library.incoming_shares(
+        normalise_email(user.get("email") or ""), user_id=user["id"])
+
+
+@app.post("/api/shares/{token}/dismiss")
+async def dismiss_share(token: str, user: Dict[str, Any] = Depends(current_user)):
+    if not await library.dismiss_share(
+            token, email=normalise_email(user.get("email") or "")):
+        raise HTTPException(status_code=404, detail="Not a share sent to you")
+    return {"dismissed": True}
 
 
 @app.get("/api/shares/{token}")
@@ -1029,13 +1055,60 @@ async def peek_share(token: str):
     return details
 
 
+def _link_shared_audio(source: str, new_set_id: str) -> str:
+    """Give a claimed copy its own name for the sender's audio.
+
+    A hard link, like the dedupe of re-analysed sets: no bytes are copied,
+    each set can be deleted on its own, and the file goes with the last name.
+    Only audio this app owns is linked — a path outside the media and upload
+    folders is not followed. "" when it cannot be done, which the claim
+    reports rather than hides.
+    """
+    path = Path(source).resolve()
+    if not (path.is_relative_to(MEDIA_DIR.resolve())
+            or path.is_relative_to(UPLOAD_DIR.resolve())):
+        return ""
+    if not path.exists():
+        return ""
+    target = MEDIA_DIR / f"{new_set_id}{path.suffix}"
+    return str(target) if dedupe.link_to(path, target) else ""
+
+
 @app.post("/api/shares/{token}/claim")
 async def claim_share(token: str, user: Dict[str, Any] = Depends(current_user)):
-    result = await library.claim_share(token, user_id=user["id"])
+    result = await library.claim_share(
+        token, user_id=user["id"],
+        email=normalise_email(user.get("email") or ""),
+        link_audio=_link_shared_audio)
     if result is None:
         raise HTTPException(status_code=404,
                             detail="That invitation no longer points anywhere")
+    if result.get("elsewhere"):
+        # Said plainly rather than as a 404: the person holding the link was
+        # probably forwarded it, and "ask them to send it to you" is the fix.
+        raise HTTPException(
+            status_code=403,
+            detail="This invitation was sent to someone else. Ask them to "
+                   "share it with your address.")
     return result
+
+
+@app.get("/api/sets/{set_id}/shares")
+async def list_set_shares(set_id: str,
+                          user: Dict[str, Any] = Depends(current_user)):
+    """Who this set was passed to, and whether they took it."""
+    shares = await library.list_shares(set_id, user_id=user["id"])
+    if shares is None:
+        raise HTTPException(status_code=404, detail="Set not found")
+    return shares
+
+
+@app.delete("/api/shares/{token}")
+async def revoke_share(token: str, user: Dict[str, Any] = Depends(current_user)):
+    """Take an invitation back. Copies already made are theirs and stay."""
+    if not await library.revoke_share(token, user_id=user["id"]):
+        raise HTTPException(status_code=404, detail="Not a share of yours")
+    return {"revoked": True}
 
 
 # ── Sets ─────────────────────────────────────────────────────────────────

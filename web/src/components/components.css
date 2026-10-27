@@ -174,6 +174,33 @@
 .set-title-block { min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; }
 .set-title-block h1 { font-size: 1.35rem; }
 .export-menu { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+
+/* The exports, folded into one menu so Share is not the sixth lookalike
+   button in a row. A plain <details>: it needs no state and works without
+   JavaScript. */
+.export-dropdown { position: relative; }
+.export-dropdown > summary { list-style: none; cursor: pointer; }
+.export-dropdown > summary::-webkit-details-marker { display: none; }
+.export-list {
+  position: absolute; right: 0; top: calc(100% + 0.3rem); z-index: 30;
+  min-width: 15rem; padding: 0.3rem;
+  display: flex; flex-direction: column;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.export-item {
+  display: flex; flex-direction: column; gap: 0.1rem;
+  padding: 0.45rem 0.6rem; border-radius: var(--radius-sm);
+  color: var(--text); font-size: 0.82rem;
+}
+.export-item:hover { background: var(--surface-3); }
+
+/* The share glyph wherever sharing shows: the button, the "shared by" chip,
+   the inbox. One mark, read the same way everywhere. */
+.chip-icon { display: inline-flex; align-items: center; gap: 0.3rem; }
+
+.picker-title { font-weight: 700; font-size: 0.95rem; }
 .set-stage { margin-bottom: 0; }
 
 /* The waveform stays put while the tracklist scrolls under it, so the
@@ -675,4 +702,39 @@
   background: color-mix(in srgb, var(--warn, #d97706) 14%, transparent);
   border-color: color-mix(in srgb, var(--warn, #d97706) 38%, transparent);
   color: var(--warn, #d97706);
+}
+
+/* Sets someone sent you, above your own. Same card shape as the library so
+   it reads as "these are sets", with the accent edge saying "and new". */
+.shared-inbox { margin-bottom: 2.25rem; }
+.shared-inbox-card {
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: 0.8rem 1rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+}
+.nav-inbox {
+  margin-left: 0.35rem; min-width: 1.1rem; height: 1.1rem; padding: 0 0.3rem;
+  display: inline-grid; place-items: center;
+  border-radius: 999px; background: var(--accent); color: #fff;
+  font-family: var(--mono); font-size: 0.66rem; font-weight: 700;
+}
+
+/* "Share · 2": who already has it, on the button itself. */
+.share-count { font-family: var(--mono); font-weight: 600; opacity: 0.85; }
+.share-icon-btn { position: relative; }
+.share-dot {
+  position: absolute; top: 5px; right: 4px;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+}
+.share-people {
+  display: flex; flex-direction: column; gap: 0.35rem;
+  margin-top: 0.9rem; padding-top: 0.8rem; border-top: 1px solid var(--line);
+}
+.share-person { display: flex; align-items: center; gap: 0.6rem; }
+.share-person-who {
+  font-size: 0.82rem; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }

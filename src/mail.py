@@ -99,7 +99,9 @@ def _build_share(to: str, from_name: str, title: str, link: str,
         "want.\n\n"
         "Opening the link puts this tracklist in your own library, yours to "
         "keep and star and delete, whatever they do with theirs. You can "
-        "analyse your own sets from there.\n"
+        "analyse your own sets from there.\n\n"
+        "Lost this mail? It also waits under \"Shared with you\" in your "
+        "library when you sign in with this address.\n"
     )
     message.add_alternative(
         "<div style=\"font-family:-apple-system,BlinkMacSystemFont,"
@@ -116,7 +118,9 @@ def _build_share(to: str, from_name: str, title: str, link: str,
         "<p style=\"font-size:13px;color:#675f58;margin:0 0 20px;"
         "line-height:1.5\">"
         "Opening it puts a copy in your own library — yours to keep, star and "
-        "delete, whatever they do with theirs.</p>"
+        "delete, whatever they do with theirs. It also waits under "
+        "<em>Shared with you</em> in your library when you sign in with this "
+        "address.</p>"
         # What the thing is, for someone who has never heard of it. A link
         # with no explanation is a link people do not click.
         "<div style=\"border-top:1px solid #e6e1db;padding-top:18px\">"
