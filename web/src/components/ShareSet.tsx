@@ -36,6 +36,39 @@ export default function ShareSet(props: {
   const [copied, setCopied] = createSignal(false);
   const [error, setError] = createSignal("");
   const [ttl, setTtl] = createSignal(0);
+  const [suggestions, setSuggestions] = createSignal<
+    { email: string; display_name: string }[]>([]);
+  let typing: number | undefined;
+
+  /**
+   * Accounts matching what is typed, the way GitHub suggests collaborators.
+   * One request per pause rather than per keystroke; three characters at
+   * least, which the server enforces too.
+   */
+  function onType(value: string) {
+    setEmail(value);
+    window.clearTimeout(typing);
+    const q = value.trim();
+    if (q.length < 3) {
+      setSuggestions([]);
+      return;
+    }
+    typing = window.setTimeout(async () => {
+      try {
+        const found = await api.people(q);
+        // Only if it still matches what is in the field: a slow answer for
+        // "bob" must not land after the user has typed "bobby@".
+        if (email().trim() === q) setSuggestions(found);
+      } catch {
+        setSuggestions([]);           // a hint, never a blocker
+      }
+    }, 200);
+  }
+
+  function pick(address: string) {
+    setEmail(address);
+    setSuggestions([]);
+  }
   let dialog: HTMLDialogElement | undefined;
 
   // The set page asks at once, for the count on its button. A library card
@@ -104,6 +137,7 @@ export default function ShareSet(props: {
         : `This server could not send the mail — the link below works.`);
       setLink(share.link);
       setEmail("");
+      setSuggestions([]);
       void refetch();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not send that.");
@@ -162,13 +196,35 @@ export default function ShareSet(props: {
         </div>
 
         <form class="row" onSubmit={send}>
-          <input
-            class="signin-input"
-            type="email"
-            placeholder="their email"
-            value={email()}
-            onInput={(e) => setEmail(e.currentTarget.value)}
-          />
+          <div class="share-email">
+            <input
+              class="signin-input"
+              type="email"
+              placeholder="their email or name"
+              autocomplete="off"
+              value={email()}
+              onInput={(e) => onType(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && suggestions().length) {
+                  e.preventDefault();       // close the list, not the dialog
+                  setSuggestions([]);
+                }
+              }}
+            />
+            <Show when={suggestions().length > 0}>
+              <div class="share-suggestions" role="listbox">
+                <For each={suggestions()}>
+                  {(person) => (
+                    <button type="button" class="share-suggestion"
+                            role="option" onClick={() => pick(person.email)}>
+                      <span>{person.display_name}</span>
+                      <span class="tiny faint">{person.email}</span>
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
           <button class="btn btn-primary btn-sm" type="submit"
                   disabled={busy() || !email().trim()}>
             {busy() ? "Sending…" : "Send"}

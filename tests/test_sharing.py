@@ -386,3 +386,64 @@ async def test_the_library_says_which_sets_are_shared(client):
     sets = {s["id"]: s for s in (await client.get("/api/sets")).json()}
     assert sets["s1"]["share_count"] == 2
     assert sets["s2"]["share_count"] == 0
+
+
+# ── Suggestions while typing an address ───────────────────────────────────
+
+async def _people(client, q):
+    return await client.get("/api/people", params={"q": q})
+
+
+async def test_typing_the_start_of_an_address_suggests_the_account(client):
+    """Like adding a collaborator on GitHub: knowing the start is knowing them."""
+    await _seed_account(client.web.accounts, BOB, BOB_EMAIL)
+    response = await _people(client, "bob")
+    assert response.status_code == 200
+    assert [p["email"] for p in response.json()] == [BOB_EMAIL]
+    assert response.json()[0]["display_name"]
+
+
+async def test_a_name_finds_the_account_too(client):
+    from contextlib import closing
+    await _seed_account(client.web.accounts, BOB, BOB_EMAIL)
+    with closing(client.web.accounts._connect()) as conn:
+        conn.execute("UPDATE users SET first_name = 'Robert' WHERE id = ?", (BOB,))
+        conn.commit()
+    assert [p["email"] for p in (await _people(client, "rob")).json()] == [BOB_EMAIL]
+
+
+async def test_fewer_than_three_characters_suggest_nobody(client):
+    await _seed_account(client.web.accounts, BOB, BOB_EMAIL)
+    assert (await _people(client, "bo")).json() == []
+
+
+async def test_wildcards_are_not_a_way_to_list_everyone(client):
+    await _seed_account(client.web.accounts, BOB, BOB_EMAIL)
+    for q in ("%%%", "___", "%_%"):
+        assert (await _people(client, q)).json() == [], q
+
+
+async def test_you_are_not_suggested_to_yourself(client):
+    assert (await _people(client, TEST_EMAIL[:4])).json() == []
+
+
+async def test_suggestions_are_capped(client):
+    """Five at most: enough to pick someone, too few to page through everyone."""
+    for i in range(8):
+        await _seed_account(client.web.accounts, f"u{i}", f"djx{i}@example.com")
+    assert len((await _people(client, "djx")).json()) == 5
+    assert [p["email"] for p in (await _people(client, "djx3")).json()] == [
+        "djx3@example.com"]
+
+
+async def test_suggestions_need_an_account(client):
+    import src.auth as auth_mod
+    client.cookies.delete(auth_mod.COOKIE_NAME)
+    assert (await _people(client, "bob")).status_code == 401
+
+
+async def test_suggestions_are_rate_limited(client):
+    client.web.people_limiter.limit = 3
+    for _ in range(3):
+        assert (await _people(client, "bob")).status_code == 200
+    assert (await _people(client, "bob")).status_code == 429

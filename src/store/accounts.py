@@ -12,8 +12,13 @@ Three tables and three rules:
 - **Sessions are hashed too.** The cookie is the credential; the row is only
   how we recognise it. Someone with read access to the database must not be
   able to mint a session from it.
-- **Nothing says whether an address is registered.** Requesting a code always
-  answers the same way, so this cannot be used to find out who has an account.
+- **Nothing says whether an address is registered — to someone signed out.**
+  Requesting a code always answers the same way, so the sign-in form cannot
+  be used to find out who has an account. Signed in, the share dialog does
+  suggest accounts from the first three characters of an address or a name,
+  the way GitHub suggests collaborators: typing the start of someone's
+  address means you already know them. Capped at five and rate-limited, so
+  it is not a way to page through everyone (`search_people`).
 """
 from __future__ import annotations
 
@@ -26,7 +31,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -352,6 +357,43 @@ class Accounts:
                                (user_id,))
             conn.commit()
             return cur.rowcount
+
+    # ── People ───────────────────────────────────────────────────────────
+
+    SEARCH_MIN_CHARS = 3
+    SEARCH_LIMIT = 5
+
+    async def search_people(self, query: str, *,
+                            exclude_user_id: str) -> List[Dict[str, str]]:
+        """Accounts whose address or name starts with `query`.
+
+        A prefix, not a substring: "bob" finds bob@… and Bob Martin, never
+        jacob@…. Under three characters, or made only of LIKE wildcards, it
+        finds nobody — `%` and `_` are escaped, otherwise typing "%" would
+        list every account.
+        """
+        query = (query or "").strip().lower()
+        if len(query.strip("%_")) < self.SEARCH_MIN_CHARS:
+            return []
+        return await self._run(self._search_people_sync, query,
+                               exclude_user_id)
+
+    def _search_people_sync(self, query: str,
+                            exclude_user_id: str) -> List[Dict[str, str]]:
+        like = (query.replace("\\", "\\\\").replace("%", "\\%")
+                .replace("_", "\\_")) + "%"
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT id, email, first_name, last_name FROM users"
+                " WHERE id != ? AND (lower(email) LIKE ? ESCAPE '\\'"
+                "   OR lower(first_name) LIKE ? ESCAPE '\\'"
+                "   OR lower(last_name) LIKE ? ESCAPE '\\')"
+                " ORDER BY lower(email) LIMIT ?",
+                (exclude_user_id, like, like, like,
+                 self.SEARCH_LIMIT)).fetchall()
+        return [{"email": r["email"],
+                 "display_name": display_name({k: r[k] for k in r.keys()})}
+                for r in rows]
 
     # ── Profile ──────────────────────────────────────────────────────────
 
