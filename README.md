@@ -1,200 +1,104 @@
-# Shazamer 🎛️
-
-> Identify every track in a DJ set, see it on the waveform, and go find the records.
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
-[![CI](https://github.com/pierregallet/shazamer/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/pierregallet/shazamer/actions)
-
 <p align="center">
-  <a href="https://shazamer.pierregallet.com"><b>▶ Try it now at shazamer.pierregallet.com</b></a>
-  &nbsp;·&nbsp;
-  <a href="https://shazamer.pierregallet.com/docs/">Read the docs</a>
+  <a href="https://shazamer.pierregallet.com"><img src="docs/logo.svg" alt="Shazamer logo" width="96" height="96" /></a>
 </p>
 
-## ☁️ Hosted version — nothing to install
+<h1 align="center">Shazamer</h1>
 
-**[shazamer.pierregallet.com](https://shazamer.pierregallet.com)** runs the
-full app. Paste a link, get the tracklist.
+<p align="center">
+  <b>Identify every track in a playlist, see it on the waveform, and go find the records.</b>
+</p>
 
-1. **Sign in with your email.** You get a one-time code. No password, and the
-   account is created the first time you sign in.
-2. **Paste a set** from YouTube, SoundCloud or Instagram, or upload the file.
-3. **Dig.** The timestamped tracklist with BPM and Camelot key is drawn on the
-   waveform, with buy links for every track and a Rekordbox export.
+<p align="center">
+  <a href="https://shazamer.pierregallet.com"><b>Try it</b></a> ·
+  <a href="https://shazamer.pierregallet.com/docs/">Docs</a> ·
+  <a href="#self-host-with-docker">Self-host</a> ·
+  <a href="https://github.com/PierreGallet/shazamer/issues">Report a bug</a>
+</p>
 
-Everything the self-hosted version does, without Python, ffmpeg or a build
-step. Long sets are fine: analysis runs on a queue, so you can close the tab
-and come back to a finished tracklist. Your sets stay in your library, and you
-can share one with a link.
+<p align="center">
+  <a href="https://shazamer.pierregallet.com"><img src="https://img.shields.io/badge/Try%20it-shazamer.pierregallet.com-ff5500" alt="Try it" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
+  <a href="https://github.com/PierreGallet/shazamer/actions"><img src="https://github.com/PierreGallet/shazamer/actions/workflows/ci-cd.yml/badge.svg" alt="CI" /></a>
+</p>
 
-Prefer running it yourself? It is MIT-licensed and the whole stack is below —
-see [Install and run](#install-and-run).
+<p align="center">
+  <img src="docs/screenshot-set.png" alt="A DJ set in Shazamer: the waveform with one block per identified track, and the timestamped tracklist with BPM and key below" width="100%" />
+</p>
 
----
+Paste a DJ set, a mix or any playlist from YouTube, SoundCloud or Instagram,
+or upload the file.
+Shazamer gives you back a timestamped tracklist with BPM and key, drawn on a
+waveform you can scrub through, and every track links to where you can buy it.
 
-Shazamer takes a mix — a URL or a file — and gives you a timestamped tracklist
-with BPM and key, drawn on an interactive waveform you can scrub through. Every
-track links out to where you can actually buy it, and everything you analyse
-collects in a library you can dig through afterwards.
+## Why Shazamer
 
-## What it does
+- 🎚️ **Made for mixes.** It probes the whole set on a grid and merges what
+  matches, so beatmatched 32-bar blends do not break it. Sets of any length,
+  at a flat ~24 MB of memory.
+- 🕳️ **Keeps the gaps.** A stretch nobody can name stays in the tracklist
+  with its timestamp. Dubs, edits and unsigned promos are the point of
+  digging.
+- 🎹 **Usable at the decks.** BPM and Camelot key on every track, and an
+  export to Rekordbox XML (plus M3U, CSV, text and JSON).
+- 🔁 **Remembers.** Every set lands in your library. A record turning up in
+  several sets is surfaced, which is the strongest digging signal there is.
+- 🛒 **Points at the record.** Bandcamp, Beatport and Discogs links first.
+- 🤝 **Shares.** Send a set to someone and they get their own copy, audio
+  included.
 
-- **Streams, never loads.** Audio is decoded through ffmpeg block by block, so
-  peak memory is flat regardless of set length — measured at ~24 MB whether the
-  set is 2 minutes or 6 hours. There is no duration limit.
-- **Probes in parallel.** Identification is I/O bound, so it runs concurrently
-  instead of one segment at a time behind a rate limiter.
-- **Finds boundaries by result, not by guess.** Probing on a fixed cadence and
-  merging matching neighbours beats hunting for transitions in a beatmatched
-  set, where the "boundary" lands in the middle of a 32-bar blend.
-- **Keeps the gaps.** A stretch nobody can name stays in the tracklist with its
-  timestamp. Dubs, edits and unsigned promos are the point of digging.
-- **BPM and Camelot key** per track, so the tracklist is usable at the decks.
-- **Exports to Rekordbox XML**, plus M3U, CSV, text and JSON.
-- **Remembers.** Sets land in a SQLite library; a track appearing across several
-  of them is surfaced, which is the strongest digging signal there is.
-- **Points at the record.** Bandcamp, Beatport and Discogs first; Soulseek via
-  [slskd](https://github.com/slskd/slskd) if you configure your own instance.
+## Hosted or self-hosted
 
-## Requirements
+|  | **[shazamer.pierregallet.com](https://shazamer.pierregallet.com)** | **Self-hosted** |
+| --- | --- | --- |
+| Setup | None: sign in with your email (one-time code, no password) | Docker Compose, or Python 3.12 + ffmpeg + Node |
+| Long sets | Analysed on a queue: close the tab, come back to a finished tracklist | Same, with Redis (included in the Compose file) |
+| Sign-in | Ready | Needs an SMTP server to send the codes |
+| Cost | Free | Free, MIT-licensed |
 
-- **Python 3.12** — shazamio is incompatible with 3.13+
-- **ffmpeg** — every decode, seek and probe goes through it
-- **Node 20+** — to build the frontend
-
-```bash
-brew install ffmpeg node          # macOS
-sudo apt-get install ffmpeg nodejs # Debian/Ubuntu
-```
-
-## Install and run
+## Self-host with Docker
 
 ```bash
-make install     # Python venv + frontend dependencies
-make web         # builds the UI and serves everything on :8000
+git clone https://github.com/PierreGallet/shazamer.git && cd shazamer
+cp .env.example .env        # set SMTP_HOST, SMTP_USER, SMTP_PASSWORD, MAIL_FROM
+docker compose up -d        # API, worker and Redis on http://localhost:8000
 ```
 
-For development, `make run` runs the API on `:8000` and Vite with hot reload on
-`:5173`, proxying `/api` to the backend.
+Soulseek acquisition is optional and stays off unless `SLSKD_URL` points at
+your own [slskd](https://github.com/slskd/slskd) instance, with your own
+account and shares.
 
-### Command line
+## Run from source
 
 ```bash
-make analyze FILE="~/Music/dj_set.mp3"
-
-# or directly, with options
-./venv/bin/python -m src.shazamer mix.mp3 \
-    --strategy grid --interval 20 --concurrency 8 \
-    --formats json,txt,rekordbox
+brew install ffmpeg node    # or: sudo apt-get install ffmpeg nodejs
+make install                # Python 3.12 venv + frontend dependencies
+make web                    # builds the UI and serves everything on :8000
 ```
 
-| Option | Meaning |
-| --- | --- |
-| `--strategy grid` | Probe on a cadence and merge (default; best on mixed sets) |
-| `--strategy spectral` | Detect boundaries first (better on hard-cut compilations) |
-| `--interval` | Seconds between probes (default: derived from set length) |
-| `--concurrency` | Parallel identification requests (default 8) |
-| `--probe-duration` | Seconds per probe; Shazam fingerprints a centred 10 s of it |
-| `--no-musical-features` | Skip BPM and key detection |
-| `--formats` | `json,txt,csv,m3u,rekordbox` |
-
-## The waveform
-
-Click to seek, scroll to zoom, shift-drag to pan. The ribbon along the top is
-one block per segment: numbered and filled when identified, dashed and hollow
-when not. The played portion of the envelope is lit, and the tracklist below
-follows the playhead.
-
-## Addresses
-
-Everything worth returning to has a URL, so links can be shared and the back
-button behaves.
-
-| Route | |
-| --- | --- |
-| `/` | Start an analysis |
-| `/analyzing/:taskId` | A run in progress — reloading re-attaches to it |
-| `/library` | Every set analysed |
-| `/sets/:id` | One set |
-| `/sets/:id?t=1420` | …starting at 23:40 |
-| `/crate` | Starred tracks, filterable by BPM and key |
-| `/following` | Channels and artists being watched |
-
-## Importing pre-1.0 tracklists
-
-Before 1.0 results were loose JSON files in `outputs/`, listed by scanning the
-directory. The library reads SQLite instead, so those files became invisible —
-still on disk, nothing reads them. Bring them across:
-
-```bash
-PYTHONPATH=. python scripts/import_legacy.py outputs --dry-run
-PYTHONPATH=. python scripts/import_legacy.py outputs --min-tracks 5
-```
-
-They arrive keyed the same way as new sets, so an imported track links up with
-the same track found later — which is the point of importing at all. What
-cannot come across, because it was never recorded: waveform, BPM and key;
-unidentified stretches, which the old pipeline dropped; and repeats, which it
-deduplicated before saving. Re-analyse a set to get those.
-
-`--min-tracks` keeps one-track leftovers from testing out of the library;
-whatever it excludes is listed by name.
+There is also a command line, `make analyze FILE="~/Music/dj_set.mp3"`.
+Its options, the configuration, the tests and importing pre-1.0 tracklists
+are in [Running it](https://shazamer.pierregallet.com/docs/running/).
 
 ## How it works
 
 ```
 URL ──▶ yt-dlp ──▶ ffmpeg (30 s blocks) ──▶ spectral centroid + RMS
-                                                     │  ~3 MB of vectors
-                                                     ▼
+                                                     │
                             probe grid ──▶ ffmpeg -ss (12 s) ──▶ Shazam ×8
                                                      │
                                     merge ──▶ segments ──▶ BPM + key ──▶ library
 ```
 
-The design notes behind this — including the measurements that motivated the
-streaming rewrite — are in `docs/`.
+Audio is streamed, never loaded whole. Identification runs in parallel, and a
+boundary between two tracks comes out of the results instead of being guessed
+first. The design, and the measurements behind it, are in the
+[docs](https://shazamer.pierregallet.com/docs/).
 
-### Audio quality
+## Contributing
 
-The download ladder never transcodes upward. YouTube's ceiling is Opus at
-~160 kbps; re-encoding that to "320 kbps MP3" produces a bigger file carrying
-strictly less information, so the native stream is kept. SoundCloud is the
-opposite case: when the uploader enabled downloads, yt-dlp exposes the original
-file — often WAV-sourced — and that is requested first.
-
-## Configuration
-
-Copy `.env.example` to `.env`. Everything has a working default; the ones worth
-knowing:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `SHAZAM_CONCURRENCY` | `8` | Parallel identification requests |
-| `KEEP_AUDIO_DAYS` | `14` | How long set audio is kept for playback |
-| `ALLOWED_ORIGINS` | localhost | Browser origins allowed to call the API |
-| `SLSKD_URL` / `SLSKD_API_KEY` | empty | Enables Soulseek acquisition |
-
-Soulseek stays off unless `SLSKD_URL` is set. It needs your own account and a
-shared folder in return — the network runs on reciprocity — which is why the
-purchase links are the default path and this is opt-in.
-
-## Tests
-
-```bash
-make test              # unit + integration-free suite
-make test-integration  # hits YouTube and SoundCloud for real
-make lint              # frontend typecheck
-```
-
-The suite runs against synthetic audio with a stub identifier: what is being
-verified is segmentation, merging and the streaming maths, not that Shazam's
-servers are reachable.
-
-## Deployment
-
-`docker-stack.yml` deploys to Docker Swarm behind Traefik. The Dockerfile builds
-the frontend in a first stage and copies `web/dist` into the runtime image.
+Issues and pull requests are welcome. `make test` runs the suite against
+synthetic audio, with no network. Changes go through a pull request with a
+green CI.
 
 ## License
 

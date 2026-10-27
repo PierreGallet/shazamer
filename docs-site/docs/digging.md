@@ -35,6 +35,23 @@ Two restraints, both deliberate:
   a dozen at once would block everything else for most of a day. The rest are
   found again next time.
 
+## Addresses
+
+Everything worth returning to has a URL, so links can be shared and the back
+button behaves.
+
+| Route | |
+| --- | --- |
+| `/` | Start an analysis |
+| `/analyzing/:taskId` | A run in progress — reloading re-attaches to it |
+| `/library` | Every set analysed, and the ones shared with you |
+| `/sets/:id` | One set |
+| `/sets/:id?t=1420` | …starting at 23:40 |
+| `/starred` | Starred tracks, filterable by BPM and key |
+| `/downloads` | Everything fetched from Soulseek |
+| `/following` | Channels and artists being watched |
+| `/shared/:token` | An invitation to take a copy of someone's set |
+
 ## What matching is based on
 
 Everything — recurrence, starred tracks, enrichment, downloads — keys on a

@@ -9,6 +9,12 @@ services:
   app:
     build: .
     restart: unless-stopped
+    # Your settings (SMTP for sign-in codes, Soulseek...) from .env, the file
+    # the README asks you to copy from .env.example. Optional so a bare
+    # `docker compose up` still starts.
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "8000:8000"
     volumes:
@@ -33,6 +39,9 @@ services:
     build: .
     command: ["arq", "src.jobs.worker.WorkerSettings"]
     restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
     # The image's healthcheck probes an HTTP port only the API serves.
     healthcheck:
       disable: true

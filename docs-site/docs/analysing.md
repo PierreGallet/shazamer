@@ -17,6 +17,14 @@ zoom, shift-drag to pan. The tracklist below follows the playhead.
 A **tracklist** with timestamp, artist, title, label, catalogue number, BPM and
 Camelot key — and rows for the stretches nobody could name.
 
+## Audio quality
+
+The download never transcodes upward. YouTube's ceiling is Opus at about
+160 kbps; re-encoding that to "320 kbps MP3" produces a bigger file carrying
+strictly less information, so the native stream is kept. SoundCloud is the
+opposite case: when the uploader enabled downloads, the original file — often
+WAV-sourced — is available, and it is requested first.
+
 ## Reading the confidence
 
 Only doubtful tracks are marked. A finding with no badge is solid; marking
