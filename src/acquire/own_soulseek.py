@@ -46,6 +46,11 @@ logger = logging.getLogger(__name__)
 # At DEBUG, aioslsk logs every message it sends — Login.Request included, with
 # the password in it. Pinned here so no log configuration can lower it.
 logging.getLogger("aioslsk").setLevel(logging.WARNING)
+# With no listening port, a firewalled peer answering a search asks us to
+# connect to it and that fails — a normal outcome, logged by aioslsk as a
+# warning with the peer's IP, by the hundred (257 in 40 minutes in
+# production). Errors from the network layer still come through.
+logging.getLogger("aioslsk.network.network").setLevel(logging.ERROR)
 
 # Closed after this long without an operation, so the user's own client can
 # log back in. A transfer in progress keeps it open.
