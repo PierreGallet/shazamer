@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.1](https://github.com/PierreGallet/shazamer/compare/v1.31.0...v1.31.1) (2026-10-27)
+
+
+### 📚 Documentation
+
+* **readme:** put the hosted version at the top ([#121](https://github.com/PierreGallet/shazamer/issues/121)) ([0615a73](https://github.com/PierreGallet/shazamer/commit/0615a73e0a1915f167417101a7691480e3cd5e26))
+
 ## [1.31.0](https://github.com/PierreGallet/shazamer/compare/v1.30.6...v1.31.0) (2026-10-26)
 
 
