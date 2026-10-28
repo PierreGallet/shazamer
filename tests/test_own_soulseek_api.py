@@ -178,3 +178,101 @@ async def test_a_restart_fails_own_account_downloads_left_in_flight(client, web)
     assert (await web.library.get_download(mine, user_id=None))["status"] == "failed"
     assert (await web.library.get_download(other, user_id=None))["status"] \
         == "downloading"
+
+
+# ── Sharing your downloads ──────────────────────────────────────────────────
+
+@pytest.fixture
+def downloads(web, tmp_path, monkeypatch):
+    directory = tmp_path / "library-downloads"
+    directory.mkdir()
+    monkeypatch.setattr(web, "DOWNLOAD_DIR", directory)
+    return directory
+
+
+async def _ready(web, user_id, path):
+    path.write_bytes(b"audio")
+    download_id = await web.library.start_download("k::t", "A", "T",
+                                                   user_id=user_id)
+    await web.library.update_download(download_id, status="ready",
+                                      local_path=str(path))
+
+
+async def _shared(web, client):
+    session = await web.OWN_SOULSEEK.open(
+        client.user_id, await web.soulseek_credentials.get(client.user_id))
+    directories = session.client.settings.shares.directories
+    if not directories:
+        return []
+    from pathlib import Path
+    return sorted(p.resolve().name for p in Path(directories[0].path).iterdir())
+
+
+async def test_your_own_account_shares_your_downloads_only(client, web,
+                                                           downloads, tmp_path):
+    await save(client)
+    await _ready(web, client.user_id, downloads / "Mine.mp3")
+    await _ready(web, "someone-else", downloads / "Theirs.mp3")
+    outside = tmp_path / "elsewhere.mp3"
+    await _ready(web, client.user_id, outside)        # not in the library
+    assert await _shared(web, client) == ["Mine.mp3"]
+
+
+async def test_sharing_can_be_turned_off(client, web, downloads):
+    await save(client)
+    await _ready(web, client.user_id, downloads / "Mine.mp3")
+    assert (await _shared(web, client)) == ["Mine.mp3"]
+    share_dir = web.OWN_SOULSEEK.share_dir(client.user_id)
+
+    response = await client.patch("/api/profile/soulseek",
+                                  json={"share_downloads": False})
+    assert response.status_code == 200
+    assert response.json()["share_downloads"] is False
+    assert not share_dir.exists()
+    assert await _shared(web, client) == []       # the next session
+
+
+async def test_turning_sharing_off_does_not_cut_a_download(client, web,
+                                                           downloads):
+    await save(client)
+    session = await web.OWN_SOULSEEK.open(
+        client.user_id, await web.soulseek_credentials.get(client.user_id))
+    await session.client.transfers.download("peer", "a\\b.mp3")
+    await client.patch("/api/profile/soulseek", json={"share_downloads": False})
+    assert not session.client.stopped
+
+
+async def test_sharing_needs_an_account(client, web):
+    response = await client.patch("/api/profile/soulseek",
+                                  json={"share_downloads": False})
+    assert response.status_code == 404
+
+
+async def test_a_finished_download_joins_the_share(client, web, downloads,
+                                                   monkeypatch):
+    import src.acquire.runner as runner
+
+    await save(client)
+    refreshed = []
+
+    async def acquire_track(*args, **kwargs):
+        return {"status": "ready"}
+
+    async def refresh(user_id):
+        refreshed.append(user_id)
+
+    monkeypatch.setattr(runner, "acquire_track", acquire_track)
+    monkeypatch.setattr(web.OWN_SOULSEEK, "refresh_shares", refresh)
+    await client.post("/api/acquire/track", json={
+        "key": "a::x", "artist": "Artist", "title": "Title"})
+    for task in list(web._own_downloads):
+        await task
+    assert refreshed == [client.user_id]
+
+
+async def test_removing_the_account_removes_the_share(client, web, downloads):
+    await save(client)
+    await _ready(web, client.user_id, downloads / "Mine.mp3")
+    await _shared(web, client)
+    await client.delete("/api/profile/soulseek")
+    assert not web.OWN_SOULSEEK.share_dir(client.user_id).exists()

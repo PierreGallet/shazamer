@@ -276,6 +276,8 @@ export interface SoulseekAccount {
   last_ok_at: string | null;
   /** Why it last failed: a refused login, or logged out from elsewhere. */
   last_error: string | null;
+  /** Your own downloads are offered back from this account. */
+  share_downloads: boolean;
 }
 
 export interface AuthState {
@@ -384,6 +386,13 @@ export const api = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
+    }),
+
+  setSoulseekSharing: (share_downloads: boolean) =>
+    request<SoulseekAccount>("/api/profile/soulseek", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ share_downloads }),
     }),
 
   removeSoulseekAccount: () =>

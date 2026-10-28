@@ -64,7 +64,7 @@ async def test_the_public_view_never_carries_the_password(store):
     assert "hunter2-secret" not in repr(await store.get("alice"))
     assert await store.describe("bob") == {
         "configured": False, "username": None,
-        "last_ok_at": None, "last_error": None}
+        "last_ok_at": None, "last_error": None, "share_downloads": True}
 
 
 async def test_forgetting_removes_them(store):
@@ -93,3 +93,28 @@ async def test_a_lost_key_reads_as_not_configured_and_says_why(store, tmp_path):
     view = await fresh.describe("alice")
     assert view["configured"] is False
     assert "enter your password again" in view["last_error"]
+
+
+async def test_sharing_downloads_is_on_by_default_and_can_be_turned_off(store):
+    await store.save("alice", "dj_alice", "pw")
+    assert (await store.describe("alice"))["share_downloads"] is True
+    assert await store.shares_downloads("alice") is True
+    await store.set_sharing("alice", False)
+    assert (await store.describe("alice"))["share_downloads"] is False
+    assert await store.shares_downloads("alice") is False
+    await store.save("alice", "dj_alice", "new-pw")     # a new password
+    assert await store.shares_downloads("alice") is False  # keeps the choice
+
+
+async def test_a_table_from_before_sharing_gains_the_column(tmp_path):
+    accounts = Accounts(tmp_path / "accounts.db")
+    await _seed_account(accounts, "alice", "alice@example.com")
+    conn = sqlite3.connect(tmp_path / "accounts.db")
+    conn.execute("CREATE TABLE soulseek_credentials (user_id TEXT PRIMARY KEY,"
+                 " username TEXT NOT NULL, password BLOB NOT NULL,"
+                 " last_ok_at TEXT, last_error TEXT, updated_at TEXT NOT NULL)")
+    conn.commit()
+    store = SoulseekCredentials(tmp_path / "accounts.db",
+                                key_path=tmp_path / "soulseek.key")
+    await store.save("alice", "dj_alice", "pw")
+    assert await store.shares_downloads("alice") is True

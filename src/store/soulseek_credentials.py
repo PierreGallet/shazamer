@@ -35,9 +35,14 @@ CREATE TABLE IF NOT EXISTS soulseek_credentials (
     password    BLOB NOT NULL,
     last_ok_at  TEXT,
     last_error  TEXT,
-    updated_at  TEXT NOT NULL
+    updated_at  TEXT NOT NULL,
+    share_downloads INTEGER NOT NULL DEFAULT 1
 );
 """
+
+# Columns added after the table shipped: CREATE TABLE IF NOT EXISTS leaves an
+# existing table as it is.
+MIGRATIONS = (("share_downloads", "INTEGER NOT NULL DEFAULT 1"),)
 
 # What a row says when the key that encrypted it is gone.
 LOST_KEY = ("This server can no longer read your Soulseek password: "
@@ -66,6 +71,12 @@ class SoulseekCredentials:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as conn:
             conn.executescript(SCHEMA)
+            existing = {r[1] for r in conn.execute(
+                "PRAGMA table_info(soulseek_credentials)")}
+            for column, definition in MIGRATIONS:
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE soulseek_credentials"
+                                 f" ADD COLUMN {column} {definition}")
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -130,6 +141,15 @@ class SoulseekCredentials:
                         " last_error = ? WHERE user_id = ?",
                         (message[:300], user_id))
 
+    async def set_sharing(self, user_id: str, share: bool) -> None:
+        await self._run(self._exec, "UPDATE soulseek_credentials SET"
+                        " share_downloads = ? WHERE user_id = ?",
+                        (1 if share else 0, user_id))
+
+    async def shares_downloads(self, user_id: str) -> bool:
+        row = await self._run(self._row_sync, user_id)
+        return bool(row and row["share_downloads"])
+
     def _exec(self, sql: str, params: tuple) -> None:
         with closing(self._connect()) as conn:
             conn.execute(sql, params)
@@ -164,19 +184,22 @@ class SoulseekCredentials:
         row = await self._run(self._row_sync, user_id)
         if row is None:
             return {"configured": False, "username": None,
-                    "last_ok_at": None, "last_error": None}
+                    "last_ok_at": None, "last_error": None,
+                    "share_downloads": True}
         if self._decrypt(row["password"]) is None:
             return {"configured": False, "username": row["username"],
-                    "last_ok_at": None, "last_error": LOST_KEY}
+                    "last_ok_at": None, "last_error": LOST_KEY,
+                    "share_downloads": bool(row["share_downloads"])}
         return {"configured": True, "username": row["username"],
                 "last_ok_at": row["last_ok_at"],
-                "last_error": row["last_error"]}
+                "last_error": row["last_error"],
+                "share_downloads": bool(row["share_downloads"])}
 
     def _row_sync(self, user_id: str) -> Optional[sqlite3.Row]:
         with closing(self._connect()) as conn:
             return conn.execute(
-                "SELECT username, password, last_ok_at, last_error"
-                " FROM soulseek_credentials WHERE user_id = ?",
+                "SELECT username, password, last_ok_at, last_error,"
+                " share_downloads FROM soulseek_credentials WHERE user_id = ?",
                 (user_id,)).fetchone()
 
     def _decrypt(self, token: bytes) -> Optional[str]:

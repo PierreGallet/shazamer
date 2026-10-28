@@ -813,6 +813,20 @@ class Library:
                 (user_id, limit)).fetchall()
         return [_download_row(r) for r in rows]
 
+    async def ready_download_paths(self, user_id: str) -> List[str]:
+        """Where this user's finished downloads are — theirs only.
+
+        What their own Soulseek account offers back (RFC #137): the tracks
+        they fetched themselves, never someone else's.
+        """
+        return await self._run(self._ready_paths_sync, user_id)
+
+    def _ready_paths_sync(self, user_id: str) -> List[str]:
+        with closing(self._connect()) as conn:
+            return [r[0] for r in conn.execute(
+                "SELECT DISTINCT local_path FROM downloads WHERE user_id = ?"
+                " AND status = 'ready' AND local_path != ''", (user_id,))]
+
     async def undescribed_downloads(self, *, user_id: Optional[str] = None,
                                     limit: int = 500) -> List[Dict[str, Any]]:
         """Finished downloads nobody has measured yet.

@@ -51,8 +51,14 @@ your searches and downloads go through it, and only through it:
   through Shazamer does not get your account banned either.
 - **The password is checked, then stored encrypted.** Saving logs in once to
   check it. The password is never shown again or sent back by the API.
-- **Nothing is shared from your account.** A download on it runs on the
-  server; a restart interrupts it, and you fetch it again.
+- **Your downloads are shared from it, unless you untick it.** Some peers
+  refuse accounts that share nothing, judging by the file count the server
+  shows. Your account offers back the tracks you fetched here — yours only,
+  never another user's — at most two uploads at a time, capped at 500 KB/s.
+  Without a listening port, only peers that can be reached from outside can
+  download them; the count is reported either way.
+- **A download on it runs on the server.** A restart interrupts it, and you
+  fetch it again.
 
 It works on an instance with no slskd at all, too.
 

@@ -175,9 +175,21 @@ from src.acquire.own_soulseek import (OwnSoulseekClient, OwnSoulseekError,
 from src.store.soulseek_credentials import LOST_KEY, SoulseekCredentials
 soulseek_credentials = SoulseekCredentials(DATA_DIR / "accounts.db",
                                            key_path=DATA_DIR / "soulseek.key")
+
+
+async def _own_shares(user_id: str):
+    """What a user's own account offers back: their own finished downloads,
+    if they chose to share, and only files inside the library."""
+    if not await soulseek_credentials.shares_downloads(user_id):
+        return None
+    root = DOWNLOAD_DIR.resolve()
+    paths = [Path(p) for p in await library.ready_download_paths(user_id)]
+    return [p for p in paths if p.resolve().is_relative_to(root)]
+
+
 OWN_SOULSEEK = OwnSoulseekSessions(
     DATA_DIR / "own-soulseek", on_login=soulseek_credentials.note_ok,
-    on_failure=soulseek_credentials.note_error)
+    on_failure=soulseek_credentials.note_error, shares_for=_own_shares)
 # Own-account downloads run here rather than in the worker; held so a task is
 # not collected while it runs.
 _own_downloads: set = set()
@@ -1096,10 +1108,36 @@ async def put_soulseek_account(request: SoulseekCredentialsRequest,
     return await soulseek_credentials.describe(user["id"])
 
 
+class SoulseekSharingRequest(BaseModel):
+    share_downloads: bool
+
+
+@app.patch("/api/profile/soulseek")
+async def patch_soulseek_account(request: SoulseekSharingRequest,
+                                 user: Dict[str, Any] = Depends(current_user)):
+    """Share your downloads from your own account, or stop.
+
+    The session is closed so the next one starts with the new choice: aioslsk
+    reads its shared folders at start, and a running one would keep offering
+    them.
+    """
+    if not await soulseek_credentials.has(user["id"]):
+        raise HTTPException(status_code=404,
+                            detail="Save a Soulseek account first.")
+    await soulseek_credentials.set_sharing(user["id"], request.share_downloads)
+    if not request.share_downloads:
+        OWN_SOULSEEK.drop_share(user["id"])
+    # A download in progress finishes on the old session; the choice applies
+    # from the next one.
+    await OWN_SOULSEEK.restart_when_idle(user["id"])
+    return await soulseek_credentials.describe(user["id"])
+
+
 @app.delete("/api/profile/soulseek", status_code=204)
 async def delete_soulseek_account(user: Dict[str, Any] = Depends(current_user)):
     """Forget it: back to the shared account, if this server has one."""
     await OWN_SOULSEEK.close(user["id"])
+    OWN_SOULSEEK.drop_share(user["id"])
     await soulseek_credentials.forget(user["id"])
     return Response(status_code=204)
 
@@ -1815,10 +1853,17 @@ async def acquire_track_endpoint(request: AcquireRequest,
         download_id = await library.start_download(
             request.key, request.artist, request.title, user_id=user["id"])
 
-        task = asyncio.create_task(acquire_track(
-            library, DOWNLOAD_DIR, request.key, request.artist, request.title,
-            download_id=download_id, meta=meta, chosen=request.chosen,
-            client=client, identifier=ShazamIdentifier(concurrency=1)))
+        async def fetch() -> None:
+            row = await acquire_track(
+                library, DOWNLOAD_DIR, request.key, request.artist,
+                request.title, download_id=download_id, meta=meta,
+                chosen=request.chosen, client=client,
+                identifier=ShazamIdentifier(concurrency=1))
+            if row and row.get("status") == "ready":
+                # What you take joins what you offer.
+                await OWN_SOULSEEK.refresh_shares(user["id"])
+
+        task = asyncio.create_task(fetch())
         _own_downloads.add(task)
         task.add_done_callback(_own_downloads.discard)
         return {"download_id": download_id, "queued": False}
