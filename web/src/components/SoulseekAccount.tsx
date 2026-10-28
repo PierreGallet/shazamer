@@ -34,13 +34,25 @@ export default function SoulseekAccount() {
     }
   }
 
+  async function setSharing(share: boolean) {
+    setBusy(true);
+    setError("");
+    try {
+      mutate(await api.setSoulseekSharing(share));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not change that.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function remove() {
     setBusy(true);
     setError("");
     try {
       await api.removeSoulseekAccount();
       mutate({ configured: false, username: null, last_ok_at: null,
-               last_error: null });
+               last_error: null, share_downloads: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not remove it.");
     } finally {
@@ -103,6 +115,16 @@ export default function SoulseekAccount() {
             Remove
           </button>
         </div>
+        {/* On by default: some peers refuse accounts that share nothing, and
+            what is offered is only what this person already fetched. */}
+        <label class="row tiny muted">
+          <input type="checkbox" checked={account()!.share_downloads}
+                 disabled={busy()}
+                 onChange={(e) => setSharing(e.currentTarget.checked)} />
+          Share my downloads from this account — peers who refuse accounts
+          that share nothing will then send to you. Only the tracks you
+          fetched here, at most two uploads at a time.
+        </label>
       </Show>
 
       <Show when={error()}>

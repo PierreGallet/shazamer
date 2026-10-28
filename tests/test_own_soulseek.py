@@ -8,6 +8,7 @@ transfers.transfers, events.register).
 import asyncio
 import logging
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -82,6 +83,8 @@ class FakeClient:
                                         remove_request=self.removed.append)
         self.transfers = SimpleNamespace(download=self._download,
                                          transfers=self._transfers)
+        self.scans = 0
+        self.shares = SimpleNamespace(scan=self._scan)
         FakeClient.instances.append(self)
 
     def _register(self, event, handler):
@@ -113,6 +116,9 @@ class FakeClient:
                                 self.settings.shares.download)
         self._transfers.append(transfer)
         return transfer
+
+    async def _scan(self):
+        self.scans += 1
 
     async def kick(self):
         for handler in self.handlers.get(KickedEvent, []):
@@ -351,3 +357,125 @@ async def test_a_shared_ban_does_not_stop_own_accounts(tmp_path, clock):
     quota = SoulseekQuota(tmp_path / "q.db", clock=clock)
     quota.pause("banned")
     assert quota.reserve_own_search("alice") == 0
+
+
+# ── Sharing your downloads (RFC #137, Q-B) ──────────────────────────────────
+
+from src.acquire.own_soulseek import sync_share_links  # noqa: E402
+
+
+def _tracks(tmp_path, *names):
+    library = tmp_path / "downloads"
+    library.mkdir(exist_ok=True)
+    paths = []
+    for name in names:
+        path = library / name
+        path.write_bytes(b"audio")
+        paths.append(path)
+    return paths
+
+
+def test_the_share_is_links_to_your_own_downloads(tmp_path):
+    a, b = _tracks(tmp_path, "A - One.mp3", "B - Two.mp3")
+    share = tmp_path / "share"
+    assert sync_share_links(share, [a, b]) == 2
+    linked = sorted(p.name for p in share.iterdir())
+    assert linked == ["A - One.mp3", "B - Two.mp3"]
+    assert all(p.is_symlink() and p.resolve() in (a, b)
+               for p in share.iterdir())
+
+
+def test_the_share_follows_what_you_still_have(tmp_path):
+    a, b = _tracks(tmp_path, "A - One.mp3", "B - Two.mp3")
+    share = tmp_path / "share"
+    sync_share_links(share, [a, b])
+    b.unlink()                                   # swept, or deleted
+    c, = _tracks(tmp_path, "C - Three.mp3")
+    assert sync_share_links(share, [a, b, c]) == 2
+    assert sorted(p.name for p in share.iterdir()) == [
+        "A - One.mp3", "C - Three.mp3"]
+
+
+def test_two_files_with_one_name_are_both_shared(tmp_path):
+    library = tmp_path / "downloads"
+    (library / "x").mkdir(parents=True)
+    (library / "y").mkdir()
+    one = library / "x" / "Same.mp3"
+    two = library / "y" / "Same.mp3"
+    one.write_bytes(b"1")
+    two.write_bytes(b"2")
+    share = tmp_path / "share"
+    assert sync_share_links(share, [one, two]) == 2
+    assert {p.resolve() for p in share.iterdir()} == {one, two}
+
+
+def test_the_share_holds_nothing_but_links(tmp_path):
+    """Whatever is put there by hand is not ours to offer."""
+    share = tmp_path / "share"
+    share.mkdir()
+    (share / "stray.mp3").write_bytes(b"?")
+    sync_share_links(share, [])
+    assert list(share.iterdir()) == []
+
+
+def test_settings_share_the_folder_with_capped_uploads(tmp_path):
+    settings = build_settings(ALICE, tmp_path / "dl", share_dir=tmp_path / "s")
+    assert [d.path for d in settings.shares.directories] == [str(tmp_path / "s")]
+    assert settings.shares.scan_on_start is True
+    assert settings.transfers.limits.upload_slots == 2
+    assert settings.network.limits.upload_speed_kbps > 0
+
+
+async def test_a_session_shares_your_downloads(tmp_path, clock):
+    a, = _tracks(tmp_path, "A - One.mp3")
+
+    async def shares_for(user_id):
+        return [a] if user_id == "alice" else None
+
+    sessions = OwnSoulseekSessions(tmp_path / "own", client_factory=FakeClient,
+                                   clock=clock, shares_for=shares_for)
+    session = await sessions.open("alice", ALICE)
+    directories = session.client.settings.shares.directories
+    assert len(directories) == 1
+    shared = list(Path(directories[0].path).iterdir())
+    assert [p.resolve() for p in shared] == [a]
+
+
+async def test_sharing_off_shares_nothing(tmp_path, clock):
+    async def shares_for(user_id):
+        return None
+
+    sessions = OwnSoulseekSessions(tmp_path / "own", client_factory=FakeClient,
+                                   clock=clock, shares_for=shares_for)
+    session = await sessions.open("alice", ALICE)
+    assert session.client.settings.shares.directories == []
+
+
+async def test_a_new_download_joins_the_share(tmp_path, clock):
+    files = _tracks(tmp_path, "A - One.mp3")
+
+    async def shares_for(user_id):
+        return list(files)
+
+    sessions = OwnSoulseekSessions(tmp_path / "own", client_factory=FakeClient,
+                                   clock=clock, shares_for=shares_for)
+    session = await sessions.open("alice", ALICE)
+    files.extend(_tracks(tmp_path, "B - Two.mp3"))
+    await sessions.refresh_shares("alice")
+    share = Path(session.client.settings.shares.directories[0].path)
+    assert len(list(share.iterdir())) == 2
+    assert session.client.scans == 1             # rescanned, so reported
+
+
+async def test_checking_a_password_shares_nothing(tmp_path, clock):
+    called = []
+
+    async def shares_for(user_id):
+        called.append(user_id)
+        return []
+
+    sessions = OwnSoulseekSessions(tmp_path / "own", client_factory=FakeClient,
+                                   clock=clock, shares_for=shares_for)
+    await sessions.verify("alice", ALICE)
+    assert called == []
+    assert FakeClient.instances[0].settings.shares.directories == []

@@ -82,7 +82,50 @@ class _IsolatedSettings(Settings):
         return (init_settings,)
 
 
-def build_settings(credentials, download_dir: Path) -> Settings:
+# What sharing may cost the server. Few slots and a cap: the point of sharing
+# is to stop being a leecher in peers' eyes, not to become a seedbox.
+UPLOAD_SLOTS = int(os.environ.get("OWN_SOULSEEK_UPLOAD_SLOTS", "2"))
+UPLOAD_KBPS = int(os.environ.get("OWN_SOULSEEK_UPLOAD_KBPS", "500"))
+
+
+def sync_share_links(share_dir: Path, files: List[Path]) -> int:
+    """Make `share_dir` hold a link to each of `files` that still exists.
+
+    Links, not copies: no disk is spent, and a hard link cannot cross the two
+    volumes involved (data and downloads). aioslsk walks the folder with
+    os.walk, which lists a link to a file as a file and reads through it.
+
+    The folder is rebuilt from `files` each time, so it holds nothing else: a
+    file put there by hand, or one since swept from the library, is not
+    offered. Returns how many files are shared.
+    """
+    share_dir.mkdir(parents=True, exist_ok=True)
+    wanted: Dict[str, Path] = {}
+    for path in files:
+        path = Path(path)
+        if not path.is_file():
+            continue
+        name, n = path.name, 1
+        while name in wanted and wanted[name] != path:
+            n += 1
+            name = f"{path.stem} ({n}){path.suffix}"
+        wanted[name] = path
+    for entry in share_dir.iterdir():
+        target = wanted.get(entry.name)
+        if not (entry.is_symlink() and target is not None
+                and Path(os.readlink(entry)) == target):
+            entry.unlink()
+    for name, target in wanted.items():
+        link = share_dir / name
+        if not link.is_symlink():
+            link.symlink_to(target)
+    return len(wanted)
+
+
+def build_settings(credentials, download_dir: Path,
+                   share_dir: Optional[Path] = None) -> Settings:
+    """aioslsk settings for one account; `share_dir` is offered if given."""
+    shared = [{"path": str(share_dir)}] if share_dir is not None else []
     return _IsolatedSettings(
         credentials={"username": credentials.username,
                      "password": credentials.password},
@@ -91,9 +134,12 @@ def build_settings(credentials, download_dir: Path) -> Settings:
                           "error_mode": ListeningConnectionErrorMode.ANY},
             "upnp": {"enabled": False},
             "server": {"reconnect": {"auto": False}},
+            "limits": {"upload_speed_kbps": UPLOAD_KBPS},
         },
-        shares={"download": str(download_dir), "directories": [],
-                "scan_on_start": False},
+        shares={"download": str(download_dir), "directories": shared,
+                # Scanned on start, so the server is told the count at login.
+                "scan_on_start": bool(shared)},
+        transfers={"limits": {"upload_slots": UPLOAD_SLOTS}},
         rooms={"auto_join": False, "favorites": set()},
     )
 
@@ -121,10 +167,16 @@ class OwnSoulseekSessions:
                  clock: Callable[[], float] = time.monotonic,
                  idle_seconds: float = IDLE_SECONDS,
                  on_login: Optional[Callable] = None,
-                 on_failure: Optional[Callable] = None) -> None:
+                 on_failure: Optional[Callable] = None,
+                 shares_for: Optional[Callable] = None) -> None:
         """`on_login(user_id)` and `on_failure(user_id, reason)` are told
         how each login went, and of an eviction — for Profile to show the
-        last outcome without logging in to find out."""
+        last outcome without logging in to find out.
+
+        `shares_for(user_id)` returns the files that account offers back —
+        the user's own downloads — or None when they chose not to share.
+        Peers that refuse accounts sharing nothing look at the count the
+        server reports, which a scan sends."""
         if client_factory is None:
             from aioslsk.client import SoulSeekClient
             client_factory = SoulSeekClient
@@ -137,6 +189,7 @@ class OwnSoulseekSessions:
         self._reaper: Optional[asyncio.Task] = None
         self.on_login = on_login
         self.on_failure = on_failure
+        self.shares_for = shares_for
 
     async def _tell(self, callback, *args) -> None:
         if callback is None:
@@ -148,6 +201,51 @@ class OwnSoulseekSessions:
 
     def download_dir(self, user_id: str) -> Path:
         return self.root / user_id
+
+    def share_dir(self, user_id: str) -> Path:
+        # Beside the download folders, not inside the library: slskd shares
+        # the library, and must not see one user's links twice.
+        return self.root.parent / (self.root.name + "-shares") / user_id
+
+    async def _prepare_share(self, user_id: str) -> Optional[Path]:
+        if self.shares_for is None:
+            return None
+        try:
+            files = await self.shares_for(user_id)
+        except Exception:
+            logger.exception("Listing what to share failed; sharing nothing")
+            return None
+        if files is None:
+            return None
+        directory = self.share_dir(user_id)
+        count = await asyncio.get_running_loop().run_in_executor(
+            None, sync_share_links, directory, files)
+        logger.info("Sharing %d file(s) from %s's own Soulseek account",
+                    count, user_id)
+        return directory
+
+    def drop_share(self, user_id: str) -> None:
+        """Remove the folder of links: nothing of theirs is offered any more."""
+        import shutil
+
+        shutil.rmtree(self.share_dir(user_id), ignore_errors=True)
+
+    async def restart_when_idle(self, user_id: str) -> bool:
+        """Close the session so the next one reads new settings — unless a
+        transfer is running, which the change must not cut. True if closed."""
+        session = self.active(user_id)
+        if session is not None and (session.busy or session.transferring()):
+            return False
+        await self.close(user_id)
+        return True
+
+    async def refresh_shares(self, user_id: str) -> None:
+        """After a download: link it into the share and tell the server."""
+        session = self.active(user_id)
+        if session is None or not session.client.settings.shares.directories:
+            return
+        if await self._prepare_share(user_id) is not None:
+            await session.client.shares.scan()
 
     def active(self, user_id: str) -> Optional[Session]:
         session = self._sessions.get(user_id)
@@ -173,7 +271,7 @@ class OwnSoulseekSessions:
     async def verify(self, user_id: str, credentials) -> None:
         """Log in once and out again: are these credentials good?"""
         await self.close(user_id)
-        session = await self._login(user_id, credentials)
+        session = await self._login(user_id, credentials, share=False)
         await self._stop(session)
 
     async def close(self, user_id: str) -> None:
@@ -212,10 +310,13 @@ class OwnSoulseekSessions:
             except Exception:                      # never kill the loop
                 logger.exception("Reaping Soulseek sessions failed")
 
-    async def _login(self, user_id: str, credentials) -> Session:
+    async def _login(self, user_id: str, credentials, *,
+                     share: bool = True) -> Session:
         directory = self.download_dir(user_id)
         directory.mkdir(parents=True, exist_ok=True)
-        client = self.client_factory(build_settings(credentials, directory))
+        share_dir = await self._prepare_share(user_id) if share else None
+        client = self.client_factory(
+            build_settings(credentials, directory, share_dir))
         session = Session(user_id, credentials.username, client,
                           last_used=self.clock())
 
