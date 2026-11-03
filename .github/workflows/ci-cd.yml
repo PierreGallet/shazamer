@@ -579,7 +579,7 @@ jobs:
           # On revient au motif des autres depots du parc, celui de triton : un heredoc
           # CITE ecrit le script tel quel, `scp` l envoie, et l argument de `ssh` tient en
           # cinq lignes avec un seul guillemet. Plus rien n est interprete deux fois.
-          cat > /tmp/remote-deploy.sh << 'REMOTE_EOF'
+          cat > /tmp/remote-deploy-${GITHUB_SHA}.sh << 'REMOTE_EOF'
           set -e
 
           # SVC nomme le verrou et les fichiers de travail. Il n etait defini NULLE PART
@@ -643,11 +643,20 @@ jobs:
           DEPLOY_LOCK_HELD=1 bash scripts/deploy.sh
           REMOTE_EOF
 
-          scp -P $PORT /tmp/remote-deploy.sh $SSH_USER@$HOST:/tmp/remote-deploy.sh
+          # Chemin UNIQUE par deploiement (SHA). A chemin fixe partage, deux deploys
+
+          # rapproches du meme repo se marchaient dessus : le rm de l'un supprimait le
+
+          # script que l'autre, detache, lisait encore (meme classe de bug que
+
+          # l'incident noctambule #646, ici limite a shazamer-vs-shazamer).
+
+
+          scp -P $PORT /tmp/remote-deploy-${GITHUB_SHA}.sh $SSH_USER@$HOST:/tmp/remote-deploy-${GITHUB_SHA}.sh
 
           ssh -n -p $PORT $SSH_USER@$HOST "{ mkdir -p ~/deploy-logs \
             && DEPLOY_PATH='$DEPLOY_PATH' \
-               setsid nohup bash -c 'bash /tmp/remote-deploy.sh; rm -f /tmp/remote-deploy.sh' ; \
+               setsid nohup bash -c 'bash /tmp/remote-deploy-${GITHUB_SHA}.sh; rm -f /tmp/remote-deploy-${GITHUB_SHA}.sh' ; \
             } > ~/$LOG 2>&1 < /dev/null & \
             echo 'deploiement lance en tache de fond'" 
           echo "::notice::Deploiement lance sur le serveur, sans attente du runner. Journal : ~/$LOG. Une panne remonte par les alertes Grafana deploy-stuck / deploy-failed."
