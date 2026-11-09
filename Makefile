@@ -1,4 +1,5 @@
-.PHONY: help install install-web install-docs dev web web-build build docs docs-dev test test-integration clean lint
+.PHONY: help install install-web install-docs dev web web-build build docs docs-dev test test-integration clean lint \
+        seed-dev seed-test db-dev-up db-test-up db-test-down dev-up dev-down
 
 VENV := venv/bin/python
 
@@ -84,6 +85,14 @@ help:
 	@echo "  make test           Run the test suite"
 	@echo "  make analyze FILE=… Analyse a file from the command line"
 	@echo "  make clean          Remove venv, build output and caches"
+	@echo ""
+	@echo "  API base dev/test uniforme (RFC genius #18) — PAS de serveur SQL ici :"
+	@echo "  make dev-up         Lance l'env dev (API + UI, SANS secrets op) + compte loggable"
+	@echo "  make dev-down       Arrete l'env dev (par pidfile, jamais par motif)"
+	@echo "  make seed-dev       Fabrique le compte loggable (cookie de session, passwordless)"
+	@echo "  make db-dev-up      N/A relationnel → alias de seed-dev (etat = fichiers SQLite)"
+	@echo "  make db-test-up     [SESSION=…] repertoire SQLite de test isole + seed"
+	@echo "  make db-test-down   [SESSION=…] supprime CE repertoire de test (garde-fou)"
 
 install: install-py install-web install-docs
 
@@ -163,6 +172,112 @@ clean:
 	@find . -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
 	@echo "Cleaned."
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# API base de dev/test uniforme (RFC genius #18)
+#
+# CAS PARTICULIER shazamer : **il n'y a pas de serveur SQL** (ni Postgres ni
+# MySQL), donc pas de port, pas de `CREATE DATABASE`. L'etat applicatif vit dans
+# des **fichiers SQLite** sous `SHAZAMER_DATA_DIR` (accounts.db, library.db,
+# soulseek_quota.db — auto-schema a l'ouverture). Redis 7 n'est que le **broker
+# arq** du worker (optionnel : sans REDIS_URL l'API analyse en direct), pas un
+# magasin de donnees applicatif.
+#
+# Consequence sur le contrat #18 :
+#   • `db-dev-up` / `db-test-up` / `db-test-down` n'ont **aucun sens
+#     relationnel** (pas de moteur a joindre en loopback, pas de base a CREATE).
+#     On les garde pour l'uniformite de l'API, re-interpretes pour un magasin de
+#     fichiers : ici **une « base » = un repertoire de donnees**.
+#   • Pas d'ephemere Redis par session : Redis ne porte pas l'etat applicatif
+#     (les tests tournent en direct, sans Redis) — l'isolation par session se
+#     fait donc par **repertoire SQLite jetable**, l'equivalent fidele.
+#   • Auth **passwordless** : `seed-dev` ne pose pas de mot de passe, il
+#     **frappe un cookie de session** (cf. scripts/seed_dev.py).
+#   • `dev-up`/`dev-down` : **sans secrets `op`** (le magasin de comptes est du
+#     SQLite pur) ; arret **par pidfile, jamais par motif**.
+PROJECT      ?= shazamer
+# Session isolant les bases de test : id du harnais s'il existe, sinon le shell.
+SESSION      ?= $(or $(NOCTAMBULE_SESSION),$(USER),local)
+# Le seed n'a besoin QUE de la stdlib (src.store.accounts) : il tourne meme
+# avant `make install`. On prend le venv s'il existe, sinon python3 systeme.
+SEED_PY      := $(if $(wildcard venv/bin/python),venv/bin/python,python3)
+# Repertoire de donnees de dev (partage) et de test (jetable, par session).
+DEV_DATA_DIR  ?= data
+TEST_DATA_DIR ?= tmp/dbtest-$(SESSION)
+# Processus de `dev-up`, suivis par pidfile (jamais par motif).
+DEV_PIDDIR   := tmp
+API_PIDFILE  := $(DEV_PIDDIR)/dev-api.pid
+WEB_PIDFILE  := $(DEV_PIDDIR)/dev-web.pid
+
+# Compte loggable `pierre.gallet@hotmail.fr` dans la base de dev partagee.
+# Passwordless : fabrique un cookie de session, aucun secret `op` requis.
+seed-dev:
+	@SHAZAMER_DATA_DIR="$(DEV_DATA_DIR)" $(SEED_PY) scripts/seed_dev.py
+
+# Meme seed, cible une base (= un repertoire) choisie. Defaut : la base de test
+# de cette session. Sert a peupler un etat de test isole d'un compte loggable.
+seed-test:
+	@SHAZAMER_DATA_DIR="$(SHAZAMER_DATA_DIR)" ; : $${SHAZAMER_DATA_DIR:=$(TEST_DATA_DIR)} ; \
+	 mkdir -p "$$SHAZAMER_DATA_DIR" ; \
+	 SHAZAMER_DATA_DIR="$$SHAZAMER_DATA_DIR" $(SEED_PY) scripts/seed_dev.py
+
+# db-dev-up : N/A au sens relationnel (pas de serveur SQL). On en fait l'analog
+# fichier « assure la base + seed » = seed-dev (le schema SQLite se cree seul a
+# l'ouverture, il n'y a donc rien a « migrer »).
+db-dev-up:
+	@echo ">> shazamer n'a pas de serveur SQL : une « base » = un repertoire SQLite."
+	@echo ">> db-dev-up == seed-dev ici (schema auto a l'ouverture, rien a migrer)."
+	@$(MAKE) --no-print-directory seed-dev
+
+# db-test-up : cree un repertoire SQLite de test ISOLE pour cette session et le
+# seed. Imprime SHAZAMER_DATA_DIR= (l'analog de TEST_DATABASE_URL). Deux sessions
+# => deux repertoires distincts (AC-1.1).
+db-test-up:
+	@mkdir -p "$(TEST_DATA_DIR)"
+	@SHAZAMER_DATA_DIR="$(TEST_DATA_DIR)" $(SEED_PY) scripts/seed_dev.py >/dev/null
+	@echo ">> base de test isolee prete (SQLite, repertoire jetable)"
+	@echo "SHAZAMER_DATA_DIR=$(abspath $(TEST_DATA_DIR))"
+
+# db-test-down : supprime UNIQUEMENT le repertoire de test de CETTE session.
+# Garde-fou (analog du garde-fou hote+nom du contrat) : refuse si le chemin
+# n'est pas sous ./tmp OU si son nom ne contient pas « test ».
+db-test-down:
+	@dir="$(abspath $(TEST_DATA_DIR))" ; \
+	 case "$$dir" in \
+	   "$(abspath $(DEV_PIDDIR))"/*test*) : ;; \
+	   *) echo "refus : $$dir hors de ./$(DEV_PIDDIR) ou nom sans « test »" >&2 ; exit 1 ;; \
+	 esac ; \
+	 rm -rf "$$dir" ; \
+	 echo ">> supprime $$dir"
+
+# Env dev COMPLET : API (:$(PORT)) + Vite (:5173), en tache de fond, suivis par
+# pidfile. SANS `op` : le magasin de comptes est du SQLite pur, aucun secret
+# n'est requis pour se loguer (SMTP/Sentry restent simplement absents).
+dev-up: seed-dev
+	@mkdir -p "$(DEV_PIDDIR)"
+	@test -x "$(VENV)" || { echo "venv absent — lance d'abord: make install" >&2 ; exit 1 ; }
+	@nohup $(VENV) -m uvicorn src.web:app --reload --port $(PORT) \
+	    >"$(DEV_PIDDIR)/dev-api.log" 2>&1 & echo $$! > "$(API_PIDFILE)"
+	@nohup sh -c 'cd web && exec npm run dev' \
+	    >"$(DEV_PIDDIR)/dev-web.log" 2>&1 & echo $$! > "$(WEB_PIDFILE)"
+	@echo ">> API  http://localhost:$(PORT)   (log: $(DEV_PIDDIR)/dev-api.log)"
+	@echo ">> UI   http://localhost:5173       (log: $(DEV_PIDDIR)/dev-web.log)"
+	@echo ">> compte loggable : voir le cookie imprime par seed-dev ci-dessus."
+	@echo ">> arret : make dev-down"
+
+# Arret par pidfile, JAMAIS par motif : on tue le PID enregistre et ses enfants
+# directs (pkill -P = par PID parent, pas par nom de process).
+dev-down:
+	@for f in "$(API_PIDFILE)" "$(WEB_PIDFILE)" ; do \
+	   [ -f "$$f" ] || continue ; \
+	   pid=$$(cat "$$f") ; \
+	   if kill -0 "$$pid" 2>/dev/null ; then \
+	     pkill -TERM -P "$$pid" 2>/dev/null || true ; \
+	     kill -TERM "$$pid" 2>/dev/null || true ; \
+	     echo ">> arrete pid $$pid ($$f)" ; \
+	   else echo ">> deja arrete ($$f)" ; fi ; \
+	   rm -f "$$f" ; \
+	 done
 
 DEPLOY_HOST ?= genius
 DEPLOY_PATH ?= /home/sharon/shazamer
