@@ -70,10 +70,13 @@ async def main() -> int:
     assert who and who["email"] == EMAIL, "la session frappee ne se resout pas"
 
     public_url = os.environ.get("PUBLIC_URL", "http://localhost:5173")
+    # Chemin ABSOLU du magasin (le repertoire SHAZAMER_DATA_DIR, l'analog fichier
+    # de TEST_DATABASE_URL) : on finit en imprimant OU est l'etat ET le compte.
+    store = DATA_DIR.resolve()
     print("")
     print("  Compte loggable pret (passwordless → cookie de session)")
     print(f"    email        {EMAIL}")
-    print(f"    data dir     {DATA_DIR}/accounts.db")
+    print(f"    magasin      {store}  (accounts.db, library.db, soulseek_quota.db)")
     print(f"    cookie       {COOKIE_NAME}={token}")
     print("")
     print("  Pour te connecter sans code email, pose ce cookie sur le domaine")
@@ -81,7 +84,9 @@ async def main() -> int:
     print("")
     print(f"    document.cookie = '{COOKIE_NAME}={token}; path=/'")
     print("")
-    # Ligne machine-parsable pour Chrome headless / un agent (AC-3.1).
+    # Lignes machine-parsables pour Chrome headless / un agent (AC-3.1) : le
+    # magasin (ou est l'etat) ET le cookie (le compte loggable).
+    print(f"SHAZAMER_DATA_DIR={store}")
     print(f"SHAZAMER_SESSION_COOKIE={COOKIE_NAME}={token}")
     return 0
 

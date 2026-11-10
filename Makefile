@@ -196,8 +196,12 @@ clean:
 #   • `dev-up`/`dev-down` : **sans secrets `op`** (le magasin de comptes est du
 #     SQLite pur) ; arret **par pidfile, jamais par motif**.
 PROJECT      ?= shazamer
-# Session isolant les bases de test : id du harnais s'il existe, sinon le shell.
-SESSION      ?= $(or $(NOCTAMBULE_SESSION),$(USER),local)
+# Session isolant les bases de test. Priorite : override explicite DEV_SESSION,
+# sinon l'id de session Claude Code (toujours pose par le harnais, tirets retires
+# et tronque a 12 car. pour un token court et propre), sinon « local ».
+# NB : SESSION entre dans un chemin de repertoire (tmp/dbtest-<session>) ; il est
+# valide (^[a-zA-Z0-9_-]+$) par require_valid_session AVANT tout usage.
+SESSION ?= $(or $(DEV_SESSION),$(shell printf '%s' "$$CLAUDE_CODE_SESSION_ID" | tr -d - | cut -c1-12),local)
 # Le seed n'a besoin QUE de la stdlib (src.store.accounts) : il tourne meme
 # avant `make install`. On prend le venv s'il existe, sinon python3 systeme.
 SEED_PY      := $(if $(wildcard venv/bin/python),venv/bin/python,python3)
@@ -229,24 +233,47 @@ db-dev-up:
 	@echo ">> db-dev-up == seed-dev ici (schema auto a l'ouverture, rien a migrer)."
 	@$(MAKE) --no-print-directory seed-dev
 
+# Valide le token SESSION AVANT qu'il n'entre dans un chemin de repertoire
+# (anti path-traversal : « / » et « .. » sont hors de la classe autorisee, donc
+# rejetes). Applique a la CREATION (db-test-up) comme a la DESTRUCTION
+# (db-test-down) — un token qui ne sert pas a creer ne doit pas servir a detruire.
+define require_valid_session
+@printf '%s' '$(SESSION)' | grep -Eq '^[a-zA-Z0-9_-]+$$' \
+  || { echo "refus : SESSION invalide (attendu ^[a-zA-Z0-9_-]+)" >&2 ; exit 1 ; }
+endef
+
+# Garde-fou chemin+nom (analog du garde-fou hote+nom du contrat) : le repertoire
+# vise doit etre sous ./$(DEV_PIDDIR) ET porter « test » dans son nom. Couvre la
+# CREATION (db-test-up) autant que la DESTRUCTION (db-test-down) : on ne cree un
+# repertoire de donnees que la ou l'on s'autorise a le supprimer.
+define guard_test_dir
+@dir="$(abspath $(TEST_DATA_DIR))" ; \
+ case "$$dir" in \
+   "$(abspath $(DEV_PIDDIR))"/*test*) : ;; \
+   *) echo "refus : $$dir hors de ./$(DEV_PIDDIR) ou nom sans « test »" >&2 ; exit 1 ;; \
+ esac
+endef
+
 # db-test-up : cree un repertoire SQLite de test ISOLE pour cette session et le
 # seed. Imprime SHAZAMER_DATA_DIR= (l'analog de TEST_DATABASE_URL). Deux sessions
-# => deux repertoires distincts (AC-1.1).
+# => deux repertoires distincts (AC-1.1). Valide le token puis la garde chemin+nom
+# AVANT de creer quoi que ce soit.
 db-test-up:
+	$(require_valid_session)
+	$(guard_test_dir)
 	@mkdir -p "$(TEST_DATA_DIR)"
 	@SHAZAMER_DATA_DIR="$(TEST_DATA_DIR)" $(SEED_PY) scripts/seed_dev.py >/dev/null
 	@echo ">> base de test isolee prete (SQLite, repertoire jetable)"
 	@echo "SHAZAMER_DATA_DIR=$(abspath $(TEST_DATA_DIR))"
 
 # db-test-down : supprime UNIQUEMENT le repertoire de test de CETTE session.
-# Garde-fou (analog du garde-fou hote+nom du contrat) : refuse si le chemin
-# n'est pas sous ./tmp OU si son nom ne contient pas « test ».
+# Meme validation du token + meme garde chemin+nom que db-test-up : refuse si
+# SESSION est invalide, si le chemin n'est pas sous ./tmp OU si son nom ne
+# contient pas « test ».
 db-test-down:
+	$(require_valid_session)
+	$(guard_test_dir)
 	@dir="$(abspath $(TEST_DATA_DIR))" ; \
-	 case "$$dir" in \
-	   "$(abspath $(DEV_PIDDIR))"/*test*) : ;; \
-	   *) echo "refus : $$dir hors de ./$(DEV_PIDDIR) ou nom sans « test »" >&2 ; exit 1 ;; \
-	 esac ; \
 	 rm -rf "$$dir" ; \
 	 echo ">> supprime $$dir"
 
@@ -265,17 +292,30 @@ dev-up: seed-dev
 	@echo ">> compte loggable : voir le cookie imprime par seed-dev ci-dessus."
 	@echo ">> arret : make dev-down"
 
-# Arret par pidfile, JAMAIS par motif : on tue le PID enregistre et ses enfants
-# directs (pkill -P = par PID parent, pas par nom de process).
+# Arret par pidfile, JAMAIS par motif. On tue le GROUPE DE PROCESS entier (le
+# PID enregistre + toute sa descendance : uvicorn --reload et son worker, npm →
+# node vite → esbuild), pas seulement les enfants directs — `pkill -P` laissait
+# fuir les petits-enfants (le service esbuild de Vite notamment).
+#
+# Pas de setsid (absent de macOS) : inutile ici. dev-up lance API et Vite en
+# tache de fond depuis un make deja termine ; leur groupe de process survit a ce
+# make et porte un PGID distinct de CELUI de `make dev-down`. On relit donc le
+# PGID du pid vivant (ps -o pgid=) et on tue « -PGID » sans risque de se tuer
+# soi-meme.
+#
+# Garde-fou peremption : on ne tue QUE si `ps -p <pid>` confirme un process
+# vivant (ps -o comm=). Un pidfile perime (pid reutilise ou process deja mort)
+# n'entraine donc aucun kill aveugle.
 dev-down:
 	@for f in "$(API_PIDFILE)" "$(WEB_PIDFILE)" ; do \
 	   [ -f "$$f" ] || continue ; \
-	   pid=$$(cat "$$f") ; \
-	   if kill -0 "$$pid" 2>/dev/null ; then \
-	     pkill -TERM -P "$$pid" 2>/dev/null || true ; \
+	   pid=$$(cat "$$f" 2>/dev/null) ; \
+	   if [ -n "$$pid" ] && ps -p "$$pid" -o comm= >/dev/null 2>&1 ; then \
+	     pgid=$$(ps -p "$$pid" -o pgid= 2>/dev/null | tr -d ' ') ; \
+	     [ -n "$$pgid" ] && kill -TERM "-$$pgid" 2>/dev/null || true ; \
 	     kill -TERM "$$pid" 2>/dev/null || true ; \
-	     echo ">> arrete pid $$pid ($$f)" ; \
-	   else echo ">> deja arrete ($$f)" ; fi ; \
+	     echo ">> arrete pid $$pid (groupe $$pgid, $$f)" ; \
+	   else echo ">> deja arrete ou pidfile perime ($$f)" ; fi ; \
 	   rm -f "$$f" ; \
 	 done
 
