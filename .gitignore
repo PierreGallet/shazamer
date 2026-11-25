@@ -63,3 +63,6 @@ web/.vite/
 docs-site/node_modules/
 docs-site/build/
 docs-site/.docusaurus/
+
+# Worktrees git des sessions agents (<repo>/.worktrees/<nom>)
+.worktrees/
